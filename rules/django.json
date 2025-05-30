@@ -1,0 +1,245 @@
+{
+  "sql_injection": [
+    {
+      "pattern": "raw",
+      "finding_type": "django_raw_sql",
+      "conditions": [
+        {
+          "type": "has_parent",
+          "parent_type": "call_expression"
+        }
+      ]
+    },
+    {
+      "pattern": "extra",
+      "finding_type": "django_extra_sql",
+      "conditions": [
+        {
+          "type": "has_argument",
+          "pattern": "*where*"
+        }
+      ]
+    },
+    {
+      "pattern": "RawSQL",
+      "finding_type": "django_raw_sql_expression"
+    }
+  ],
+  "xss": [
+    {
+      "pattern": "mark_safe",
+      "finding_type": "django_mark_safe"
+    },
+    {
+      "pattern": "format_html",
+      "finding_type": "django_format_html"
+    },
+    {
+      "pattern": "render_to_string",
+      "finding_type": "django_render_to_string"
+    },
+    {
+      "pattern": "render",
+      "finding_type": "django_render",
+      "conditions": [
+        {
+          "type": "has_argument",
+          "pattern": "*request*"
+        }
+      ]
+    },
+    {
+      "pattern": "autoescape off",
+      "finding_type": "django_autoescape_off"
+    },
+    {
+      "pattern": "safe",
+      "finding_type": "django_template_safe_filter"
+    }
+  ],
+  "broken_authentication": [
+    {
+      "pattern": "authenticate",
+      "finding_type": "django_authentication"
+    },
+    {
+      "pattern": "login",
+      "finding_type": "django_login"
+    },
+    {
+      "pattern": "SESSION_COOKIE_SECURE = False",
+      "finding_type": "django_insecure_session_cookie"
+    },
+    {
+      "pattern": "SESSION_COOKIE_HTTPONLY = False",
+      "finding_type": "django_insecure_session_cookie"
+    },
+    {
+      "pattern": "CSRF_COOKIE_SECURE = False",
+      "finding_type": "django_insecure_csrf_cookie"
+    },
+    {
+      "pattern": "@csrf_exempt",
+      "finding_type": "django_csrf_exempt"
+    }
+  ],
+  "broken_access_control": [
+    {
+      "pattern": "@login_required",
+      "finding_type": "django_login_required_only"
+    },
+    {
+      "pattern": "@permission_required",
+      "finding_type": "django_permission_check"
+    },
+    {
+      "pattern": "get_object_or_404",
+      "finding_type": "django_direct_object_reference"
+    },
+    {
+      "pattern": "User.objects.get",
+      "finding_type": "django_user_direct_reference"
+    },
+    {
+      "pattern": "request.user.is_authenticated",
+      "finding_type": "django_auth_check"
+    }
+  ],
+  "security_misconfiguration": [
+    {
+      "pattern": "DEBUG = True",
+      "finding_type": "django_debug_enabled"
+    },
+    {
+      "pattern": "ALLOWED_HOSTS = ['*']",
+      "finding_type": "django_permissive_allowed_hosts"
+    },
+    {
+      "pattern": "SECRET_KEY = *",
+      "finding_type": "django_hardcoded_secret_key"
+    },
+    {
+      "pattern": "SECURE_SSL_REDIRECT = False",
+      "finding_type": "django_ssl_redirect_disabled"
+    },
+    {
+      "pattern": "SECURE_HSTS_SECONDS = 0",
+      "finding_type": "django_hsts_disabled"
+    },
+    {
+      "pattern": "SECURE_CONTENT_TYPE_NOSNIFF = False",
+      "finding_type": "django_nosniff_disabled"
+    }
+  ],
+  "insecure_deserialization": [
+    {
+      "pattern": "request.session",
+      "finding_type": "django_session_data_handling"
+    }
+  ],
+  "server_side_request_forgery": [
+    {
+      "pattern": "HttpResponse",
+      "finding_type": "django_potential_ssrf",
+      "conditions": [
+        {
+          "type": "has_argument",
+          "pattern": "*request.GET*"
+        }
+      ]
+    }
+  ],
+  "path_traversal": [
+    {
+      "pattern": "FileResponse",
+      "finding_type": "django_file_response"
+    },
+    {
+      "pattern": "send_file",
+      "finding_type": "django_send_file"
+    }
+  ],
+  "open_redirect": [
+    {
+      "name": "Django Open Redirect via shortcuts",
+      "pattern": "django.shortcuts.redirect",
+      "finding_type": "open_redirect",
+      "conditions": [
+        {
+          "type": "has_argument",
+          "pattern": "*request.GET*"
+        }
+      ]
+    },
+    {
+      "name": "Django Open Redirect via HttpResponseRedirect",
+      "pattern": "django.http.HttpResponseRedirect",
+      "finding_type": "open_redirect",
+      "conditions": [
+        {
+          "type": "has_argument",
+          "pattern": "*request.GET*"
+        }
+      ]
+    },
+    {
+      "pattern": "HttpResponseRedirect",
+      "finding_type": "django_open_redirect",
+      "conditions": [
+        {
+          "type": "has_argument",
+          "pattern": "*request.GET*"
+        }
+      ]
+    },
+    {
+      "pattern": "get_redirect_url",
+      "finding_type": "django_redirect_url_method"
+    }
+  ],
+  "insecure_file_upload": [
+    {
+      "pattern": "FileField",
+      "finding_type": "django_file_upload"
+    },
+    {
+      "pattern": "ImageField",
+      "finding_type": "django_image_upload"
+    },
+    {
+      "pattern": "request.FILES",
+      "finding_type": "django_file_upload_handling"
+    },
+    {
+      "pattern": "content_type",
+      "finding_type": "django_content_type_validation"
+    }
+  ],
+  "mass_assignment": [
+    {
+      "pattern": "objects.create",
+      "finding_type": "django_mass_assignment"
+    },
+    {
+      "pattern": "update",
+      "finding_type": "django_mass_update",
+      "conditions": [
+        {
+          "type": "has_argument",
+          "pattern": "*request.POST*"
+        }
+      ]
+    },
+    {
+      "pattern": "save",
+      "finding_type": "django_model_save",
+      "conditions": [
+        {
+          "type": "has_parent",
+          "parent_type": "model"
+        }
+      ]
+    }
+  ]
+}
+
