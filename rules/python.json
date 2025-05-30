@@ -280,11 +280,6 @@
   ],
   "broken_access_control": [
     {
-      "name": "Missing Access Control via filter",
-      "pattern": "*.filter",
-      "finding_type": "missing_access_control"
-    },
-    {
       "name": "Direct Object Reference via model get",
       "pattern": "*.get",
       "finding_type": "direct_object_reference",
@@ -358,11 +353,6 @@
       "finding_type": "unsafe_deserialization"
     },
     {
-      "name": "Potential JSON Deserialization Issue",
-      "pattern": "json.load*",
-      "finding_type": "potential_json_deserialization"
-    },
-    {
       "name": "Custom Deserialization Method",
       "pattern": "*.deserialize",
       "finding_type": "custom_deserialization"
@@ -395,11 +385,6 @@
       "name": "Login Logging Verification",
       "pattern": "*.login",
       "finding_type": "verify_login_logging"
-    },
-    {
-      "name": "Authentication Logging Verification",
-      "pattern": "*.authenticate",
-      "finding_type": "verify_auth_logging"
     },
     {
       "name": "Exception Handling Check",

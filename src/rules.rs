@@ -3,6 +3,28 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use once_cell::sync::Lazy;
+
+// Pre-compile all regex patterns for injection detection
+static INJECTION_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+    vec![
+        Regex::new(r"%[sdfir]").unwrap(),        // String formatting
+        Regex::new(r"\{.*?\}").unwrap(),         // Format strings
+        Regex::new(r"\.format\(").unwrap(),      // .format() calls
+        Regex::new(r#"['"][^'"]*\s\+\s"#).unwrap(), // String concatenation
+        Regex::new(r#"f['""]"#).unwrap(),        // f-strings
+        Regex::new(r";").unwrap(),               // Command separators
+        Regex::new(r"&&").unwrap(),              // Command chaining
+        Regex::new(r"\|\|").unwrap(),            // Command chaining
+        Regex::new(r"\$\(").unwrap(),            // Command substitution
+        Regex::new(r"`.*?`").unwrap(),           // Backtick execution
+    ]
+});
+
+// Fast injection pattern checking using pre-compiled regexes
+pub fn check_for_injection_pattern(text: &str) -> bool {
+    INJECTION_PATTERNS.iter().any(|regex| regex.is_match(text))
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Condition {
@@ -27,7 +49,7 @@ pub struct Rule {
     pub conditions: Option<Vec<Condition>>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Rules {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub injection_sinks: Option<Vec<Rule>>,

@@ -39,12 +39,42 @@ fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Configure thread pool if specified
+    if let Some(threads) = cli.threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .map_err(|e| anyhow::anyhow!("Failed to set thread pool size: {}", e))?;
+    }
+
     let rules = Rules::load_from_file(&cli.rules_file)?;
     let mut scanner = VulnerabilityScanner::new(&cli.language, rules)?;
 
-    println!("Starting Corgea Greppy Scan! -----------------");
+    let mode = if cli.single_threaded { "single-threaded" } else { "parallel" };
+    let thread_info = if let Some(threads) = cli.threads {
+        format!(" with {} threads", threads)
+    } else {
+        String::new()
+    };
+    
+    println!("🚀 Starting Corgea Greppy Scan ({} mode{})!", mode, thread_info);
+    println!("📂 Target directory: {}", cli.root_dir);
+    println!("🔧 Language: {}", cli.language);
+    println!("📋 Rules file: {}", cli.rules_file);
+    println!();
 
-    let findings = scanner.find_vulnerabilities(&cli.root_dir, &cli.language)?;
+    let start_time = std::time::Instant::now();
+    
+    let findings = if cli.single_threaded {
+        scanner.find_vulnerabilities_single_threaded(&cli.root_dir, &cli.language)?
+    } else {
+        scanner.find_vulnerabilities_parallel(&cli.root_dir, &cli.language)?
+    };
+
+    let duration = start_time.elapsed();
+    println!();
+    println!("⏱️  Scan completed in {:.2?}", duration);
+    println!();
 
     match cli.output_format.as_str() {
         "json" => print_findings_json(&findings),

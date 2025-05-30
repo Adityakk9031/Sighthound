@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(
     name = "find_vulns",
     about = "A fast vulnerability scanner for source code",
-    long_about = "Corgea Greppy - A high-performance vulnerability scanner that uses tree-sitter for AST-based analysis"
+    long_about = "Corgea Greppy - A high-performance vulnerability scanner that uses tree-sitter for AST-based analysis with parallel processing support"
 )]
 pub struct Cli {
     /// Root directory to scan
@@ -27,4 +27,12 @@ pub struct Cli {
     /// Only show summary
     #[arg(short, long)]
     pub summary_only: bool,
+
+    /// Disable parallel processing (use single-threaded mode)
+    #[arg(long)]
+    pub single_threaded: bool,
+
+    /// Number of threads to use for parallel processing (default: CPU cores)
+    #[arg(long)]
+    pub threads: Option<usize>,
 } 

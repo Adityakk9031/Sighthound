@@ -36,6 +36,13 @@ pub fn get_node_text(node: &tree_sitter::Node, source: &[u8]) -> String {
     String::from_utf8_lossy(&source[start..end]).to_string()
 }
 
+// Memory-optimized version that returns a string slice instead of owned String
+pub fn get_node_text_slice<'a>(node: &tree_sitter::Node, source: &'a [u8]) -> &'a str {
+    let start = node.start_byte();
+    let end = node.end_byte();
+    std::str::from_utf8(&source[start..end]).unwrap_or("")
+}
+
 pub fn get_function_name(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
     if let Some(function_node) = node.child_by_field_name("function") {
         return Some(get_node_text(&function_node, source));
@@ -43,18 +50,50 @@ pub fn get_function_name(node: &tree_sitter::Node, source: &[u8]) -> Option<Stri
     None
 }
 
-pub fn traverse_node<'a>(node: tree_sitter::Node<'a>) -> Vec<tree_sitter::Node<'a>> {
-    let mut nodes = vec![node];
-    let mut cursor = node.walk();
+// Memory-optimized version that returns a string slice
+pub fn get_function_name_slice<'a>(node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
+    if let Some(function_node) = node.child_by_field_name("function") {
+        return Some(get_node_text_slice(&function_node, source));
+    }
+    None
+}
 
-    if cursor.goto_first_child() {
-        loop {
-            nodes.extend(traverse_node(cursor.node()));
-            if !cursor.goto_next_sibling() {
-                break;
+// Iterator-based tree traversal that only yields call nodes
+pub fn traverse_calls_only(node: tree_sitter::Node) -> impl Iterator<Item = tree_sitter::Node> {
+    TreeCallIterator::new(node)
+}
+
+struct TreeCallIterator<'a> {
+    stack: Vec<tree_sitter::Node<'a>>,
+}
+
+impl<'a> TreeCallIterator<'a> {
+    fn new(root: tree_sitter::Node<'a>) -> Self {
+        Self { stack: vec![root] }
+    }
+}
+
+impl<'a> Iterator for TreeCallIterator<'a> {
+    type Item = tree_sitter::Node<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(node) = self.stack.pop() {
+            // Add children to stack for traversal
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    self.stack.push(cursor.node());
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            
+            // Only return call nodes
+            if node.kind() == "call" {
+                return Some(node);
             }
         }
+        None
     }
-
-    nodes
-} 
+}

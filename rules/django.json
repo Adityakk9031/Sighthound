@@ -39,16 +39,6 @@
       "finding_type": "django_render_to_string"
     },
     {
-      "pattern": "render",
-      "finding_type": "django_render",
-      "conditions": [
-        {
-          "type": "has_argument",
-          "pattern": "*request*"
-        }
-      ]
-    },
-    {
       "pattern": "autoescape off",
       "finding_type": "django_autoescape_off"
     },
@@ -58,14 +48,6 @@
     }
   ],
   "broken_authentication": [
-    {
-      "pattern": "authenticate",
-      "finding_type": "django_authentication"
-    },
-    {
-      "pattern": "login",
-      "finding_type": "django_login"
-    },
     {
       "pattern": "SESSION_COOKIE_SECURE = False",
       "finding_type": "django_insecure_session_cookie"
@@ -94,11 +76,21 @@
     },
     {
       "pattern": "get_object_or_404",
-      "finding_type": "django_direct_object_reference"
-    },
-    {
-      "pattern": "User.objects.get",
-      "finding_type": "django_user_direct_reference"
+      "finding_type": "django_direct_object_reference",
+      "conditions": [
+        {
+          "type": "has_argument",
+          "pattern": "*user*"
+        },
+        {
+          "type": "has_argument",
+          "pattern": "*permission*"
+        },
+        {
+          "type": "has_argument",
+          "pattern": "*company*"
+        }
+      ]
     },
     {
       "pattern": "request.user.is_authenticated",
@@ -110,6 +102,11 @@
       "pattern": "DEBUG = True",
       "finding_type": "django_debug_enabled"
     },
+    {
+      "pattern": "DEBUG = os.getenv(\"*\", \"TRUE\").lower() == \"true\"",
+      "finding_type": "django_debug_env_default_true"
+    },
+
     {
       "pattern": "ALLOWED_HOSTS = ['*']",
       "finding_type": "django_permissive_allowed_hosts"
