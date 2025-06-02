@@ -15,14 +15,46 @@ Cargo.lock
 .idea/
 .vscode/
 *.iml
+*.swp
+*~
 
 # macOS files
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # Build artifacts
+/target/
 /build/
 /dist/
+/debug/
+/release/
 
 # Local configuration
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Rust profiling and benchmarking
+flamegraph.svg
+perf.data
+perf.data.old
+/criterion/
+
+# Documentation
+/doc/
+/book/
+
+# Rust coverage reports
+*.profraw
+/coverage/
+/tarpaulin-report.html
+
+# Cargo audit reports
+/audit-report.json
+/audit-report.txt
+
+# Dependency directories
+.cargo-cache/
