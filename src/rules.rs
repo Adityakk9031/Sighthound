@@ -3,27 +3,19 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use once_cell::sync::Lazy;
+use std::path::Path;
+use crate::language::LanguageSupport;
 
-// Pre-compile all regex patterns for injection detection
-static INJECTION_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
-    vec![
-        Regex::new(r"%[sdfir]").unwrap(),        // String formatting
-        Regex::new(r"\{.*?\}").unwrap(),         // Format strings
-        Regex::new(r"\.format\(").unwrap(),      // .format() calls
-        Regex::new(r#"['"][^'"]*\s\+\s"#).unwrap(), // String concatenation
-        Regex::new(r#"f['""]"#).unwrap(),        // f-strings
-        Regex::new(r";").unwrap(),               // Command separators
-        Regex::new(r"&&").unwrap(),              // Command chaining
-        Regex::new(r"\|\|").unwrap(),            // Command chaining
-        Regex::new(r"\$\(").unwrap(),            // Command substitution
-        Regex::new(r"`.*?`").unwrap(),           // Backtick execution
-    ]
-});
+// Fast injection pattern checking using language-specific patterns
+pub fn check_for_injection_pattern(text: &str, language_support: &dyn LanguageSupport) -> bool {
+    language_support.injection_patterns().iter().any(|regex| regex.is_match(text))
+}
 
-// Fast injection pattern checking using pre-compiled regexes
-pub fn check_for_injection_pattern(text: &str) -> bool {
-    INJECTION_PATTERNS.iter().any(|regex| regex.is_match(text))
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct FileTypeFilter {
+    pub extensions: Vec<String>,
+    pub include_patterns: Option<Vec<String>>,
+    pub exclude_patterns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -47,6 +39,8 @@ pub struct Rule {
     pub finding_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conditions: Option<Vec<Condition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_types: Option<FileTypeFilter>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -70,7 +64,47 @@ impl Rules {
         let content = fs::read_to_string(rules_file)
             .context(format!("Failed to read rules file: {}", rules_file))?;
         
-        serde_json::from_str(&content).context("Failed to parse rules JSON")
+        let path = Path::new(rules_file);
+        let extension = path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        match extension.as_str() {
+            "ron" => {
+                ron::from_str(&content).context("Failed to parse rules RON")
+            },
+            "json" | _ => {
+                serde_json::from_str(&content).context("Failed to parse rules JSON")
+            }
+        }
+    }
+
+    pub fn save_to_file(&self, rules_file: &str) -> Result<()> {
+        let path = Path::new(rules_file);
+        let extension = path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let content = match extension.as_str() {
+            "ron" => {
+                // Use basic pretty config without struct names
+                let config = ron::ser::PrettyConfig::new()
+                    .struct_names(false)
+                    .enumerate_arrays(false)
+                    .compact_arrays(false);
+                ron::ser::to_string_pretty(self, config)
+                    .context("Failed to serialize rules to RON")?
+            },
+            "json" | _ => {
+                serde_json::to_string_pretty(self)
+                    .context("Failed to serialize rules to JSON")?
+            }
+        };
+
+        fs::write(rules_file, content)
+            .context(format!("Failed to write rules file: {}", rules_file))
     }
 }
 

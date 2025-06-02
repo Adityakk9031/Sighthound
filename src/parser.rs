@@ -1,80 +1,71 @@
 use anyhow::{Context, Result};
-use tree_sitter::{Parser as TSParser, Tree};
+use tree_sitter::{Parser as TSParser, Tree, Node};
+use crate::language::{LanguageSupport, get_language_support};
 
 pub struct LanguageParser {
     parser: TSParser,
+    language_support: Box<dyn LanguageSupport>,
 }
 
 impl LanguageParser {
     pub fn new(language_name: &str) -> Result<Self> {
-        if language_name.to_lowercase() != "python" {
-            anyhow::bail!("This scanner currently supports only Python");
-        }
-
-        let language = tree_sitter_python::language();
+        let language_support = get_language_support(language_name)?;
+        let language = language_support.tree_sitter_language();
         let mut parser = TSParser::new();
         parser.set_language(&language).context("Failed to set language")?;
 
-        Ok(Self { parser })
+        Ok(Self { parser, language_support })
     }
 
     pub fn parse(&mut self, source: &[u8]) -> Result<Tree> {
         self.parser.parse(source, None).context("Failed to parse file")
     }
 
-    pub fn get_file_extension(&self, language_name: &str) -> &str {
-        match language_name.to_lowercase().as_str() {
-            "python" => ".py",
-            _ => "",
-        }
+    pub fn file_extension(&self) -> &str {
+        self.language_support.file_extension()
+    }
+
+    pub fn language_support(&self) -> &dyn LanguageSupport {
+        self.language_support.as_ref()
     }
 }
 
-pub fn get_node_text(node: &tree_sitter::Node, source: &[u8]) -> String {
+// Generic function to get node text
+pub fn get_node_text(node: &Node, source: &[u8]) -> String {
     let start = node.start_byte();
     let end = node.end_byte();
     String::from_utf8_lossy(&source[start..end]).to_string()
 }
 
 // Memory-optimized version that returns a string slice instead of owned String
-pub fn get_node_text_slice<'a>(node: &tree_sitter::Node, source: &'a [u8]) -> &'a str {
+pub fn get_node_text_slice<'a>(node: &Node, source: &'a [u8]) -> &'a str {
     let start = node.start_byte();
     let end = node.end_byte();
     std::str::from_utf8(&source[start..end]).unwrap_or("")
 }
 
-pub fn get_function_name(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
-    if let Some(function_node) = node.child_by_field_name("function") {
-        return Some(get_node_text(&function_node, source));
-    }
-    None
-}
-
-// Memory-optimized version that returns a string slice
-pub fn get_function_name_slice<'a>(node: &tree_sitter::Node, source: &'a [u8]) -> Option<&'a str> {
-    if let Some(function_node) = node.child_by_field_name("function") {
-        return Some(get_node_text_slice(&function_node, source));
-    }
-    None
-}
-
-// Iterator-based tree traversal that only yields call nodes
-pub fn traverse_calls_only(node: tree_sitter::Node) -> impl Iterator<Item = tree_sitter::Node> {
-    TreeCallIterator::new(node)
+// Language-agnostic tree traversal
+pub fn traverse_calls_only<'a>(
+    node: Node<'a>, 
+    language_support: &'a dyn LanguageSupport
+) -> impl Iterator<Item = Node<'a>> + 'a {
+    let call_types = language_support.call_node_types();
+    TreeCallIterator::new(node, call_types)
 }
 
 struct TreeCallIterator<'a> {
-    stack: Vec<tree_sitter::Node<'a>>,
+    stack: Vec<Node<'a>>,
+    call_types: &'a [&'static str],
 }
 
 impl<'a> TreeCallIterator<'a> {
-    fn new(root: tree_sitter::Node<'a>) -> Self {
-        Self { stack: vec![root] }
+    fn new(root: Node<'a>, call_types: &'a [&'static str]) -> Self {
+        Self { stack: vec![root], call_types }
     }
 }
 
 impl<'a> Iterator for TreeCallIterator<'a> {
-    type Item = tree_sitter::Node<'a>;
+    type Item = Node<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(node) = self.stack.pop() {
@@ -89,8 +80,8 @@ impl<'a> Iterator for TreeCallIterator<'a> {
                 }
             }
             
-            // Only return call nodes
-            if node.kind() == "call" {
+            // Return if this node type is a call node for the current language
+            if self.call_types.contains(&node.kind()) {
                 return Some(node);
             }
         }

@@ -1,0 +1,354 @@
+{
+    injection_sinks: Some([
+        // SQL Injection - String concatenation
+        (
+            pattern: "*.execute",
+            finding_type: Some("sql_injection"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*+*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // SQL Injection - f-strings
+        (
+            pattern: "*.execute",
+            finding_type: Some("sql_injection"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*f\"*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // SQL Injection - .format() method
+        (
+            pattern: "*.execute",
+            finding_type: Some("sql_injection"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*.format(*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // SQL Injection - % formatting
+        (
+            pattern: "*.execute",
+            finding_type: Some("sql_injection"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*%*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Command Injection - os.system
+        (
+            pattern: "os.system",
+            finding_type: Some("command_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Command Injection - subprocess with shell=True
+        (
+            pattern: "subprocess.call",
+            finding_type: Some("command_injection"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*shell=True*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "subprocess.run",
+            finding_type: Some("command_injection"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*shell=True*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "subprocess.Popen",
+            finding_type: Some("command_injection"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*shell=True*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Code Injection - eval
+        (
+            pattern: "eval",
+            finding_type: Some("code_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Code Injection - exec
+        (
+            pattern: "exec",
+            finding_type: Some("code_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Code Injection - compile + exec
+        (
+            pattern: "compile",
+            finding_type: Some("code_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+    crypto_rules: Some([
+        // Weak Hash Algorithms
+        (
+            pattern: "hashlib.md5",
+            finding_type: Some("weak_crypto_hash"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "hashlib.sha1",
+            finding_type: Some("weak_crypto_hash"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Weak Encryption
+        (
+            pattern: "DES.new",
+            finding_type: Some("weak_crypto_cipher"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "ARC4.new",
+            finding_type: Some("weak_crypto_cipher"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+    path_traversal: Some([
+        // File operations with path traversal
+        (
+            pattern: "open",
+            finding_type: Some("path_traversal"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*../*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "os.path.join",
+            finding_type: Some("path_traversal"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*../*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+    weak_random: Some([
+        // Weak Random Number Generation
+        (
+            pattern: "random.random",
+            finding_type: Some("weak_random"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "random.randint",
+            finding_type: Some("weak_random"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "random.choice",
+            finding_type: Some("weak_random"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+    hardcoded_secrets: Some([
+        // Hardcoded passwords
+        (
+            pattern: "password",
+            finding_type: Some("hardcoded_password"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*=*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Hardcoded API keys
+        (
+            pattern: "api_key",
+            finding_type: Some("hardcoded_api_key"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*=*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Hardcoded secret keys
+        (
+            pattern: "secret_key",
+            finding_type: Some("hardcoded_secret_key"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*=*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+} 
