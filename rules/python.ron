@@ -175,6 +175,158 @@
                 exclude_patterns: None,
             )),
         ),
+        // XSS - Flask render_template_string
+        (
+            pattern: "render_template_string",
+            finding_type: Some("xss"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*{{*|safe}}*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Additional XSS - Flask render_template_string with unescaped output
+        (
+            pattern: "render_template_string",
+            finding_type: Some("xss"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*output=output*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // XSS - String formatting in Flask templates
+        (
+            pattern: "f\"*",
+            finding_type: Some("xss"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*Reflected XSS result:*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // XSS - Flask Markup
+        (
+            pattern: "Markup",
+            finding_type: Some("xss"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // XSS - Django mark_safe
+        (
+            pattern: "mark_safe",
+            finding_type: Some("xss"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // XSS - Django format_html
+        (
+            pattern: "format_html",
+            finding_type: Some("xss"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // XXE - lxml with unsafe parser settings
+        (
+            pattern: "etree.XMLParser",
+            finding_type: Some("xxe"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*resolve_entities=True*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // XXE - lxml fromstring with unsafe parser
+        (
+            pattern: "etree.fromstring",
+            finding_type: Some("xxe"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // SSRF - requests library
+        (
+            pattern: "requests.get",
+            finding_type: Some("ssrf"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "requests.post",
+            finding_type: Some("ssrf"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // SSRF - urllib
+        (
+            pattern: "urllib.request.urlopen",
+            finding_type: Some("ssrf"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
     ]),
     crypto_rules: Some([
         // Weak Hash Algorithms
@@ -351,4 +503,4 @@
             )),
         ),
     ]),
-} 
+}

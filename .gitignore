@@ -58,3 +58,8 @@ perf.data.old
 
 # Dependency directories
 .cargo-cache/
+
+# Cargo target directory
+target/
+debug/
+release/

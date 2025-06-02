@@ -184,20 +184,9 @@ impl VulnerabilityScanner {
         }
     }
 
-    pub fn find_vulnerabilities_parallel(&mut self, root_dir: &str, language_name: &str) -> Result<Vec<Finding>> {
+    /// Discover files with the scanner's target extension in the given directory
+    fn discover_files(&self, root_dir: &str) -> Result<Vec<PathBuf>> {
         let extension = self.parser.file_extension().to_string();
-        let rules = Arc::new(self.rules.clone());
-        
-        let multi_progress = MultiProgress::new();
-        let main_pb = multi_progress.add(ProgressBar::new_spinner());
-        main_pb.set_style(
-            ProgressStyle::default_spinner()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-                .template("{spinner:.blue} {msg}")
-                .unwrap()
-        );
-        main_pb.set_message("Discovering files...");
-        main_pb.enable_steady_tick(std::time::Duration::from_millis(120));
         
         let files: Vec<PathBuf> = WalkDir::new(root_dir)
             .into_iter()
@@ -211,14 +200,23 @@ impl VulnerabilityScanner {
             .map(|entry| entry.path().to_path_buf())
             .collect();
 
-        let total_files = files.len();
-        main_pb.finish_with_message(format!("📁 Found {} files to scan", total_files));
-        
-        if total_files == 0 {
-            println!("No files found with extension {}", extension);
-            return Ok(Vec::new());
-        }
+        Ok(files)
+    }
 
+    /// Setup progress bars for file discovery and scanning
+    fn setup_progress_bars(&self, total_files: usize) -> (ProgressBar, ProgressBar) {
+        let multi_progress = MultiProgress::new();
+        
+        // Discovery progress bar
+        let discovery_pb = multi_progress.add(ProgressBar::new_spinner());
+        discovery_pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+                .template("{spinner:.blue} {msg}")
+                .unwrap()
+        );
+        
+        // Scanning progress bar
         let scan_pb = multi_progress.add(ProgressBar::new(total_files as u64));
         scan_pb.set_style(
             ProgressStyle::default_bar()
@@ -226,8 +224,34 @@ impl VulnerabilityScanner {
                 .unwrap()
                 .progress_chars("#>-")
         );
+        
+        (discovery_pb, scan_pb)
+    }
+
+    pub fn find_vulnerabilities_parallel(&mut self, root_dir: &str, language_name: &str) -> Result<Vec<Finding>> {
+        let rules = Arc::new(self.rules.clone());
+        
+        // Setup and run discovery progress
+        let (discovery_pb, scan_pb) = self.setup_progress_bars(0);
+        discovery_pb.set_message("Discovering files...");
+        discovery_pb.enable_steady_tick(std::time::Duration::from_millis(120));
+        
+        let files = self.discover_files(root_dir)?;
+        let total_files = files.len();
+        
+        discovery_pb.finish_with_message(format!("📁 Found {} files to scan", total_files));
+        
+        if total_files == 0 {
+            let extension = self.parser.file_extension();
+            println!("No files found with extension {}", extension);
+            return Ok(Vec::new());
+        }
+
+        // Update scan progress bar with actual file count
+        scan_pb.set_length(total_files as u64);
         scan_pb.set_message("Scanning for vulnerabilities...");
 
+        // Setup parallel progress tracking
         let progress_counter = Arc::new(AtomicUsize::new(0));
         let progress_counter_clone = Arc::clone(&progress_counter);
         let scan_pb_clone = scan_pb.clone();
@@ -274,58 +298,37 @@ impl VulnerabilityScanner {
 
     pub fn find_vulnerabilities_single_threaded(&mut self, root_dir: &str, _language_name: &str) -> Result<Vec<Finding>> {
         let mut findings = Vec::new();
-        let extension = self.parser.file_extension().to_string();
 
-        let multi_progress = MultiProgress::new();
-        let main_pb = multi_progress.add(ProgressBar::new_spinner());
-        main_pb.set_style(
-            ProgressStyle::default_spinner()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-                .template("{spinner:.blue} {msg}")
-                .unwrap()
-        );
-        main_pb.set_message("Discovering files...");
-        main_pb.enable_steady_tick(std::time::Duration::from_millis(120));
+        // Setup and run discovery progress
+        let (discovery_pb, scan_pb) = self.setup_progress_bars(0);
+        discovery_pb.set_message("Discovering files...");
+        discovery_pb.enable_steady_tick(std::time::Duration::from_millis(120));
 
-        let files: Vec<_> = WalkDir::new(root_dir)
-            .into_iter()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry.path().is_file() && 
-                entry.path().extension().map_or(false, |ext| {
-                    format!(".{}", ext.to_string_lossy()) == extension
-                })
-            })
-            .collect();
-
+        let files = self.discover_files(root_dir)?;
         let total_files = files.len();
-        main_pb.finish_with_message(format!("Found {} files to scan", total_files));
+        
+        discovery_pb.finish_with_message(format!("Found {} files to scan", total_files));
 
         if total_files == 0 {
+            let extension = self.parser.file_extension();
             println!("No files found with extension {}", extension);
             return Ok(Vec::new());
         }
 
-        let scan_pb = multi_progress.add(ProgressBar::new(total_files as u64));
-        scan_pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-                .unwrap()
-                .progress_chars("#>-")
-        );
+        // Update scan progress bar with actual file count
+        scan_pb.set_length(total_files as u64);
         scan_pb.set_message("Scanning for vulnerabilities...");
 
-        for (index, entry) in files.iter().enumerate() {
-            let path = entry.path();
-            let filepath = path.to_string_lossy().to_string();
-            let source = fs::read(path).context(format!("Failed to read file: {}", filepath))?;
+        for (index, file_path) in files.iter().enumerate() {
+            let filepath = file_path.to_string_lossy().to_string();
+            let source = fs::read(file_path).context(format!("Failed to read file: {}", filepath))?;
 
             let tree = self.parser.parse(&source)?;
             findings.extend(self.scan_file_optimized(&filepath, &source, &tree));
             
             scan_pb.set_position((index + 1) as u64);
             if index % 10 == 0 || index == total_files - 1 {
-                scan_pb.set_message(format!("Scanning: {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                scan_pb.set_message(format!("Scanning: {}", file_path.file_name().unwrap_or_default().to_string_lossy()));
             }
         }
 
