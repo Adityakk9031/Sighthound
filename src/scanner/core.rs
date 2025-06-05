@@ -89,6 +89,7 @@ impl VulnerabilityScanner {
             &self.rules.path_traversal,
             &self.rules.weak_random,
             &self.rules.hardcoded_secrets,
+            &self.rules.malware_detection,
         ];
 
         for category in &rule_categories {
@@ -124,6 +125,7 @@ impl VulnerabilityScanner {
                 self.check_rules_category_optimized("path_traversal", &self.rules.path_traversal, &node, source, filepath, func_name, &mut findings);
                 self.check_rules_category_optimized("weak_random", &self.rules.weak_random, &node, source, filepath, func_name, &mut findings);
                 self.check_rules_category_optimized("hardcoded_secrets", &self.rules.hardcoded_secrets, &node, source, filepath, func_name, &mut findings);
+                self.check_rules_category_optimized("malware_detection", &self.rules.malware_detection, &node, source, filepath, func_name, &mut findings);
                 
                 for (category, rules) in &self.rules.other {
                     self.check_rules_category_optimized(category, &Some(rules.clone()), &node, source, filepath, func_name, &mut findings);

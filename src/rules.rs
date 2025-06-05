@@ -55,6 +55,8 @@ pub struct Rules {
     pub weak_random: Option<Vec<Rule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hardcoded_secrets: Option<Vec<Rule>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub malware_detection: Option<Vec<Rule>>,
     #[serde(flatten)]
     pub other: HashMap<String, Vec<Rule>>,
 }

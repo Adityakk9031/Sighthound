@@ -78,6 +78,9 @@ impl FileTypeAwareAnalyzer {
         if let Some(rules) = &self.rules.hardcoded_secrets {
             all_rules.extend(rules.iter().cloned());
         }
+        if let Some(rules) = &self.rules.malware_detection {
+            all_rules.extend(rules.iter().cloned());
+        }
 
         // Filter rules by file type
         let mut applicable_rules = Vec::new();
@@ -149,6 +152,7 @@ impl FileTypeAwareAnalyzer {
         if let Some(rules) = &self.rules.path_traversal { count += rules.len(); }
         if let Some(rules) = &self.rules.weak_random { count += rules.len(); }
         if let Some(rules) = &self.rules.hardcoded_secrets { count += rules.len(); }
+        if let Some(rules) = &self.rules.malware_detection { count += rules.len(); }
         
         // Add other rule groups
         for rules in self.rules.other.values() {
