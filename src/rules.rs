@@ -30,6 +30,19 @@ pub struct Condition {
     pub not_in: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_type: Option<String>,
+    // Enhanced fields for better tree-sitter integration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_type: Option<String>,                     // Expected AST node type
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub argument_position: Option<usize>,              // Specific argument index
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub within_lines: Option<usize>,                   // Distance constraint
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patterns: Option<Vec<String>>,                 // Multiple patterns
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ancestor_types: Option<Vec<String>>,           // Required ancestor node types
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_siblings: Option<bool>,                  // Check sibling nodes
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -41,6 +54,13 @@ pub struct Rule {
     pub conditions: Option<Vec<Condition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_types: Option<FileTypeFilter>,
+    // Enhanced fields for better analysis
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,                      // Critical, High, Medium, Low
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,                    // High, Medium, Low
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sanitizers: Option<Vec<String>>,              // Known sanitization functions
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -127,5 +147,43 @@ pub fn match_pattern(pattern: &str, text: &str) -> bool {
         // Exact match
         return pattern == text;
     }
+    false
+}
+
+// Enhanced pattern matching with multiple patterns
+pub fn match_any_pattern(patterns: &[String], text: &str) -> bool {
+    patterns.iter().any(|pattern| match_pattern(pattern, text))
+}
+
+// Check if a node represents a literal value (reduced false positive risk)
+pub fn is_literal_node(node: &tree_sitter::Node) -> bool {
+    matches!(node.kind(), "string" | "integer" | "float" | "true" | "false" | "null" | "none")
+}
+
+// Check if a node is in a protective context
+pub fn is_in_protective_context(node: &tree_sitter::Node) -> bool {
+    let mut current = node.parent();
+    let mut depth = 0;
+    
+    while let Some(parent) = current {
+        // Limit search depth to avoid performance issues
+        if depth > 10 {
+            break;
+        }
+        
+        match parent.kind() {
+            // Protective structures that reduce vulnerability likelihood
+            "try_statement" | "except_clause" | "if_statement" | 
+            "with_statement" | "function_definition" => {
+                // Check if this is input validation or error handling
+                return true;
+            }
+            _ => {}
+        }
+        
+        current = parent.parent();
+        depth += 1;
+    }
+    
     false
 } 

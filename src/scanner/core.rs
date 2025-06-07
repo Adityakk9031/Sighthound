@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 
 use crate::parser::{LanguageParser, get_node_text, traverse_calls_only};
-use crate::rules::{Rules, Rule, Condition, match_pattern, check_for_injection_pattern};
+use crate::rules::{Rules, Rule, Condition, match_pattern, match_any_pattern, check_for_injection_pattern, is_literal_node, is_in_protective_context};
 use super::types::Finding;
 
 pub struct VulnerabilityScanner {
@@ -34,52 +34,239 @@ impl VulnerabilityScanner {
         }
 
         for condition in conditions {
-            match condition.condition_type.as_str() {
-                "has_argument" => {
-                    if let Some(pattern) = &condition.pattern {
-                        if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
-                            let mut found_match = false;
-                            for i in 0..args_node.named_child_count() {
-                                if let Some(arg) = args_node.named_child(i) {
-                                    let arg_text = get_node_text(&arg, source);
-                                    if match_pattern(pattern, &arg_text) {
-                                        found_match = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if !found_match {
-                                return false;
-                            }
-                        } else {
-                            return false;
-                        }
-                    }
-                }
-                "in_context" => {
-                    if let Some(not_in) = &condition.not_in {
-                        if let Some(parent) = node.parent() {
-                            if not_in.contains(&"comment".to_string()) && parent.kind() == "comment" {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                "has_parent" => {
-                    if let Some(parent_type) = &condition.parent_type {
-                        if let Some(parent) = node.parent() {
-                            if parent.kind() != parent_type {
-                                return false;
-                            }
-                        } else {
-                            return false;
-                        }
-                    }
-                }
-                _ => {}
+            if !self.check_single_condition(node, source, condition) {
+                return false;
             }
         }
         true
+    }
+
+    fn check_single_condition(
+        &self,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        condition: &Condition,
+    ) -> bool {
+        match condition.condition_type.as_str() {
+            "has_argument" => {
+                self.check_has_argument_condition(node, source, condition)
+            }
+            "in_context" => {
+                self.check_in_context_condition(node, condition)
+            }
+            "has_parent" => {
+                self.check_has_parent_condition(node, condition)
+            }
+            "not_literal" => {
+                self.check_not_literal_condition(node, source, condition)
+            }
+            "not_in_protective_context" => {
+                !is_in_protective_context(node)
+            }
+            "has_ancestor" => {
+                self.check_has_ancestor_condition(node, condition)
+            }
+            "argument_not_sanitized" => {
+                self.check_argument_not_sanitized_condition(node, source, condition)
+            }
+            "has_sibling_pattern" => {
+                self.check_has_sibling_pattern_condition(node, source, condition)
+            }
+            _ => {
+                // Unknown condition type, default to false for safety
+                false
+            }
+        }
+    }
+
+    fn check_has_argument_condition(
+        &self,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        condition: &Condition,
+    ) -> bool {
+        if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
+            // If specific position is specified, check only that argument
+            if let Some(position) = condition.argument_position {
+                if let Some(arg) = args_node.named_child(position) {
+                    return self.check_argument_matches(arg, source, condition);
+                }
+                return false;
+            }
+            
+            // Otherwise check all arguments
+            for i in 0..args_node.named_child_count() {
+                if let Some(arg) = args_node.named_child(i) {
+                    if self.check_argument_matches(arg, source, condition) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn check_argument_matches(
+        &self,
+        arg: tree_sitter::Node,
+        source: &[u8],
+        condition: &Condition,
+    ) -> bool {
+        let arg_text = get_node_text(&arg, source);
+        
+        // Check node type if specified
+        if let Some(expected_type) = &condition.node_type {
+            if arg.kind() != expected_type {
+                return false;
+            }
+        }
+        
+        // Check pattern(s)
+        if let Some(pattern) = &condition.pattern {
+            return match_pattern(pattern, &arg_text);
+        }
+        
+        if let Some(patterns) = &condition.patterns {
+            return match_any_pattern(patterns, &arg_text);
+        }
+        
+        true
+    }
+
+    fn check_in_context_condition(
+        &self,
+        node: &tree_sitter::Node,
+        _condition: &Condition,
+    ) -> bool {
+        if let Some(not_in) = &_condition.not_in {
+            if let Some(parent) = node.parent() {
+                if not_in.contains(&"comment".to_string()) && parent.kind() == "comment" {
+                    return false;
+                }
+                if not_in.contains(&"string".to_string()) && parent.kind() == "string" {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn check_has_parent_condition(
+        &self,
+        node: &tree_sitter::Node,
+        condition: &Condition,
+    ) -> bool {
+        if let Some(parent_type) = &condition.parent_type {
+            if let Some(parent) = node.parent() {
+                return parent.kind() == parent_type;
+            }
+            return false;
+        }
+        true
+    }
+
+    fn check_not_literal_condition(
+        &self,
+        node: &tree_sitter::Node,
+        _source: &[u8],
+        condition: &Condition,
+    ) -> bool {
+        if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
+            if let Some(position) = condition.argument_position {
+                if let Some(arg) = args_node.named_child(position) {
+                    return !is_literal_node(&arg);
+                }
+            } else {
+                // Check if any argument is not literal
+                for i in 0..args_node.named_child_count() {
+                    if let Some(arg) = args_node.named_child(i) {
+                        if !is_literal_node(&arg) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn check_has_ancestor_condition(
+        &self,
+        node: &tree_sitter::Node,
+        condition: &Condition,
+    ) -> bool {
+        if let Some(ancestor_types) = &condition.ancestor_types {
+            let mut current = node.parent();
+            let mut depth = 0;
+            
+            while let Some(parent) = current {
+                if depth > 20 {  // Limit search depth
+                    break;
+                }
+                
+                if ancestor_types.contains(&parent.kind().to_string()) {
+                    return true;
+                }
+                
+                current = parent.parent();
+                depth += 1;
+            }
+        }
+        false
+    }
+
+    fn check_argument_not_sanitized_condition(
+        &self,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        condition: &Condition,
+    ) -> bool {
+        if let Some(sanitizer_patterns) = &condition.patterns {
+            if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
+                for i in 0..args_node.named_child_count() {
+                    if let Some(arg) = args_node.named_child(i) {
+                        let arg_text = get_node_text(&arg, source);
+                        
+                        // Check if argument contains any sanitization patterns
+                        for sanitizer in sanitizer_patterns {
+                            if match_pattern(sanitizer, &arg_text) {
+                                return false;  // Found sanitization, so condition fails
+                            }
+                        }
+                    }
+                }
+            }
+            return true;  // No sanitization found
+        }
+        true
+    }
+
+    fn check_has_sibling_pattern_condition(
+        &self,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        condition: &Condition,
+    ) -> bool {
+        if let Some(patterns) = &condition.patterns {
+            if let Some(parent) = node.parent() {
+                let mut cursor = parent.walk();
+                if cursor.goto_first_child() {
+                    loop {
+                        let sibling = cursor.node();
+                        if sibling != *node {
+                            let sibling_text = get_node_text(&sibling, source);
+                            if match_any_pattern(patterns, &sibling_text) {
+                                return true;
+                            }
+                        }
+                        if !cursor.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn has_matching_rules(&self, func_name: &str) -> bool {
@@ -150,39 +337,192 @@ impl VulnerabilityScanner {
             for rule in rules {
                 if match_pattern(&rule.pattern, func_name) {
                     let conditions = rule.conditions.as_deref().unwrap_or(&[]);
+                    
+                    // Enhanced condition checking
                     if self.check_ast_conditions(node, source, conditions) {
+                        // Check for sanitization if specified in rule
+                        if let Some(sanitizers) = &rule.sanitizers {
+                            if self.check_for_sanitization(node, source, sanitizers) {
+                                continue; // Skip this finding if sanitized
+                            }
+                        }
+                        
                         let finding_type = rule.finding_type.as_ref().unwrap_or(&category.to_string()).clone();
                         
+                        // Enhanced injection sink analysis
                         if category == "injection_sinks" {
-                            if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
-                                for i in 0..args_node.named_child_count() {
-                                    if let Some(arg) = args_node.named_child(i) {
-                                        let arg_text = get_node_text(&arg, source);
-                                        if check_for_injection_pattern(&arg_text, self.parser.language_support()) {
-                                            findings.push(Finding {
-                                                file: filepath.to_string(),
-                                                line: node.start_position().row + 1,
-                                                function: func_name.to_string(),
-                                                finding_type: finding_type.clone(),
-                                                code: get_node_text(node, source).trim().to_string(),
-                                            });
-                                            break;
-                                        }
-                                    }
-                                }
+                            if self.has_injection_pattern(node, source) {
+                                let mut finding = Finding {
+                                    file: filepath.to_string(),
+                                    line: node.start_position().row + 1,
+                                    function: func_name.to_string(),
+                                    finding_type: finding_type.clone(),
+                                    code: get_node_text(node, source).trim().to_string(),
+                                };
+                                
+                                // Add confidence and severity metadata
+                                self.add_finding_metadata(&mut finding, rule, node, source);
+                                findings.push(finding);
                             }
                         } else {
-                            findings.push(Finding {
-                                file: filepath.to_string(),
-                                line: node.start_position().row + 1,
-                                function: func_name.to_string(),
-                                finding_type,
-                                code: get_node_text(node, source).trim().to_string(),
-                            });
+                            // For non-injection rules, apply enhanced filtering
+                            if self.should_report_finding(node, source, rule) {
+                                let mut finding = Finding {
+                                    file: filepath.to_string(),
+                                    line: node.start_position().row + 1,
+                                    function: func_name.to_string(),
+                                    finding_type,
+                                    code: get_node_text(node, source).trim().to_string(),
+                                };
+                                
+                                self.add_finding_metadata(&mut finding, rule, node, source);
+                                findings.push(finding);
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+
+    fn check_for_sanitization(
+        &self,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        sanitizers: &[String],
+    ) -> bool {
+        // Check if any arguments contain sanitization calls
+        if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
+            for i in 0..args_node.named_child_count() {
+                if let Some(arg) = args_node.named_child(i) {
+                    let arg_text = get_node_text(&arg, source);
+                    
+                    // Check if argument contains any known sanitization functions
+                    for sanitizer in sanitizers {
+                        if match_pattern(sanitizer, &arg_text) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Also check surrounding context for sanitization
+        self.check_context_for_sanitization(node, source, sanitizers)
+    }
+
+    fn check_context_for_sanitization(
+        &self,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        sanitizers: &[String],
+    ) -> bool {
+        // Look at previous statements in the same scope for sanitization
+        if let Some(parent) = node.parent() {
+            let mut cursor = parent.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let sibling = cursor.node();
+                    
+                    // If we've reached our node, stop looking
+                    if sibling == *node {
+                        break;
+                    }
+                    
+                    // Check if this previous statement contains sanitization
+                    let sibling_text = get_node_text(&sibling, source);
+                    for sanitizer in sanitizers {
+                        if match_pattern(sanitizer, &sibling_text) {
+                            return true;
+                        }
+                    }
+                    
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        false
+    }
+
+    fn has_injection_pattern(&self, node: &tree_sitter::Node, source: &[u8]) -> bool {
+        if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
+            for i in 0..args_node.named_child_count() {
+                if let Some(arg) = args_node.named_child(i) {
+                    // Skip if argument is a literal (low risk)
+                    if is_literal_node(&arg) {
+                        continue;
+                    }
+                    
+                    let arg_text = get_node_text(&arg, source);
+                    if check_for_injection_pattern(&arg_text, self.parser.language_support()) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn should_report_finding(
+        &self,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        rule: &Rule,
+    ) -> bool {
+        // Apply confidence-based filtering
+        let confidence = rule.confidence.as_deref().unwrap_or("medium");
+        
+        match confidence {
+            "low" => {
+                // For low confidence rules, be more strict
+                !is_in_protective_context(node) && !self.has_obvious_guards(node, source)
+            }
+            "medium" => {
+                // For medium confidence, apply moderate filtering
+                !self.has_obvious_guards(node, source)
+            }
+            "high" => {
+                // High confidence rules report more freely
+                true
+            }
+            _ => true
+        }
+    }
+
+    fn has_obvious_guards(&self, node: &tree_sitter::Node, source: &[u8]) -> bool {
+        // Look for common guard patterns in the immediate vicinity
+        let guard_patterns = [
+            "if.*valid", "if.*check", "if.*safe", "if.*sanitize",
+            "try:", "except:", "validate", "escape", "quote"
+        ];
+        
+        // Check preceding and following statements
+        if let Some(parent) = node.parent() {
+            let parent_text = get_node_text(&parent, source);
+            
+            for pattern in &guard_patterns {
+                if match_pattern(pattern, &parent_text.to_lowercase()) {
+                    return true;
+                }
+            }
+        }
+        
+        false
+    }
+
+    fn add_finding_metadata(&self, finding: &mut Finding, rule: &Rule, node: &tree_sitter::Node, _source: &[u8]) {
+        // This would extend Finding struct to include metadata
+        // For now, we'll append metadata to the finding_type for backward compatibility
+        
+        let confidence = rule.confidence.as_deref().unwrap_or("medium");
+        let _severity = rule.severity.as_deref().unwrap_or("medium");
+        
+        // Only modify finding_type for low confidence findings to help users prioritize
+        if confidence == "low" || (confidence == "medium" && is_in_protective_context(node)) {
+            finding.finding_type = format!("{}_low_confidence", finding.finding_type);
         }
     }
 

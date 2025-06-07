@@ -36,6 +36,25 @@ fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) 
     print_summary(findings);
 }
 
+// Helper function to count the total number of rules
+fn count_total_rules(rules: &Rules) -> usize {
+    let mut count = 0;
+    
+    if let Some(rules) = &rules.injection_sinks { count += rules.len(); }
+    if let Some(rules) = &rules.crypto_rules { count += rules.len(); }
+    if let Some(rules) = &rules.path_traversal { count += rules.len(); }
+    if let Some(rules) = &rules.weak_random { count += rules.len(); }
+    if let Some(rules) = &rules.hardcoded_secrets { count += rules.len(); }
+    if let Some(rules) = &rules.malware_detection { count += rules.len(); }
+    
+    // Add other rule groups
+    for rules in rules.other.values() {
+        count += rules.len();
+    }
+    
+    count
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -48,6 +67,7 @@ fn main() -> Result<()> {
     }
 
     let rules = Rules::load_from_file(&cli.rules_file)?;
+    let total_rules = count_total_rules(&rules);
     let mut scanner = VulnerabilityScanner::new(&cli.language, rules)?;
 
     let mode = if cli.single_threaded { "single-threaded" } else { "parallel" };
@@ -61,6 +81,7 @@ fn main() -> Result<()> {
     println!("📂 Target directory: {}", cli.root_dir);
     println!("🔧 Language: {}", cli.language);
     println!("📋 Rules file: {}", cli.rules_file);
+    println!("🔍 Running scan with {} rules", total_rules);
     println!();
 
     let start_time = std::time::Instant::now();

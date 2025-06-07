@@ -503,93 +503,21 @@
             )),
         ),
     ]),
-    malware_detection: Some([
-        // Keylogging - Windows API calls
+    deserialization: [
+        // pickle deserialization vulnerability
         (
-            pattern: "ctypes.windll.user32.GetAsyncKeyState",
-            finding_type: Some("keylogger"),
-            conditions: None,
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        (
-            pattern: "win32api.GetAsyncKeyState",
-            finding_type: Some("keylogger"),
-            conditions: None,
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Keylogging - pynput library
-        (
-            pattern: "pynput.keyboard.Listener",
-            finding_type: Some("keylogger"),
-            conditions: None,
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Screen capture/recording
-        (
-            pattern: "ImageGrab.grab",
-            finding_type: Some("screen_capture"),
-            conditions: None,
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        (
-            pattern: "pyautogui.screenshot",
-            finding_type: Some("screen_capture"),
-            conditions: None,
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Process injection/manipulation
-        (
-            pattern: "ctypes.windll.kernel32.OpenProcess",
-            finding_type: Some("process_injection"),
-            conditions: None,
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        (
-            pattern: "ctypes.windll.kernel32.WriteProcessMemory",
-            finding_type: Some("process_injection"),
-            conditions: None,
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Registry manipulation (Windows)
-        (
-            pattern: "winreg.OpenKey",
-            finding_type: Some("registry_manipulation"),
+            pattern: "pickle.loads",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("high"),
             conditions: Some([
                 (
-                    type: "has_argument",
-                    pattern: Some("*HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
+                    type: "not_literal",
+                    argument_position: Some(0),
+                ),
+                (
+                    type: "not_in_protective_context",
+                ),
             ]),
             file_types: Some((
                 extensions: [".py"],
@@ -598,27 +526,98 @@
             )),
         ),
         (
-            pattern: "winreg.SetValueEx",
-            finding_type: Some("registry_manipulation"),
-            conditions: None,
+            pattern: "pickle.load",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("high"),
+            conditions: Some([
+                (
+                    type: "not_in_protective_context",
+                ),
+            ]),
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
                 exclude_patterns: None,
             )),
         ),
-        // Download and execute patterns
+        // yaml deserialization vulnerability
         (
-            pattern: "urllib.request.urlretrieve",
-            finding_type: Some("download_execute"),
+            pattern: "yaml.load",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("medium"),
             conditions: Some([
                 (
-                    type: "has_argument",
-                    pattern: Some("*.exe*"),
+                    type: "not_has_argument",
+                    pattern: Some("Loader=yaml.SafeLoader"),
                     name: None,
                     not_in: None,
                     parent_type: None,
-                )
+                ),
+                (
+                    type: "not_has_argument",
+                    pattern: Some("Loader=yaml.CSafeLoader"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                ),
+                (
+                    type: "not_literal",
+                    argument_position: Some(0),
+                ),
+                (
+                    type: "not_in_protective_context",
+                ),
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // eval deserialization vulnerability
+        (
+            pattern: "eval",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("critical"),
+            confidence: Some("high"),
+            conditions: Some([
+                (
+                    type: "not_literal",
+                    argument_position: Some(0),
+                ),
+                (
+                    type: "not_in_protective_context",
+                ),
+                (
+                    type: "argument_not_sanitized",
+                    patterns: Some(["*escape*", "*sanitize*", "*validate*"]),
+                ),
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+            sanitizers: Some([
+                "*escape*", "*sanitize*", "*validate*", "ast.literal_eval"
+            ]),
+        ),
+        // marshal deserialization vulnerability
+        (
+            pattern: "marshal.loads",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("high"),
+            conditions: Some([
+                (
+                    type: "not_literal",
+                    argument_position: Some(0),
+                ),
+                (
+                    type: "not_in_protective_context",
+                ),
             ]),
             file_types: Some((
                 extensions: [".py"],
@@ -627,16 +626,14 @@
             )),
         ),
         (
-            pattern: "requests.get",
-            finding_type: Some("download_execute"),
+            pattern: "marshal.load",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("high"),
             conditions: Some([
                 (
-                    type: "has_argument",
-                    pattern: Some("*.exe*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
+                    type: "not_in_protective_context",
+                ),
             ]),
             file_types: Some((
                 extensions: [".py"],
@@ -644,260 +641,6 @@
                 exclude_patterns: None,
             )),
         ),
-        // File system manipulation - suspicious file creation
-        (
-            pattern: "open",
-            finding_type: Some("suspicious_file_creation"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*C:\\\\Windows\\\\System32*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Anti-debugging/analysis techniques
-        (
-            pattern: "ctypes.windll.kernel32.IsDebuggerPresent",
-            finding_type: Some("anti_analysis"),
-            conditions: None,
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        (
-            pattern: "psutil.process_iter",
-            finding_type: Some("anti_analysis"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*debugger*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Network backdoor/reverse shell patterns
-        (
-            pattern: "socket.socket",
-            finding_type: Some("backdoor"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*bind*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        (
-            pattern: "subprocess.Popen",
-            finding_type: Some("reverse_shell"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*/bin/sh*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Data exfiltration via email
-        (
-            pattern: "smtplib.SMTP",
-            finding_type: Some("data_exfiltration"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*attachment*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Persistence mechanisms - startup folder
-        (
-            pattern: "shutil.copy",
-            finding_type: Some("persistence"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*Startup*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Cryptomining indicators
-        (
-            pattern: "hashlib.sha256",
-            finding_type: Some("cryptomining"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*nonce*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Code obfuscation/packing
-        (
-            pattern: "base64.b64decode",
-            finding_type: Some("code_obfuscation"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*exec*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        (
-            pattern: "zlib.decompress",
-            finding_type: Some("code_obfuscation"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*exec*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Suspicious network communication
-        (
-            pattern: "socket.socket",
-            finding_type: Some("suspicious_network"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*443*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Browser credential stealing
-        (
-            pattern: "sqlite3.connect",
-            finding_type: Some("credential_theft"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*Login Data*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Ransomware indicators - file encryption
-        (
-            pattern: "Crypto.Cipher.AES.new",
-            finding_type: Some("ransomware"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*encrypt*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-        // Mass file operations (potential ransomware)
-        (
-            pattern: "os.walk",
-            finding_type: Some("mass_file_operation"),
-            conditions: Some([
-                (
-                    type: "has_argument",
-                    pattern: Some("*encrypt*"),
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
-                )
-            ]),
-            file_types: Some((
-                extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
-        ),
-    ]),
+    ],
+
 }
