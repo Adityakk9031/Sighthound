@@ -1,0 +1,236 @@
+// Java vulnerability rules - Working version
+{
+    injection_sinks: Some([
+        // SQL Injection - Basic detection
+        (
+            pattern: "*.execute",
+            finding_type: Some("sql_injection"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "*.executeQuery",
+            finding_type: Some("sql_injection"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "*.executeUpdate",
+            finding_type: Some("sql_injection"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Command Injection - Basic detection
+        (
+            pattern: "Runtime.exec",
+            finding_type: Some("command_injection"),
+            severity: Some("high"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "*.exec",
+            finding_type: Some("command_injection"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),  
+    deserialization: [
+        // Java ObjectInputStream deserialization - High Priority
+        (
+            pattern: "readObject",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("critical"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: ["*Controller*", "*Servlet*", "*Service*", "*Handler*", "*Endpoint*"],
+                exclude_patterns: None,
+            )),
+        ),
+        // ObjectInputStream constructor - Direct pattern  
+        (
+            pattern: "new ObjectInputStream",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: ["*Controller*", "*Servlet*", "*Service*", "*Handler*", "*Endpoint*"],
+                exclude_patterns: None,
+            )),
+        ),
+        // ByteArrayInputStream in web contexts
+        (
+            pattern: "new ByteArrayInputStream",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: ["*Controller*", "*Servlet*", "*Service*", "*Handler*", "*Endpoint*"],
+                exclude_patterns: None,
+            )),
+        ),
+        // XMLDecoder deserialization vulnerability
+        (
+            pattern: "new XMLDecoder",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "XMLDecoder.readObject",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Jackson deserialization vulnerability
+        (
+            pattern: "ObjectMapper.readValue",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "*.readValue",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("medium"),
+            confidence: Some("low"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: ["*Controller*", "*Servlet*", "*Service*"],
+                exclude_patterns: None,
+            )),
+        ),
+        // Gson deserialization vulnerability
+        (
+            pattern: "Gson.fromJson",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "*.fromJson",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("medium"),
+            confidence: Some("low"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: ["*Controller*", "*Servlet*", "*Service*"],
+                exclude_patterns: None,
+            )),
+        ),
+        // XStream deserialization vulnerability
+        (
+            pattern: "XStream.fromXML",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "*.fromXML",
+            finding_type: Some("insecure_deserialization"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: ["*Controller*", "*Servlet*", "*Service*"],
+                exclude_patterns: None,
+            )),
+        ),
+    ],
+    crypto_rules: Some([
+        // Weak encryption algorithms
+        (
+            pattern: "Cipher.getInstance",
+            finding_type: Some("weak_crypto"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Weak hash algorithms
+        (
+            pattern: "MessageDigest.getInstance",
+            finding_type: Some("weak_crypto"),
+            severity: Some("medium"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".java"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ])
+}

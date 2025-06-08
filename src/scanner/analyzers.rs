@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::path::Path;
-use std::collections::HashMap;
 use crate::language::LanguageSupport;
 use crate::rules::{Rule, Rules, Condition, rule_matches_pattern};
 use crate::{traverse_calls_only, match_pattern, get_node_text_slice, check_for_injection_pattern};
@@ -11,7 +10,6 @@ use regex;
 pub struct FileTypeAwareAnalyzer {
     language_support: Box<dyn LanguageSupport>,
     rules: Rules,
-    rules_by_extension: HashMap<String, Vec<Rule>>,
     stats: FilteringStats,
 }
 
@@ -23,7 +21,6 @@ impl FileTypeAwareAnalyzer {
         Ok(Self {
             language_support,
             rules,
-            rules_by_extension: HashMap::new(),
             stats: FilteringStats::new(),
         })
     }

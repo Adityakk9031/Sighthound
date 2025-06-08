@@ -1,0 +1,156 @@
+{
+    xss_prevention_rules: Some([
+        // Django HttpResponse with user input - XSS risk
+        (
+            pattern: "HttpResponse",
+            finding_type: Some("django_xss"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: Some([
+                (type: "not_literal", argument_position: Some(0)),
+                (
+                    type: "has_argument", 
+                    patterns: Some(["*request.GET*", "*request.POST*", "*request.body*", "*request.data*", "*user*", "*form*"]),
+                ),
+                // Not properly escaped
+                (
+                    type: "argument_not_sanitized", 
+                    patterns: Some(["*escape*", "*mark_safe*", "*render*", "*template*"]),
+                ),
+            ],
+            sanitizers: Some([
+                "django.utils.html.escape",
+                "django.utils.safestring.mark_safe",
+                "django.shortcuts.render",
+            ],
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*templates*"]),
+                exclude_patterns: Some(["*test*", "*migration*"]),
+            )),
+        ),
+        
+        // Django mark_safe with user input
+        (
+            pattern: "mark_safe",
+            finding_type: Some("django_xss_mark_safe"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: Some([
+                (type: "not_literal", argument_position: Some(0)),
+                // Contains user input
+                (type: "has_argument", patterns: Some([
+                    "*request*", "*user*", "*form*", "*input*", "*POST*", "*GET*", "*+*", "*%*", "*format*", "*f\"*"
+                ])),
+                // Not properly escaped first
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*escape*", "*conditional_escape*"
+                ])),
+            ],
+            sanitizers: Some([
+                "django.utils.html.escape",
+                "django.utils.html.conditional_escape"
+            ],
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*templates*", "*utils*"]),
+                exclude_patterns: Some(["*test*", "*migration*"]),
+            )),
+        ),
+        
+        // Template context without autoescape
+        (
+            patterns: [
+                "django.template.Context",
+                "*.render_to_response"
+            ],
+            finding_type: Some("django_template_xss"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                (type: "not_literal", argument_position: Some(0)),
+                // Look for disabled autoescape
+                (type: "has_argument", patterns: Some([
+                    "*autoescape=False*", "*safe*", "*mark_safe*"
+                ])),
+                // Contains user input
+                (type: "has_argument", patterns: Some([
+                    "*request*", "*user*", "*form*", "*input*", "*POST*", "*GET*"
+                ])),
+            ],
+            sanitizers: Some([
+                "django.utils.html.escape",
+                "django.utils.safestring.mark_safe"
+            ],
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*context_processors*"]),
+                exclude_patterns: Some(["*test*"]),
+            )),
+        ),
+        
+        // Direct template string rendering with user input
+        (
+            patterns: [
+                "django.template.Template",
+                "Template.render"
+            ],
+            finding_type: Some("django_template_injection"),
+            severity: Some("high"), 
+            confidence: Some("high"),
+            conditions: Some([
+                (type: "not_literal", argument_position: Some(0)),
+                // Look for request data in template
+                (type: "has_argument", patterns: Some([
+                    "*request*", "*user*", "*input*", "*form*", "*POST*", "*GET*"
+                ])),
+                // Not using safe template loading
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*get_template*", "*render*", "*loader*", "*escape*"
+                ])),
+                // Exclude comments and test code
+                (type: "in_context", not_in: Some(["comment", "string_literal"])),
+            ],
+            sanitizers: Some([
+                "django.template.loader.get_template",
+                "django.shortcuts.render",
+                "django.utils.html.escape"
+            ],
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: Some(["*test*", "*migration*", "*example*"]),
+            )),
+        ),
+        
+        // Unsafe mark_safe usage
+        (
+            pattern: "django.utils.safestring.mark_safe",
+            finding_type: Some("django_unsafe_mark_safe"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                (type: "not_literal", argument_position: Some(0)),
+                // Contains user input
+                (type: "has_argument", patterns: Some([
+                    "*request*", "*user*", "*form*", "*input*", "*+*", "*%*", "*format*", "*f\"*", "*.format(*"
+                ])),
+                // Not properly escaped first
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*escape*", "*conditional_escape*"
+                ])),
+                // Exclude comments and test code
+                (type: "in_context", not_in: Some(["comment", "string_literal"])),
+            ],
+            sanitizers: Some([
+                "django.utils.html.escape",
+                "django.utils.html.conditional_escape"
+            ],
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: Some(["*test*", "*example*"]),
+            )),
+        ),
+    ],
+}
