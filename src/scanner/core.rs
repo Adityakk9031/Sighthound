@@ -12,6 +12,7 @@ use crate::parser::{LanguageParser, get_node_text, traverse_calls_only};
 use crate::rules::{Rules, Rule, Condition, match_pattern, rule_matches_pattern, match_any_pattern, check_for_injection_pattern, is_literal_node, is_in_protective_context};
 use super::types::Finding;
 use super::pool::{ParserPool, PooledParser};
+use super::prefilter::PreFilter;
 
 pub struct VulnerabilityScanner {
     parser: LanguageParser,
@@ -638,11 +639,12 @@ impl VulnerabilityScanner {
         }
     }
 
-    /// Discover files with the scanner's target extension in the given directory
+    /// Discover files with intelligent pre-filtering
     fn discover_files(&self, root_dir: &str) -> Result<Vec<PathBuf>> {
         let extension = self.parser.file_extension().to_string();
         
-        let files: Vec<PathBuf> = WalkDir::new(root_dir)
+        // First, discover all files with target extension
+        let all_files: Vec<PathBuf> = WalkDir::new(root_dir)
             .into_iter()
             .filter_map(|entry| entry.ok())
             .filter(|entry| {
@@ -654,7 +656,17 @@ impl VulnerabilityScanner {
             .map(|entry| entry.path().to_path_buf())
             .collect();
 
-        Ok(files)
+        // Apply intelligent pre-filtering
+        let prefilter = PreFilter::new(&self.rules, &self.language_name);
+        let (filtered_files, stats) = prefilter.filter_files(all_files);
+        
+        // Show filtering stats if we filtered anything out
+        if stats.filtered_out > 0 {
+            let mode = if prefilter.is_malicious_scan() { "malicious" } else { "general" };
+            println!("🔍 Scan mode: {} - {}", mode, stats);
+        }
+
+        Ok(filtered_files)
     }
 
     /// Setup progress bars for file discovery and scanning
