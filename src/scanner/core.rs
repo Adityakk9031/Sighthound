@@ -335,6 +335,11 @@ impl VulnerabilityScanner {
     ) {
         if let Some(rules) = rules_option {
             for rule in rules {
+                // Check if rule applies to this file first
+                if !self.rule_applies_to_file(rule, filepath) {
+                    continue;
+                }
+                
                 if rule_matches_pattern(rule, func_name) {
                     let conditions = rule.conditions.as_deref().unwrap_or(&[]);
                     
@@ -383,6 +388,107 @@ impl VulnerabilityScanner {
                 }
             }
         }
+    }
+
+    /// Check if a rule applies to a specific file based on file_types filters
+    fn rule_applies_to_file(&self, rule: &Rule, filepath: &str) -> bool {
+        // If rule has file_types filter, check it
+        if let Some(file_types) = &rule.file_types {
+            let file_path = std::path::Path::new(filepath);
+            let extension = file_path.extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            
+            // Check extensions filter
+            if let Some(extensions) = &file_types.extensions {
+                if !extensions.iter().any(|ext| {
+                    let clean_ext = if ext.starts_with('.') { &ext[1..] } else { ext };
+                    clean_ext.to_lowercase() == extension
+                }) {
+                    return false;
+                }
+            }
+
+            // Check include_patterns - file must match at least one include pattern (if any)
+            if let Some(include_patterns) = &file_types.include_patterns {
+                if !include_patterns.is_empty() {
+                    let matches_include = include_patterns.iter().any(|pattern| {
+                        self.matches_glob_pattern(pattern, filepath)
+                    });
+                    if !matches_include {
+                        return false;
+                    }
+                }
+            }
+
+            // Check exclude_patterns - file must NOT match any exclude pattern
+            if let Some(exclude_patterns) = &file_types.exclude_patterns {
+                let matches_exclude = exclude_patterns.iter().any(|pattern| {
+                    self.matches_glob_pattern(pattern, filepath)
+                });
+                if matches_exclude {
+                    return false;
+                }
+            }
+        }
+        
+        // If no file type filter, or all filters pass, rule applies to this file
+        true
+    }
+
+    /// Check if a file path matches a glob pattern
+    fn matches_glob_pattern(&self, pattern: &str, file_path: &str) -> bool {
+        use glob::Pattern;
+        
+        // Try exact glob pattern matching first (full path)
+        if let Ok(glob_pattern) = Pattern::new(pattern) {
+            if glob_pattern.matches(file_path) {
+                return true;
+            }
+            
+            // Also try matching against just the filename
+            if let Some(filename) = std::path::Path::new(file_path).file_name() {
+                if let Some(filename_str) = filename.to_str() {
+                    if glob_pattern.matches(filename_str) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Fallback to simple wildcard matching (for backward compatibility)
+        if pattern.contains('*') {
+            let regex_pattern = pattern.replace('*', ".*");
+            if let Ok(regex) = regex::Regex::new(&format!("^{}$", regex_pattern)) {
+                // Try full path
+                if regex.is_match(file_path) {
+                    return true;
+                }
+                // Try just filename
+                if let Some(filename) = std::path::Path::new(file_path).file_name() {
+                    if let Some(filename_str) = filename.to_str() {
+                        if regex.is_match(filename_str) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Exact string match - check both full path and filename
+        if file_path.contains(pattern) {
+            return true;
+        }
+        if let Some(filename) = std::path::Path::new(file_path).file_name() {
+            if let Some(filename_str) = filename.to_str() {
+                if filename_str.contains(pattern) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     fn check_for_sanitization(

@@ -5,6 +5,8 @@ use crate::language::LanguageSupport;
 use crate::rules::{Rule, Rules, Condition, rule_matches_pattern};
 use crate::{traverse_calls_only, match_pattern, get_node_text_slice, check_for_injection_pattern};
 use super::types::{Finding, ScanContext, FilteringStats};
+use glob::Pattern;
+use regex;
 
 pub struct FileTypeAwareAnalyzer {
     language_support: Box<dyn LanguageSupport>,
@@ -49,20 +51,21 @@ impl FileTypeAwareAnalyzer {
     }
 
     fn get_applicable_rules(&mut self, file_path: &Path, _source: &[u8]) -> Vec<Rule> {
-        let extension = file_path.extension()
+        let _extension = file_path.extension()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_lowercase();
 
+        // NOTE: Disabled caching for now since include/exclude patterns depend on full file path
+        // TODO: Implement more sophisticated caching that considers path patterns
         // Check cache first
-        if let Some(cached_rules) = self.rules_by_extension.get(&extension) {
-            self.stats.cache_hits += 1;
-            return cached_rules.clone();
-        }
+        // if let Some(cached_rules) = self.rules_by_extension.get(&extension) {
+        //     self.stats.cache_hits += 1;
+        //     return cached_rules.clone();
+        // }
 
-        // Collect all rules first to avoid borrow issues
+        // Collect all rules
         let mut all_rules = Vec::new();
-        
         if let Some(rules) = &self.rules.injection_sinks {
             all_rules.extend(rules.iter().cloned());
         }
@@ -91,27 +94,110 @@ impl FileTypeAwareAnalyzer {
             }
         }
 
+        // NOTE: Disabled caching for now since include/exclude patterns depend on full file path
         // Cache the result
-        self.rules_by_extension.insert(extension, applicable_rules.clone());
+        // self.rules_by_extension.insert(extension, applicable_rules.clone());
         applicable_rules
     }
 
     fn rule_applies_to_file(&self, rule: &Rule, file_path: &Path) -> bool {
         // If rule has file_types filter, check it
         if let Some(file_types) = self.get_rule_file_types(rule) {
+            let file_path_str = file_path.to_string_lossy();
             let extension = file_path.extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_lowercase();
             
-            // Check if extensions filter exists and contains the file extension
+            // Check extensions filter
             if let Some(extensions) = &file_types.extensions {
-                return extensions.contains(&extension);
+                if !extensions.iter().any(|ext| {
+                    let clean_ext = if ext.starts_with('.') { &ext[1..] } else { ext };
+                    clean_ext.to_lowercase() == extension
+                }) {
+                    return false;
+                }
+            }
+
+            // Check include_patterns - file must match at least one include pattern (if any)
+            if let Some(include_patterns) = &file_types.include_patterns {
+                if !include_patterns.is_empty() {
+                    let matches_include = include_patterns.iter().any(|pattern| {
+                        let matches = self.matches_glob_pattern(pattern, &file_path_str);
+                        matches
+                    });
+                    if !matches_include {
+                        return false;
+                    }
+                }
+            }
+
+            // Check exclude_patterns - file must NOT match any exclude pattern
+            if let Some(exclude_patterns) = &file_types.exclude_patterns {
+                let matches_exclude = exclude_patterns.iter().any(|pattern| {
+                    let matches = self.matches_glob_pattern(pattern, &file_path_str);
+                    matches
+                });
+                if matches_exclude {
+                    return false;
+                }
             }
         }
         
-        // If no file type filter, rule applies to all files
+        // If no file type filter, or all filters pass, rule applies to this file
         true
+    }
+
+    /// Check if a file path matches a glob pattern
+    fn matches_glob_pattern(&self, pattern: &str, file_path: &str) -> bool {
+        // Try exact glob pattern matching first (full path)
+        if let Ok(glob_pattern) = Pattern::new(pattern) {
+            if glob_pattern.matches(file_path) {
+                return true;
+            }
+            
+            // Also try matching against just the filename
+            if let Some(filename) = std::path::Path::new(file_path).file_name() {
+                if let Some(filename_str) = filename.to_str() {
+                    if glob_pattern.matches(filename_str) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Fallback to simple wildcard matching (for backward compatibility)
+        if pattern.contains('*') {
+            let regex_pattern = pattern.replace('*', ".*");
+            if let Ok(regex) = regex::Regex::new(&format!("^{}$", regex_pattern)) {
+                // Try full path
+                if regex.is_match(file_path) {
+                    return true;
+                }
+                // Try just filename
+                if let Some(filename) = std::path::Path::new(file_path).file_name() {
+                    if let Some(filename_str) = filename.to_str() {
+                        if regex.is_match(filename_str) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Exact string match - check both full path and filename
+        if file_path.contains(pattern) {
+            return true;
+        }
+        if let Some(filename) = std::path::Path::new(file_path).file_name() {
+            if let Some(filename_str) = filename.to_str() {
+                if filename_str.contains(pattern) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     fn get_rule_file_types<'a>(&self, rule: &'a Rule) -> Option<&'a crate::rules::FileTypes> {
