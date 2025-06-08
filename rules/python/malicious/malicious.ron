@@ -53,6 +53,16 @@
                 exclude_patterns: None,
             )),
         ),
+        (
+            pattern: "cv2.VideoCapture",
+            finding_type: Some("screen_capture"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
         // Process injection/manipulation
         (
             pattern: "ctypes.windll.kernel32.OpenProcess",
@@ -66,6 +76,36 @@
         ),
         (
             pattern: "ctypes.windll.kernel32.WriteProcessMemory",
+            finding_type: Some("process_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "ctypes.windll.kernel32.ReadProcessMemory",
+            finding_type: Some("process_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "ctypes.windll.kernel32.VirtualAllocEx",
+            finding_type: Some("process_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "ctypes.windll.kernel32.CreateRemoteThread",
             finding_type: Some("process_injection"),
             conditions: None,
             file_types: Some((
@@ -95,6 +135,16 @@
         ),
         (
             pattern: "winreg.SetValueEx",
+            finding_type: Some("registry_manipulation"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "winreg.CreateKey",
             finding_type: Some("registry_manipulation"),
             conditions: None,
             file_types: Some((
@@ -346,6 +396,42 @@
                 (
                     type: "has_argument",
                     pattern: Some("*Login Data*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "sqlite3.connect",
+            finding_type: Some("credential_theft"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*Cookies*"),
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "sqlite3.connect",
+            finding_type: Some("credential_theft"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: Some("*Web Data*"),
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -685,6 +771,117 @@
                 include_patterns: None,
                 exclude_patterns: None,
             )),
+        ),
+        // Clipboard libraries
+        // Clipboard access detection - pyperclip
+        (
+            pattern: "pyperclip.paste",
+            finding_type: Some("clipboard_access"),
+            severity: Some("medium"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "pyperclip.copy",
+            finding_type: Some("clipboard_access"),
+            severity: Some("medium"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        // Clipboard access detection - pandas
+        (
+            pattern: "pandas.read_clipboard",
+            finding_type: Some("clipboard_access"),
+            severity: Some("medium"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "*.to_clipboard",
+            finding_type: Some("clipboard_access"),
+            severity: Some("medium"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "tkinter.clipboard",
+            finding_type: Some("clipboard_access"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "win32clipboard",
+            finding_type: Some("clipboard_access"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        // Keyboard module hooks
+        (
+            pattern: "keyboard.hook",
+            finding_type: Some("keylogger"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "keyboard.on_press",
+            finding_type: Some("keylogger"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        // Suspicious domains
+        (
+            pattern: "*.tk*",
+            finding_type: Some("suspicious_network"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "*.ml*",
+            finding_type: Some("suspicious_network"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "*.ga*",
+            finding_type: Some("suspicious_network"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "*.cf*",
+            finding_type: Some("suspicious_network"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        // URL shorteners
+        (
+            pattern: "bit.ly",
+            finding_type: Some("suspicious_network"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "t.co",
+            finding_type: Some("suspicious_network"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        (
+            pattern: "tinyurl",
+            finding_type: Some("suspicious_network"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        // Telegram bot API
+        (
+            pattern: "api.telegram.org",
+            finding_type: Some("data_exfiltration"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
         ),
     ]),
 }
