@@ -1,0 +1,55 @@
+{
+    malware_detection: Some([
+        // Process injection/manipulation
+        (
+            pattern: "ctypes.windll.kernel32.OpenProcess",
+            finding_type: Some("process_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "ctypes.windll.kernel32.WriteProcessMemory",
+            finding_type: Some("process_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "ctypes.windll.kernel32.ReadProcessMemory",
+            finding_type: Some("process_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "ctypes.windll.kernel32.VirtualAllocEx",
+            finding_type: Some("process_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "ctypes.windll.kernel32.CreateRemoteThread",
+            finding_type: Some("process_injection"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+} 

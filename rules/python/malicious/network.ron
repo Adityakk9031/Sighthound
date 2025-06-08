@@ -1,0 +1,125 @@
+{
+    malware_detection: Some([
+        // Network backdoor/reverse shell patterns
+        (
+            pattern: "socket.socket",
+            finding_type: Some("backdoor"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*bind*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "subprocess.Popen",
+            finding_type: Some("reverse_shell"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*/bin/sh*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Suspicious network communication
+        (
+            pattern: "socket.socket",
+            finding_type: Some("suspicious_network"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*443*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Suspicious domains - free TLD domains often used for malicious purposes
+        (
+            patterns: [
+                "*.tk*",
+                "*.ml*",
+                "*.ga*",
+                "*.cf*",
+                "*.gq*",
+                "*.xyz*",
+                "*.top*",
+                "*.pw*",
+                "*.cc*",
+                "*.club*",
+                "*.work*",
+                "*.space*",
+                "*.icu*",
+                "*.rest*",
+            ],
+            finding_type: Some("suspicious_network"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    patterns: Some(["*http*", "*url*", "*request*", "*connect*"]),
+                ),
+                (
+                    type: "not_in_protective_context",
+                ),
+            ]),
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+        // URL shorteners - often used to hide malicious destinations
+        (
+            patterns: [
+                "bit.ly",
+                "t.co",
+                "tinyurl",
+                "goo.gl",
+                "ow.ly",
+                "is.gd",
+                "buff.ly",
+                "rebrand.ly",
+                "cutt.ly",
+                "tiny.cc",
+                "shorturl.at",
+            ],
+            finding_type: Some("suspicious_network"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    patterns: Some(["*http*", "*url*", "*request*", "*connect*"]),
+                ),
+                (
+                    type: "not_literal",
+                    argument_position: Some(0),
+                ),
+                (
+                    type: "not_in_protective_context",
+                ),
+            ]),
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+    ]),
+} 

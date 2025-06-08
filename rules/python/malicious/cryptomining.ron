@@ -1,0 +1,23 @@
+{
+    malware_detection: Some([
+        // Cryptomining indicators
+        (
+            pattern: "hashlib.sha256",
+            finding_type: Some("cryptomining"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*nonce*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+} 

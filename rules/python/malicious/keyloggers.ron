@@ -1,0 +1,54 @@
+{
+    malware_detection: Some([
+        // Keylogging - Windows API calls
+        (
+            pattern: "ctypes.windll.user32.GetAsyncKeyState",
+            finding_type: Some("keylogger"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "win32api.GetAsyncKeyState",
+            finding_type: Some("keylogger"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Keylogging - pynput library
+        (
+            pattern: "pynput.keyboard.Listener",
+            finding_type: Some("keylogger"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Keyboard module hooks - multiple patterns in one rule
+        (
+            patterns: [
+                "keyboard.hook",
+                "keyboard.on_press",
+                "keyboard.on_release",
+                "pynput.*",
+            ],
+            finding_type: Some("keylogger"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+} 

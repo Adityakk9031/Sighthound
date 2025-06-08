@@ -1,0 +1,34 @@
+{
+    malware_detection: Some([
+        // Persistence mechanisms - startup folder
+        (
+            pattern: "shutil.copy",
+            finding_type: Some("persistence"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*Startup*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Custom setup.py install command (malicious PyPI package)
+        (
+            pattern: "class CustomInstallCommand",
+            finding_type: Some("malicious_package"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: ["*setup.py*"],
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+} 

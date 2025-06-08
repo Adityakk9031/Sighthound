@@ -1,0 +1,90 @@
+{
+    malware_detection: Some([
+        // Data exfiltration via email
+        (
+            pattern: "smtplib.SMTP",
+            finding_type: Some("data_exfiltration"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*attachment*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Discord webhook exfiltration
+        (
+            pattern: "discord.com/api/webhooks",
+            finding_type: Some("data_exfiltration"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Webhook from URL for exfiltration
+        (
+            pattern: "Webhook.from_url",
+            finding_type: Some("data_exfiltration"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // File upload to anonymous file sharing services
+        (
+            pattern: "requests.post",
+            finding_type: Some("data_exfiltration"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*gofile.io*uploadFile*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // File upload to anonymous file sharing services (anonfiles)
+        (
+            pattern: "requests.post",
+            finding_type: Some("data_exfiltration"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*anonfiles*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Telegram bot API
+        (
+            pattern: "api.telegram.org",
+            finding_type: Some("data_exfiltration"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+    ]),
+} 

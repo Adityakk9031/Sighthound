@@ -1,0 +1,80 @@
+{
+    malware_detection: Some([
+        // Remote code execution with exec and base64
+        (
+            pattern: "exec",
+            finding_type: Some("remote_code_execution"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*base64.b64decode*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Remote code loading via HTTP requests
+        (
+            pattern: "exec",
+            finding_type: Some("remote_code_execution"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*requests.get*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // PowerShell encoded command execution
+        (
+            pattern: "subprocess.Popen",
+            finding_type: Some("suspicious_powershell"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*powershell*EncodedCommand*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Process killing (security tools disabling)
+        (
+            pattern: "subprocess.Popen",
+            finding_type: Some("security_tool_disabling"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*taskkill*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+} 

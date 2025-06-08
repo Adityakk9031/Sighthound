@@ -66,7 +66,7 @@ fn main() -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Failed to set thread pool size: {}", e))?;
     }
 
-    let rules = Rules::load_from_file(&cli.rules_file)?;
+    let rules = Rules::load_from_path(&cli.rules_path)?;
     let total_rules = count_total_rules(&rules);
     let mut scanner = VulnerabilityScanner::new(&cli.language, rules)?;
 
@@ -80,7 +80,15 @@ fn main() -> Result<()> {
     println!("🚀 Starting Corgea Greppy Scan ({} mode{})!", mode, thread_info);
     println!("📂 Target directory: {}", cli.root_dir);
     println!("🔧 Language: {}", cli.language);
-    println!("📋 Rules file: {}", cli.rules_file);
+    
+    // Determine if rules_path is a file or directory for display
+    let path = std::path::Path::new(&cli.rules_path);
+    if path.is_dir() {
+        println!("📋 Rules directory: {}", cli.rules_path);
+    } else {
+        println!("📋 Rules file: {}", cli.rules_path);
+    }
+    
     println!("🔍 Running scan with {} rules", total_rules);
     println!();
 

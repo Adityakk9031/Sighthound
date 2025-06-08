@@ -231,6 +231,105 @@ impl Rules {
         }
     }
 
+    /// Load rules from a file or directory
+    /// If path is a file, loads that single file
+    /// If path is a directory, loads all .ron and .json files and merges them
+    pub fn load_from_path(rules_path: &str) -> Result<Self> {
+        let path = Path::new(rules_path);
+        
+        if path.is_file() {
+            Self::load_from_file(rules_path)
+        } else if path.is_dir() {
+            Self::load_from_directory(rules_path)
+        } else {
+            Err(anyhow::anyhow!("Rules path '{}' is neither a file nor a directory", rules_path))
+        }
+    }
+
+    /// Load all .ron and .json files from a directory and merge them
+    pub fn load_from_directory(rules_dir: &str) -> Result<Self> {
+        let dir_path = Path::new(rules_dir);
+        
+        if !dir_path.is_dir() {
+            return Err(anyhow::anyhow!("Path '{}' is not a directory", rules_dir));
+        }
+
+        let entries = fs::read_dir(dir_path)
+            .context(format!("Failed to read directory: {}", rules_dir))?;
+
+        let mut all_rules = Vec::new();
+        let mut loaded_files = Vec::new();
+
+        for entry in entries {
+            let entry = entry.context("Failed to read directory entry")?;
+            let file_path = entry.path();
+            
+            // Only process .ron and .json files
+            if let Some(extension) = file_path.extension() {
+                let ext_str = extension.to_string_lossy().to_lowercase();
+                if ext_str == "ron" || ext_str == "json" {
+                    let file_path_str = file_path.to_string_lossy();
+                    
+                    match Self::load_from_file(&file_path_str) {
+                        Ok(rules) => {
+                            all_rules.push(rules);
+                            loaded_files.push(file_path_str.to_string());
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to load rules from {}: {}", file_path_str, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        if all_rules.is_empty() {
+            return Err(anyhow::anyhow!("No valid rules files found in directory: {}", rules_dir));
+        }
+
+        println!("📋 Loaded {} rules files: {}", loaded_files.len(), loaded_files.join(", "));
+
+        // Merge all rules into a single Rules instance
+        Self::merge_rules(all_rules)
+    }
+
+    /// Merge multiple Rules instances into one
+    pub fn merge_rules(rules_list: Vec<Self>) -> Result<Self> {
+        if rules_list.is_empty() {
+            return Ok(Self::default());
+        }
+
+        let mut merged = Self::default();
+
+        for rules in rules_list {
+            // Merge each category of rules
+            Self::merge_rule_category(&mut merged.injection_sinks, rules.injection_sinks);
+            Self::merge_rule_category(&mut merged.crypto_rules, rules.crypto_rules);
+            Self::merge_rule_category(&mut merged.path_traversal, rules.path_traversal);
+            Self::merge_rule_category(&mut merged.weak_random, rules.weak_random);
+            Self::merge_rule_category(&mut merged.hardcoded_secrets, rules.hardcoded_secrets);
+            Self::merge_rule_category(&mut merged.malware_detection, rules.malware_detection);
+
+            // Merge other dynamic categories
+            for (key, rules_vec) in rules.other {
+                merged.other.entry(key).or_insert_with(Vec::new).extend(rules_vec);
+            }
+        }
+
+        Ok(merged)
+    }
+
+    /// Helper function to merge a specific rule category
+    fn merge_rule_category(target: &mut Option<Vec<Rule>>, source: Option<Vec<Rule>>) {
+        if let Some(source_rules) = source {
+            if let Some(target_rules) = target {
+                target_rules.extend(source_rules);
+            } else {
+                *target = Some(source_rules);
+            }
+        }
+    }
+
     pub fn save_to_file(&self, rules_file: &str) -> Result<()> {
         let path = Path::new(rules_file);
         let extension = path.extension()
@@ -256,6 +355,20 @@ impl Rules {
 
         fs::write(rules_file, content)
             .context(format!("Failed to write rules file: {}", rules_file))
+    }
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Self {
+            injection_sinks: None,
+            crypto_rules: None,
+            path_traversal: None,
+            weak_random: None,
+            hardcoded_secrets: None,
+            malware_detection: None,
+            other: HashMap::new(),
+        }
     }
 }
 

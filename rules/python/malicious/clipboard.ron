@@ -1,0 +1,20 @@
+{
+    malware_detection: Some([
+        // Clipboard access detection - multiple patterns in one rule (Semgrep-style pattern-either)
+        (
+            patterns: [
+                "pyperclip.paste",
+                "pyperclip.copy",
+                "pandas.read_clipboard",
+                "*.to_clipboard",
+                "tkinter.clipboard",
+                "win32clipboard",
+            ],
+            finding_type: Some("clipboard_access"),
+            severity: Some("medium"),
+            confidence: Some("high"),
+            conditions: None,
+            file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
+        ),
+    ]),
+} 

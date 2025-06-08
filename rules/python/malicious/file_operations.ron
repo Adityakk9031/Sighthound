@@ -1,0 +1,80 @@
+{
+    malware_detection: Some([
+        // File system manipulation - suspicious file creation
+        (
+            pattern: "open",
+            finding_type: Some("suspicious_file_creation"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*C:\\\\Windows\\\\System32*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Mass file operations (potential ransomware)
+        (
+            pattern: "os.walk",
+            finding_type: Some("mass_file_operation"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*encrypt*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Suspicious temporary file creation and execution
+        (
+            pattern: "tempfile.NamedTemporaryFile",
+            finding_type: Some("suspicious_file_execution"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*delete=False*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Sensitive file search by keywords
+        (
+            pattern: "os.listdir",
+            finding_type: Some("file_exfiltration"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*wallet*|*password*|*secret*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+} 

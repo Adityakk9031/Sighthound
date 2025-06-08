@@ -1,0 +1,71 @@
+{
+    malware_detection: Some([
+        // Anti-debugging/analysis techniques
+        (
+            pattern: "ctypes.windll.kernel32.IsDebuggerPresent",
+            finding_type: Some("anti_analysis"),
+            conditions: None,
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        (
+            pattern: "psutil.process_iter",
+            finding_type: Some("anti_analysis"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*debugger*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Suspicious empty exception handling (error suppression)
+        (
+            pattern: "try:",
+            finding_type: Some("anti_analysis"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*except:*pass*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+        // Anti-analysis check for specific files
+        (
+            pattern: "os.path.exists",
+            finding_type: Some("anti_analysis"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    pattern: "*exit*",
+                    name: None,
+                    not_in: None,
+                    parent_type: None,
+                )
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: None,
+            )),
+        ),
+    ]),
+} 
