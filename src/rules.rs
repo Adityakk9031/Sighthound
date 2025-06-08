@@ -225,15 +225,15 @@ impl Rules {
             "ron" => {
                 ron::from_str(&content).context("Failed to parse rules RON")
             },
-            "json" | _ => {
-                serde_json::from_str(&content).context("Failed to parse rules JSON")
+            _ => {
+                Err(anyhow::anyhow!("Unsupported file format. Only .ron files are supported for rules."))
             }
         }
     }
 
     /// Load rules from a file or directory
-    /// If path is a file, loads that single file
-    /// If path is a directory, loads all .ron and .json files and merges them
+    /// If path is a file, loads that single RON file
+    /// If path is a directory, loads all .ron files and merges them
     pub fn load_from_path(rules_path: &str) -> Result<Self> {
         let path = Path::new(rules_path);
         
@@ -246,7 +246,7 @@ impl Rules {
         }
     }
 
-    /// Load all .ron and .json files from a directory and merge them
+    /// Load all .ron files from a directory and merge them
     pub fn load_from_directory(rules_dir: &str) -> Result<Self> {
         let dir_path = Path::new(rules_dir);
         
@@ -264,10 +264,10 @@ impl Rules {
             let entry = entry.context("Failed to read directory entry")?;
             let file_path = entry.path();
             
-            // Only process .ron and .json files
+            // Only process .ron files
             if let Some(extension) = file_path.extension() {
                 let ext_str = extension.to_string_lossy().to_lowercase();
-                if ext_str == "ron" || ext_str == "json" {
+                if ext_str == "ron" {
                     let file_path_str = file_path.to_string_lossy();
                     
                     match Self::load_from_file(&file_path_str) {
@@ -284,7 +284,7 @@ impl Rules {
         }
 
         if all_rules.is_empty() {
-            return Err(anyhow::anyhow!("No valid rules files found in directory: {}", rules_dir));
+            return Err(anyhow::anyhow!("No valid .ron rules files found in directory: {}", rules_dir));
         }
 
         println!("📋 Loaded {} rules files: {}", loaded_files.len(), loaded_files.join(", "));
@@ -337,24 +337,23 @@ impl Rules {
             .unwrap_or("")
             .to_lowercase();
 
-        let content = match extension.as_str() {
+        match extension.as_str() {
             "ron" => {
                 // Use basic pretty config without struct names
                 let config = ron::ser::PrettyConfig::new()
                     .struct_names(false)
                     .enumerate_arrays(false)
                     .compact_arrays(false);
-                ron::ser::to_string_pretty(self, config)
-                    .context("Failed to serialize rules to RON")?
+                let content = ron::ser::to_string_pretty(self, config)
+                    .context("Failed to serialize rules to RON")?;
+                
+                fs::write(rules_file, content)
+                    .context(format!("Failed to write rules file: {}", rules_file))
             },
-            "json" | _ => {
-                serde_json::to_string_pretty(self)
-                    .context("Failed to serialize rules to JSON")?
+            _ => {
+                Err(anyhow::anyhow!("Unsupported file format. Only .ron files are supported for rules."))
             }
-        };
-
-        fs::write(rules_file, content)
-            .context(format!("Failed to write rules file: {}", rules_file))
+        }
     }
 }
 

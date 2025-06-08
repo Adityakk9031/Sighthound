@@ -108,57 +108,12 @@ mod directory_loading_tests {
     }
 
     #[test]
-    fn test_load_from_directory_with_json() {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        
-        // Create RON file
-        let ron_file_path = temp_dir.path().join("rules.ron");
-        let ron_content = r#"{
-            malware_detection: Some([
-                (
-                    pattern: "ron_pattern",
-                    finding_type: Some("ron_type"),
-                    conditions: None,
-                    file_types: None,
-                ),
-            ]),
-        }"#;
-        fs::write(&ron_file_path, ron_content).expect("Failed to write RON file");
-        
-        // Create JSON file
-        let json_file_path = temp_dir.path().join("rules.json");
-        let json_content = r#"{
-            "malware_detection": [
-                {
-                    "pattern": "json_pattern",
-                    "finding_type": "json_type",
-                    "conditions": null,
-                    "file_types": null
-                }
-            ]
-        }"#;
-        fs::write(&json_file_path, json_content).expect("Failed to write JSON file");
-        
-        let rules = Rules::load_from_path(temp_dir.path().to_str().unwrap())
-            .expect("Failed to load rules from directory");
-        
-        let malware_rules = rules.malware_detection.unwrap();
-        assert_eq!(malware_rules.len(), 2);
-        
-        let patterns: Vec<&str> = malware_rules.iter()
-            .filter_map(|r| r.pattern.as_deref())
-            .collect();
-        assert!(patterns.contains(&"ron_pattern"));
-        assert!(patterns.contains(&"json_pattern"));
-    }
-
-    #[test]
     fn test_load_from_empty_directory() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         
         let result = Rules::load_from_path(temp_dir.path().to_str().unwrap());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No valid rules files found"));
+        assert!(result.unwrap_err().to_string().contains("No valid .ron rules files found"));
     }
 
     #[test]
@@ -166,6 +121,27 @@ mod directory_loading_tests {
         let result = Rules::load_from_path("/nonexistent/path");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("neither a file nor a directory"));
+    }
+
+    #[test]
+    fn test_load_unsupported_file_format() {
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let file_path = temp_dir.path().join("test_rules.json");
+        
+        let json_content = r#"{
+            "malware_detection": [
+                {
+                    "pattern": "test_pattern",
+                    "finding_type": "test_type"
+                }
+            ]
+        }"#;
+        
+        fs::write(&file_path, json_content).expect("Failed to write JSON file");
+        
+        let result = Rules::load_from_path(file_path.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported file format. Only .ron files are supported"));
     }
 
     #[test]
