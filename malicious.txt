@@ -2,10 +2,10 @@
 📂 Target directory: /Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/
 🔧 Language: python
 📋 Rules file: rules/python/malicious/malicious.ron
-🔍 Running scan with 65 rules
+🔍 Running scan with 54 rules
 
 
-⏱️  Scan completed in 12.61s
+⏱️  Scan completed in 13.22s
 
 /Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/false_positives/python/safe-datasets-guarddog-python/pytest-8.4.0/testing/test_legacypath.py:133 - suspicious_network_low_confidence - pytester.makepyprojecttoml
 /Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/false_positives/python/safe-datasets-guarddog-python/pytest-8.4.0/testing/test_legacypath.py:76 - suspicious_network_low_confidence - attempt_symlink_to
@@ -225,7 +225,7 @@ Most vulnerable files:
 /Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/false_positives/python/safe-datasets-guarddog-python/pytest-8.4.0/testing/test_junitxml.py: 32 vulnerabilities
 /Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/false_positives/python/safe-datasets-guarddog-python/pytest-8.4.0/src/_pytest/legacypath.py: 25 vulnerabilities
 /Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/false_positives/python/safe-datasets-guarddog-python/pytest-8.4.0/testing/test_tmpdir.py: 17 vulnerabilities
-/Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/false_positives/python/safe-datasets-guarddog-python/pytest-8.4.0/testing/_py/test_local.py: 15 vulnerabilities
 /Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/false_positives/python/safe-datasets-guarddog-python/pytest-8.4.0/src/_pytest/junitxml.py: 15 vulnerabilities
+/Users/ahmadsadeddin/Downloads/0ae732e3-c8dd-4c88-a4e4-a2f91e148243_code/false_positives/python/safe-datasets-guarddog-python/pytest-8.4.0/testing/test_config.py: 15 vulnerabilities
 
 Total vulnerabilities found: 202

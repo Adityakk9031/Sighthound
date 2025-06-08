@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::path::Path;
 use std::collections::HashMap;
 use crate::language::LanguageSupport;
-use crate::rules::{Rule, Rules, Condition};
+use crate::rules::{Rule, Rules, Condition, rule_matches_pattern};
 use crate::{traverse_calls_only, match_pattern, get_node_text_slice, check_for_injection_pattern};
 use super::types::{Finding, ScanContext, FilteringStats};
 
@@ -122,7 +122,7 @@ impl FileTypeAwareAnalyzer {
         for node in traverse_calls_only(root_node, self.language_support.as_ref()) {
             if let Some(func_name) = self.language_support.get_function_name(&node, &context.source) {
                 for rule in &rules {
-                    if match_pattern(&rule.pattern, func_name) {
+                    if rule_matches_pattern(rule, func_name) {
                         let finding_type = rule.finding_type.as_deref().unwrap_or("vulnerability");
                         if let Some(conditions) = &rule.conditions {
                             if self.check_ast_conditions(&node, &context.source, conditions) {

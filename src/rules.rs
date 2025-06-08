@@ -47,7 +47,11 @@ pub struct Condition {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Rule {
-    pub pattern: String,
+    // Support both single pattern (backward compatibility) and multiple patterns
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patterns: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finding_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,6 +157,46 @@ pub fn match_pattern(pattern: &str, text: &str) -> bool {
 // Enhanced pattern matching with multiple patterns
 pub fn match_any_pattern(patterns: &[String], text: &str) -> bool {
     patterns.iter().any(|pattern| match_pattern(pattern, text))
+}
+
+// Check if a rule matches a given text (supports both single and multiple patterns)
+pub fn rule_matches_pattern(rule: &Rule, text: &str) -> bool {
+    // Handle multiple patterns (new format)
+    if let Some(patterns) = &rule.patterns {
+        return match_any_pattern(patterns, text);
+    }
+    
+    // Handle single pattern (backward compatibility)
+    if let Some(pattern) = &rule.pattern {
+        return match_pattern(pattern, text);
+    }
+    
+    // No patterns defined - this shouldn't happen in valid rules
+    false
+}
+
+// Validate rule has either pattern or patterns (but not both)
+pub fn validate_rule_patterns(rule: &Rule) -> Result<(), String> {
+    match (&rule.pattern, &rule.patterns) {
+        (Some(_), Some(_)) => Err("Rule cannot have both 'pattern' and 'patterns' fields".to_string()),
+        (None, None) => Err("Rule must have either 'pattern' or 'patterns' field".to_string()),
+        (Some(pattern), None) => {
+            if pattern.is_empty() {
+                Err("Pattern cannot be empty".to_string())
+            } else {
+                Ok(())
+            }
+        },
+        (None, Some(patterns)) => {
+            if patterns.is_empty() {
+                Err("Patterns array cannot be empty".to_string())
+            } else if patterns.iter().any(|p| p.is_empty()) {
+                Err("No pattern in patterns array can be empty".to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
 }
 
 // Check if a node represents a literal value (reduced false positive risk)

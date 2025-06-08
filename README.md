@@ -156,3 +156,12 @@ To add support for new languages:
 ## License
 
 This project is open source. Please check the license file for details. 
+
+
+## Roadmap
+
+- Multiples patterns ✅
+- Source & sink analysis
+- Run scan on all rules
+- Run scan on a directory of rules
+- Run against specific file

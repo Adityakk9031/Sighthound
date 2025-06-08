@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 
 use crate::parser::{LanguageParser, get_node_text, traverse_calls_only};
-use crate::rules::{Rules, Rule, Condition, match_pattern, match_any_pattern, check_for_injection_pattern, is_literal_node, is_in_protective_context};
+use crate::rules::{Rules, Rule, Condition, match_pattern, rule_matches_pattern, match_any_pattern, check_for_injection_pattern, is_literal_node, is_in_protective_context};
 use super::types::Finding;
 
 pub struct VulnerabilityScanner {
@@ -281,14 +281,14 @@ impl VulnerabilityScanner {
 
         for category in &rule_categories {
             if let Some(rules) = category {
-                if rules.iter().any(|rule| match_pattern(&rule.pattern, func_name)) {
+                if rules.iter().any(|rule| rule_matches_pattern(rule, func_name)) {
                     return true;
                 }
             }
         }
 
         for rules in self.rules.other.values() {
-            if rules.iter().any(|rule| match_pattern(&rule.pattern, func_name)) {
+            if rules.iter().any(|rule| rule_matches_pattern(rule, func_name)) {
                 return true;
             }
         }
@@ -335,7 +335,7 @@ impl VulnerabilityScanner {
     ) {
         if let Some(rules) = rules_option {
             for rule in rules {
-                if match_pattern(&rule.pattern, func_name) {
+                if rule_matches_pattern(rule, func_name) {
                     let conditions = rule.conditions.as_deref().unwrap_or(&[]);
                     
                     // Enhanced condition checking
