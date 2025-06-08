@@ -165,3 +165,5 @@ This project is open source. Please check the license file for details.
 - Run scan on all rules 
 - Run scan on a directory of rules ✅
 - Run against specific file
+- Glob Support ✅
+- Tree-sitter support ✅

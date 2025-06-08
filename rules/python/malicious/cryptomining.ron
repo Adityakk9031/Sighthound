@@ -2,15 +2,24 @@
     malware_detection: Some([
         // Cryptomining indicators
         (
-            pattern: "hashlib.sha256",
+            patterns: [
+                "hashlib.sha256",
+                "hashlib.sha1",
+                "hashlib.md5",
+                "*.mine",
+                "*.miner",
+                "*.mining"
+            ],
             finding_type: Some("cryptomining"),
+            severity: Some("high"),
+            confidence: Some("medium"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: "*nonce*",
-                    name: None,
-                    not_in: None,
-                    parent_type: None,
+                    patterns: Some(["*nonce*", "*hash*", "*block*", "*coin*", "*difficulty*"]),
+                ),
+                (
+                    type: "not_in_protective_context",
                 )
             ]),
             file_types: Some((
@@ -20,4 +29,4 @@
             )),
         ),
     ]),
-} 
+}

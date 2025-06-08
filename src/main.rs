@@ -97,7 +97,12 @@ fn main() -> Result<()> {
     let findings = if cli.single_threaded {
         scanner.find_vulnerabilities_single_threaded(&cli.root_dir, &cli.language)?
     } else {
-        scanner.find_vulnerabilities_parallel(&cli.root_dir, &cli.language)?
+        // Use the new batched method for best performance
+        if cli.root_dir.contains("large") || cli.root_dir.contains("huge") {
+            scanner.find_vulnerabilities_batched(&cli.root_dir, &cli.language)?
+        } else {
+            scanner.find_vulnerabilities_parallel(&cli.root_dir, &cli.language)?
+        }
     };
 
     let duration = start_time.elapsed();
