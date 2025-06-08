@@ -15,14 +15,12 @@ Each rule follows this structure in RON format:
 ```ron
 (
     // EITHER single pattern (backward compatible)
-    pattern: Some("function_name"),
+    pattern: "function_name",              // NEW: Clean syntax (recommended)
+    pattern: Some("function_name"),        // OLD: Explicit syntax (still works)
     
     // OR multiple patterns (new Semgrep-style pattern-either)
-    patterns: Some([
-        "pattern1",
-        "pattern2", 
-        "pattern3"
-    ]),
+    patterns: ["pattern1", "pattern2"],    // NEW: Clean syntax (recommended)
+    patterns: Some(["pattern1", "pattern2"]), // OLD: Explicit syntax (still works)
     
     // Required fields
     finding_type: Some("vulnerability_type"),
@@ -40,39 +38,84 @@ Each rule follows this structure in RON format:
 )
 ```
 
+### Clean Syntax Support (New!)
+
+The engine now supports a much cleaner syntax that eliminates the need for verbose `Some()` wrappers on patterns:
+
+#### **✅ Recommended Clean Syntax:**
+```ron
+(
+    pattern: "pyperclip.paste",           // Clean single pattern
+    patterns: [                          // Clean multiple patterns
+        "pyperclip.copy",
+        "pandas.read_clipboard",
+        "*.to_clipboard"
+    ],
+    finding_type: Some("clipboard_access"),
+    // ...
+)
+```
+
+#### **✅ Legacy Explicit Syntax (Still Supported):**
+```ron
+(
+    pattern: Some("pyperclip.paste"),     // Explicit single pattern
+    patterns: Some([                     // Explicit multiple patterns
+        "pyperclip.copy",
+        "pandas.read_clipboard",
+        "*.to_clipboard"
+    ]),
+    finding_type: Some("clipboard_access"),
+    // ...
+)
+```
+
+#### **✅ Mixed Syntax (Fully Compatible):**
+```ron
+(
+    pattern: "clean_syntax",              // Clean format
+    finding_type: Some("explicit_format"), // Explicit format
+    patterns: ["mixed", "is", "fine"],   // Clean format
+    conditions: Some([...]),              // Explicit format
+    // ...
+)
+```
+
+**Note**: The clean syntax is backward compatible - existing rule files using `Some()` continue to work unchanged.
+
 ### Pattern vs Patterns
 
 **Important**: A rule MUST have either `pattern` OR `patterns`, but not both:
 
-- **Single Pattern**: `pattern: Some("exact_function_name")`
-- **Multiple Patterns**: `patterns: Some(["pattern1", "pattern2", "pattern3"])`
+- **Single Pattern**: `pattern: "exact_function_name"`
+- **Multiple Patterns**: `patterns: ["pattern1", "pattern2", "pattern3"]`
 
 ## Pattern Types and Syntax
 
 ### 1. Exact Matches
 ```ron
-pattern: Some("os.system")          // Matches exactly "os.system"
+pattern: "os.system"          // Matches exactly "os.system"
 ```
 
 ### 2. Wildcard Patterns
 ```ron
-pattern: Some("*.execute")          // Matches "cursor.execute", "conn.execute", etc.
-pattern: Some("*clipboard*")        // Matches any function containing "clipboard"
+pattern: "*.execute"          // Matches "cursor.execute", "conn.execute", etc.
+pattern: "*clipboard*"        // Matches any function containing "clipboard"
 ```
 
 ### 3. Multiple Patterns (Semgrep-style pattern-either)
 ```ron
-patterns: Some([
+patterns: [
     "pyperclip.paste",
     "pyperclip.copy",
     "pandas.read_clipboard",
     "*.to_clipboard"
-])
+]
 ```
 
 ### 4. Regex Patterns
 ```ron
-pattern: Some("regex:^(eval|exec)$")  // Matches eval or exec exactly
+pattern: "regex:^(eval|exec)$"  // Matches eval or exec exactly
 ```
 
 ## Enhanced Condition Types
@@ -172,23 +215,30 @@ Instead of creating separate rules for related patterns, you can now consolidate
 
 **Before (Multiple Rules)**:
 ```ron
-(pattern: Some("pyperclip.paste"), finding_type: Some("clipboard_access")),
-(pattern: Some("pyperclip.copy"), finding_type: Some("clipboard_access")),
-(pattern: Some("pandas.read_clipboard"), finding_type: Some("clipboard_access")),
+(pattern: "pyperclip.paste", finding_type: Some("clipboard_access")),
+(pattern: "pyperclip.copy", finding_type: Some("clipboard_access")),
+(pattern: "pandas.read_clipboard", finding_type: Some("clipboard_access")),
 ```
 
 **After (Single Rule with Multiple Patterns)**:
 ```ron
 (
-    patterns: Some([
+    patterns: [
         "pyperclip.paste",
-        "pyperclip.copy",
+        "pyperclip.copy", 
         "pandas.read_clipboard",
         "*.to_clipboard"
-    ]),
+    ],
     finding_type: Some("clipboard_access"),
 )
 ```
+
+**Benefits**:
+- ✅ **Cleaner syntax** - No verbose `Some()` wrappers needed for patterns
+- ✅ **Reduced duplication** - One rule instead of many similar rules
+- ✅ **Better maintainability** - Single place to update related patterns
+- ✅ **Improved performance** - Less rule processing overhead
+- ✅ **Backward compatible** - Existing rules continue to work
 
 ### 2. Enhanced Rule Fields
 
@@ -216,14 +266,14 @@ sanitizers: Some([
 ### Example 1: Clipboard Access Detection
 ```ron
 (
-    patterns: Some([
+    patterns: [
         "pyperclip.paste",
         "pyperclip.copy",
         "pandas.read_clipboard", 
         "*.to_clipboard",
         "tkinter.clipboard",
         "win32clipboard"
-    ]),
+    ],
     finding_type: Some("clipboard_access"),
     severity: Some("medium"),
     confidence: Some("high"),
@@ -239,12 +289,12 @@ sanitizers: Some([
 ### Example 2: SQL Injection with Enhanced Conditions
 ```ron
 (
-    patterns: Some([
+    patterns: [
         "*.execute",
         "*.executemany", 
         "cursor.execute",
         "connection.execute"
-    ]),
+    ],
     finding_type: Some("sql_injection"),
     severity: Some("high"),
     confidence: Some("high"),
@@ -283,7 +333,7 @@ sanitizers: Some([
 ### Example 3: Suspicious Network Communication
 ```ron
 (
-    patterns: Some([
+    patterns: [
         "*.tk*",      // Free TLD domains
         "*.ml*",
         "*.ga*", 
@@ -291,7 +341,7 @@ sanitizers: Some([
         "bit.ly",     // URL shorteners
         "t.co",
         "tinyurl"
-    ]),
+    ],
     finding_type: Some("suspicious_network"),
     severity: Some("medium"),
     confidence: Some("medium"),
@@ -312,7 +362,7 @@ sanitizers: Some([
 ### Example 4: Path Traversal with Context Analysis
 ```ron
 (
-    pattern: Some("open"),
+    pattern: "open",
     finding_type: Some("path_traversal"),
     severity: Some("medium"),
     confidence: Some("medium"),
@@ -424,22 +474,35 @@ Rules are organized into categories within the rules file:
 ### 2. Pattern Design Best Practices
 
 ```ron
-// Good: Specific and targeted
-patterns: Some([
+// ✅ Good: Specific and targeted (clean syntax)
+patterns: [
     "eval", 
     "exec",
     "compile"
-])
+]
 
-// Avoid: Too broad, may cause false positives
-pattern: Some("*")
+// ❌ Avoid: Too broad, may cause false positives
+pattern: "*"
 
-// Good: Uses wildcards appropriately
-patterns: Some([
+// ✅ Good: Uses wildcards appropriately (clean syntax)
+patterns: [
     "*.execute",
     "*cursor.execute*"
-])
+]
+
+// ✅ Also good: Single pattern when appropriate (clean syntax)
+pattern: "os.system"
+
+// ✅ Legacy format still works (backward compatibility)
+pattern: Some("os.system")
+patterns: Some(["eval", "exec"])
 ```
+
+**Recommendations**:
+- 🎯 **Use clean syntax** for new rules (no `Some()` needed for patterns)
+- 📦 **Group related patterns** into single rules using `patterns: [...]`
+- 🎨 **Keep individual patterns specific** to avoid false positives
+- 🔄 **Legacy rules work unchanged** - no need to update existing files
 
 ### 3. Condition Layering
 

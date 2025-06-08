@@ -104,14 +104,17 @@ impl FileTypeAwareAnalyzer {
                 .unwrap_or("")
                 .to_lowercase();
             
-            return file_types.extensions.contains(&extension);
+            // Check if extensions filter exists and contains the file extension
+            if let Some(extensions) = &file_types.extensions {
+                return extensions.contains(&extension);
+            }
         }
         
         // If no file type filter, rule applies to all files
         true
     }
 
-    fn get_rule_file_types<'a>(&self, rule: &'a Rule) -> Option<&'a crate::rules::FileTypeFilter> {
+    fn get_rule_file_types<'a>(&self, rule: &'a Rule) -> Option<&'a crate::rules::FileTypes> {
         rule.file_types.as_ref()
     }
 

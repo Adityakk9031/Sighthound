@@ -2,7 +2,7 @@
     malware_detection: Some([
         // Keylogging - Windows API calls
         (
-            pattern: Some("ctypes.windll.user32.GetAsyncKeyState"),
+            pattern: "ctypes.windll.user32.GetAsyncKeyState",
             finding_type: Some("keylogger"),
             conditions: None,
             file_types: Some((
@@ -12,7 +12,7 @@
             )),
         ),
         (
-            pattern: Some("win32api.GetAsyncKeyState"),
+            pattern: "win32api.GetAsyncKeyState",
             finding_type: Some("keylogger"),
             conditions: None,
             file_types: Some((
@@ -23,7 +23,7 @@
         ),
         // Keylogging - pynput library
         (
-            pattern: Some("pynput.keyboard.Listener"),
+            pattern: "pynput.keyboard.Listener",
             finding_type: Some("keylogger"),
             conditions: None,
             file_types: Some((
@@ -34,7 +34,7 @@
         ),
         // Screen capture/recording
         (
-            pattern: Some("ImageGrab.grab"),
+            pattern: "ImageGrab.grab",
             finding_type: Some("screen_capture"),
             conditions: None,
             file_types: Some((
@@ -44,7 +44,7 @@
             )),
         ),
         (
-            pattern: Some("pyautogui.screenshot"),
+            pattern: "pyautogui.screenshot",
             finding_type: Some("screen_capture"),
             conditions: None,
             file_types: Some((
@@ -54,7 +54,7 @@
             )),
         ),
         (
-            pattern: Some("cv2.VideoCapture"),
+            pattern: "cv2.VideoCapture",
             finding_type: Some("screen_capture"),
             conditions: None,
             file_types: Some((
@@ -65,7 +65,7 @@
         ),
         // Process injection/manipulation
         (
-            pattern: Some("ctypes.windll.kernel32.OpenProcess"),
+            pattern: "ctypes.windll.kernel32.OpenProcess",
             finding_type: Some("process_injection"),
             conditions: None,
             file_types: Some((
@@ -75,7 +75,7 @@
             )),
         ),
         (
-            pattern: Some("ctypes.windll.kernel32.WriteProcessMemory"),
+            pattern: "ctypes.windll.kernel32.WriteProcessMemory",
             finding_type: Some("process_injection"),
             conditions: None,
             file_types: Some((
@@ -85,7 +85,7 @@
             )),
         ),
         (
-            pattern: Some("ctypes.windll.kernel32.ReadProcessMemory"),
+            pattern: "ctypes.windll.kernel32.ReadProcessMemory",
             finding_type: Some("process_injection"),
             conditions: None,
             file_types: Some((
@@ -95,7 +95,7 @@
             )),
         ),
         (
-            pattern: Some("ctypes.windll.kernel32.VirtualAllocEx"),
+            pattern: "ctypes.windll.kernel32.VirtualAllocEx",
             finding_type: Some("process_injection"),
             conditions: None,
             file_types: Some((
@@ -105,7 +105,7 @@
             )),
         ),
         (
-            pattern: Some("ctypes.windll.kernel32.CreateRemoteThread"),
+            pattern: "ctypes.windll.kernel32.CreateRemoteThread",
             finding_type: Some("process_injection"),
             conditions: None,
             file_types: Some((
@@ -116,12 +116,12 @@
         ),
         // Registry manipulation (Windows)
         (
-            pattern: Some("winreg.OpenKey"),
+            pattern: "winreg.OpenKey",
             finding_type: Some("registry_manipulation"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run*"),
+                    pattern: "*HKEY_CURRENT_USER\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -134,7 +134,7 @@
             )),
         ),
         (
-            pattern: Some("winreg.SetValueEx"),
+            pattern: "winreg.SetValueEx",
             finding_type: Some("registry_manipulation"),
             conditions: None,
             file_types: Some((
@@ -144,7 +144,7 @@
             )),
         ),
         (
-            pattern: Some("winreg.CreateKey"),
+            pattern: "winreg.CreateKey",
             finding_type: Some("registry_manipulation"),
             conditions: None,
             file_types: Some((
@@ -155,12 +155,12 @@
         ),
         // Download and execute patterns
         (
-            pattern: Some("urllib.request.urlretrieve"),
+            pattern: "urllib.request.urlretrieve",
             finding_type: Some("download_execute"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*.exe*"),
+                    pattern: "*.exe*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -173,12 +173,12 @@
             )),
         ),
         (
-            pattern: Some("requests.get"),
+            pattern: "requests.get",
             finding_type: Some("download_execute"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*.exe*"),
+                    pattern: "*.exe*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -192,12 +192,12 @@
         ),
         // File system manipulation - suspicious file creation
         (
-            pattern: Some("open"),
+            pattern: "open",
             finding_type: Some("suspicious_file_creation"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*C:\\\\Windows\\\\System32*"),
+                    pattern: "*C:\\\\Windows\\\\System32*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -211,7 +211,7 @@
         ),
         // Anti-debugging/analysis techniques
         (
-            pattern: Some("ctypes.windll.kernel32.IsDebuggerPresent"),
+            pattern: "ctypes.windll.kernel32.IsDebuggerPresent",
             finding_type: Some("anti_analysis"),
             conditions: None,
             file_types: Some((
@@ -221,12 +221,12 @@
             )),
         ),
         (
-            pattern: Some("psutil.process_iter"),
+            pattern: "psutil.process_iter",
             finding_type: Some("anti_analysis"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*debugger*"),
+                    pattern: "*debugger*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -240,12 +240,12 @@
         ),
         // Network backdoor/reverse shell patterns
         (
-            pattern: Some("socket.socket"),
+            pattern: "socket.socket",
             finding_type: Some("backdoor"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*bind*"),
+                    pattern: "*bind*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -258,12 +258,12 @@
             )),
         ),
         (
-            pattern: Some("subprocess.Popen"),
+            pattern: "subprocess.Popen",
             finding_type: Some("reverse_shell"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*/bin/sh*"),
+                    pattern: "*/bin/sh*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -277,12 +277,12 @@
         ),
         // Data exfiltration via email
         (
-            pattern: Some("smtplib.SMTP"),
+            pattern: "smtplib.SMTP",
             finding_type: Some("data_exfiltration"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*attachment*"),
+                    pattern: "*attachment*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -296,12 +296,12 @@
         ),
         // Persistence mechanisms - startup folder
         (
-            pattern: Some("shutil.copy"),
+            pattern: "shutil.copy",
             finding_type: Some("persistence"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*Startup*"),
+                    pattern: "*Startup*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -315,12 +315,12 @@
         ),
         // Cryptomining indicators
         (
-            pattern: Some("hashlib.sha256"),
+            pattern: "hashlib.sha256",
             finding_type: Some("cryptomining"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*nonce*"),
+                    pattern: "*nonce*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -334,12 +334,12 @@
         ),
         // Code obfuscation/packing
         (
-            pattern: Some("base64.b64decode"),
+            pattern: "base64.b64decode",
             finding_type: Some("code_obfuscation"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*exec*"),
+                    pattern: "*exec*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -352,12 +352,12 @@
             )),
         ),
         (
-            pattern: Some("zlib.decompress"),
+            pattern: "zlib.decompress",
             finding_type: Some("code_obfuscation"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*exec*"),
+                    pattern: "*exec*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -371,12 +371,12 @@
         ),
         // Suspicious network communication
         (
-            pattern: Some("socket.socket"),
+            pattern: "socket.socket",
             finding_type: Some("suspicious_network"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*443*"),
+                    pattern: "*443*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -390,12 +390,12 @@
         ),
         // Browser credential stealing
         (
-            pattern: Some("sqlite3.connect"),
+            pattern: "sqlite3.connect",
             finding_type: Some("credential_theft"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*Login Data*"),
+                    pattern: "*Login Data*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -408,12 +408,12 @@
             )),
         ),
         (
-            pattern: Some("sqlite3.connect"),
+            pattern: "sqlite3.connect",
             finding_type: Some("credential_theft"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*Cookies*"),
+                    pattern: "*Cookies*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -426,12 +426,12 @@
             )),
         ),
         (
-            pattern: Some("sqlite3.connect"),
+            pattern: "sqlite3.connect",
             finding_type: Some("credential_theft"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*Web Data*"),
+                    pattern: "*Web Data*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -445,12 +445,12 @@
         ),
         // Ransomware indicators - file encryption
         (
-            pattern: Some("Crypto.Cipher.AES.new"),
+            pattern: "Crypto.Cipher.AES.new",
             finding_type: Some("ransomware"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*encrypt*"),
+                    pattern: "*encrypt*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -464,12 +464,12 @@
         ),
         // Mass file operations (potential ransomware)
         (
-            pattern: Some("os.walk"),
+            pattern: "os.walk",
             finding_type: Some("mass_file_operation"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*encrypt*"),
+                    pattern: "*encrypt*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -483,12 +483,12 @@
         ),
         // Remote code execution with exec and base64
         (
-            pattern: Some("exec"),
+            pattern: "exec",
             finding_type: Some("remote_code_execution"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*base64.b64decode*"),
+                    pattern: "*base64.b64decode*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -502,12 +502,12 @@
         ),
         // Remote code loading via HTTP requests
         (
-            pattern: Some("exec"),
+            pattern: "exec",
             finding_type: Some("remote_code_execution"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*requests.get*"),
+                    pattern: "*requests.get*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -521,12 +521,12 @@
         ),
         // PowerShell encoded command execution
         (
-            pattern: Some("subprocess.Popen"),
+            pattern: "subprocess.Popen",
             finding_type: Some("suspicious_powershell"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*powershell*EncodedCommand*"),
+                    pattern: "*powershell*EncodedCommand*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -540,12 +540,12 @@
         ),
         // Process killing (security tools disabling)
         (
-            pattern: Some("subprocess.Popen"),
+            pattern: "subprocess.Popen",
             finding_type: Some("security_tool_disabling"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*taskkill*"),
+                    pattern: "*taskkill*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -559,7 +559,7 @@
         ),
         // Discord webhook exfiltration
         (
-            pattern: Some("discord.com/api/webhooks"),
+            pattern: "discord.com/api/webhooks",
             finding_type: Some("data_exfiltration"),
             conditions: None,
             file_types: Some((
@@ -570,7 +570,7 @@
         ),
         // Webhook from URL for exfiltration
         (
-            pattern: Some("Webhook.from_url"),
+            pattern: "Webhook.from_url",
             finding_type: Some("data_exfiltration"),
             conditions: None,
             file_types: Some((
@@ -581,12 +581,12 @@
         ),
         // File upload to anonymous file sharing services
         (
-            pattern: Some("requests.post"),
+            pattern: "requests.post",
             finding_type: Some("data_exfiltration"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*gofile.io*uploadFile*"),
+                    pattern: "*gofile.io*uploadFile*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -600,12 +600,12 @@
         ),
         // File upload to anonymous file sharing services (anonfiles)
         (
-            pattern: Some("requests.post"),
+            pattern: "requests.post",
             finding_type: Some("data_exfiltration"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*anonfiles*"),
+                    pattern: "*anonfiles*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -619,12 +619,12 @@
         ),
         // Browser credential theft SQL query
         (
-            pattern: Some("cursor.execute"),
+            pattern: "cursor.execute",
             finding_type: Some("credential_theft"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*SELECT*username*password*FROM*logins*"),
+                    pattern: "*SELECT*username*password*FROM*logins*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -638,12 +638,12 @@
         ),
         // Suspicious temporary file creation and execution
         (
-            pattern: Some("tempfile.NamedTemporaryFile"),
+            pattern: "tempfile.NamedTemporaryFile",
             finding_type: Some("suspicious_file_execution"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*delete=False*"),
+                    pattern: "*delete=False*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -657,23 +657,23 @@
         ),
         // Custom setup.py install command (malicious PyPI package)
         (
-            pattern: Some("class CustomInstallCommand"),
+            pattern: "class CustomInstallCommand",
             finding_type: Some("malicious_package"),
             conditions: None,
             file_types: Some((
                 extensions: [".py"],
-                include_patterns: Some(["*setup.py*"]),
+                include_patterns: ["*setup.py*"],
                 exclude_patterns: None,
             )),
         ),
         // Sensitive file search by keywords
         (
-            pattern: Some("os.listdir"),
+            pattern: "os.listdir",
             finding_type: Some("file_exfiltration"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*wallet*|*password*|*secret*"),
+                    pattern: "*wallet*|*password*|*secret*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -687,12 +687,12 @@
         ),
         // String obfuscation via chained replace
         (
-            pattern: Some("replace"),
+            pattern: "replace",
             finding_type: Some("code_obfuscation"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*.replace*"),
+                    pattern: "*.replace*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -706,12 +706,12 @@
         ),
         // Browser database access for credential theft
         (
-            pattern: Some("os.path.join"),
+            pattern: "os.path.join",
             finding_type: Some("credential_theft"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*Local State*"),
+                    pattern: "*Local State*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -725,12 +725,12 @@
         ),
         // Suspicious empty exception handling (error suppression)
         (
-            pattern: Some("try:"),
+            pattern: "try:",
             finding_type: Some("anti_analysis"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*except:*pass*"),
+                    pattern: "*except:*pass*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -744,7 +744,7 @@
         ),
         // Discord token theft
         (
-            pattern: Some("discord_token"),
+            pattern: "discord_token",
             finding_type: Some("credential_theft"),
             conditions: None,
             file_types: Some((
@@ -755,12 +755,12 @@
         ),
         // Anti-analysis check for specific files
         (
-            pattern: Some("os.path.exists"),
+            pattern: "os.path.exists",
             finding_type: Some("anti_analysis"),
             conditions: Some([
                 (
                     type: "has_argument",
-                    pattern: Some("*exit*"),
+                    pattern: "*exit*",
                     name: None,
                     not_in: None,
                     parent_type: None,
@@ -775,14 +775,14 @@
         // Clipboard libraries
         // Clipboard access detection - multiple patterns in one rule (Semgrep-style pattern-either)
         (
-            patterns: Some([
+            patterns: [
                 "pyperclip.paste",
                 "pyperclip.copy",
                 "pandas.read_clipboard",
                 "*.to_clipboard",
                 "tkinter.clipboard",
                 "win32clipboard",
-            ]),
+            ],
             finding_type: Some("clipboard_access"),
             severity: Some("medium"),
             confidence: Some("high"),
@@ -791,17 +791,17 @@
         ),
         // Keyboard module hooks - multiple patterns in one rule
         (
-            patterns: Some([
+            patterns: [
                 "keyboard.hook",
                 "keyboard.on_press",
-            ]),
+            ],
             finding_type: Some("keylogger"),
             conditions: None,
             file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
         ),
         // Suspicious domains - free TLD domains often used for malicious purposes
         (
-            patterns: Some([
+            patterns: [
                 "*.tk*",
                 "*.ml*",
                 "*.ga*",
@@ -816,14 +816,24 @@
                 "*.space*",
                 "*.icu*",
                 "*.rest*",
-            ]),
+            ],
             finding_type: Some("suspicious_network"),
-            conditions: None,
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    patterns: Some(["*http*", "*url*", "*request*", "*connect*"]),
+                ),
+                (
+                    type: "not_in_protective_context",
+                ),
+            ]),
             file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
         ),
         // URL shorteners - often used to hide malicious destinations
         (
-            patterns: Some([
+            patterns: [
                 "bit.ly",
                 "t.co",
                 "tinyurl",
@@ -835,14 +845,30 @@
                 "cutt.ly",
                 "tiny.cc",
                 "shorturl.at",
-            ]),
+            ],
             finding_type: Some("suspicious_network"),
-            conditions: None,
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                (
+                    type: "has_argument",
+                    patterns: Some(["*http*", "*url*", "*request*", "*connect*"]),
+                ),
+                (
+                    // Ensures the URL is dynamically constructed (not a hardcoded string literal)
+                    // which increases the likelihood of it being malicious
+                    type: "not_literal",
+                    argument_position: Some(0),
+                ),
+                (
+                    type: "not_in_protective_context",
+                ),
+            ]),
             file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),
         ),
         // Telegram bot API
         (
-            pattern: Some("api.telegram.org"),
+            pattern: "api.telegram.org",
             finding_type: Some("data_exfiltration"),
             conditions: None,
             file_types: Some((extensions: [".py"], include_patterns: None, exclude_patterns: None)),

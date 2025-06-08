@@ -1,10 +1,118 @@
 use anyhow::{Context, Result};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use crate::language::LanguageSupport;
+
+// Custom deserializer that accepts both "value" and Some("value") for pattern field
+fn deserialize_pattern<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct PatternVisitor;
+
+    impl<'de> Visitor<'de> for PatternVisitor {
+        type Value = Option<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or Option<String>")
+        }
+
+        // Handle direct string: pattern: "value"
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.to_string()))
+        }
+
+        // Handle option: pattern: Some("value") or pattern: None
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let s = String::deserialize(deserializer)?;
+            Ok(Some(s))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(PatternVisitor)
+}
+
+// Custom deserializer that accepts both ["val1", "val2"] and Some(["val1", "val2"]) for patterns field
+fn deserialize_patterns<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct PatternsVisitor;
+
+    impl<'de> Visitor<'de> for PatternsVisitor {
+        type Value = Option<Vec<String>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an array of strings or Option<Vec<String>>")
+        }
+
+        // Handle direct array: patterns: ["val1", "val2"]
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(elem) = seq.next_element()? {
+                vec.push(elem);
+            }
+            Ok(Some(vec))
+        }
+
+        // Handle option: patterns: Some(["val1", "val2"]) or patterns: None
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let vec = Vec::<String>::deserialize(deserializer)?;
+            Ok(Some(vec))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(PatternsVisitor)
+}
 
 // Fast injection pattern checking using language-specific patterns
 pub fn check_for_injection_pattern(text: &str, language_support: &dyn LanguageSupport) -> bool {
@@ -12,9 +120,18 @@ pub fn check_for_injection_pattern(text: &str, language_support: &dyn LanguageSu
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct FileTypeFilter {
-    pub extensions: Vec<String>,
+pub struct FileTypes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub extensions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
     pub include_patterns: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
     pub exclude_patterns: Option<Vec<String>>,
 }
 
@@ -25,6 +142,8 @@ pub struct Condition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_pattern")]
     pub pattern: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub not_in: Option<Vec<String>>,
@@ -38,6 +157,8 @@ pub struct Condition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub within_lines: Option<usize>,                   // Distance constraint
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
     pub patterns: Option<Vec<String>>,                 // Multiple patterns
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ancestor_types: Option<Vec<String>>,           // Required ancestor node types
@@ -47,17 +168,21 @@ pub struct Condition {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Rule {
-    // Support both single pattern (backward compatibility) and multiple patterns
+    // Support both single pattern (backward compatible) and multiple patterns
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_pattern")]
     pub pattern: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
     pub patterns: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finding_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conditions: Option<Vec<Condition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_types: Option<FileTypeFilter>,
+    pub file_types: Option<FileTypes>,
     // Enhanced fields for better analysis
     #[serde(skip_serializing_if = "Option::is_none")]
     pub severity: Option<String>,                      // Critical, High, Medium, Low
