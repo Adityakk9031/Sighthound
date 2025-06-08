@@ -9,10 +9,12 @@ use walkdir::WalkDir;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 
 use crate::parser::{LanguageParser, get_node_text, traverse_calls_only};
-use crate::rules::{Rules, Rule, Condition, match_pattern, rule_matches_pattern, match_any_pattern, check_for_injection_pattern, is_literal_node, is_in_protective_context};
+use crate::rules::{Rules, Rule, Condition, match_pattern, rule_matches_pattern, check_for_injection_pattern, is_literal_node, is_in_protective_context};
 use super::types::Finding;
 use super::pool::{ParserPool, PooledParser};
 use super::prefilter::PreFilter;
+use super::utils::{rule_applies_to_file};
+use super::conditions::{check_ast_conditions};
 
 pub struct VulnerabilityScanner {
     parser: LanguageParser,
@@ -36,244 +38,7 @@ impl VulnerabilityScanner {
         source: &[u8],
         conditions: &[Condition],
     ) -> bool {
-        if conditions.is_empty() {
-            return true;
-        }
-
-        for condition in conditions {
-            if !self.check_single_condition(node, source, condition) {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn check_single_condition(
-        &self,
-        node: &tree_sitter::Node,
-        source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        match condition.condition_type.as_str() {
-            "has_argument" => {
-                self.check_has_argument_condition(node, source, condition)
-            }
-            "in_context" => {
-                self.check_in_context_condition(node, condition)
-            }
-            "has_parent" => {
-                self.check_has_parent_condition(node, condition)
-            }
-            "not_literal" => {
-                self.check_not_literal_condition(node, source, condition)
-            }
-            "not_in_protective_context" => {
-                !is_in_protective_context(node)
-            }
-            "has_ancestor" => {
-                self.check_has_ancestor_condition(node, condition)
-            }
-            "argument_not_sanitized" => {
-                self.check_argument_not_sanitized_condition(node, source, condition)
-            }
-            "has_sibling_pattern" => {
-                self.check_has_sibling_pattern_condition(node, source, condition)
-            }
-            _ => {
-                // Unknown condition type, default to false for safety
-                false
-            }
-        }
-    }
-
-    fn check_has_argument_condition(
-        &self,
-        node: &tree_sitter::Node,
-        source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
-            // If specific position is specified, check only that argument
-            if let Some(position) = condition.argument_position {
-                if let Some(arg) = args_node.named_child(position) {
-                    return self.check_argument_matches(arg, source, condition);
-                }
-                return false;
-            }
-            
-            // Otherwise check all arguments
-            for i in 0..args_node.named_child_count() {
-                if let Some(arg) = args_node.named_child(i) {
-                    if self.check_argument_matches(arg, source, condition) {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    fn check_argument_matches(
-        &self,
-        arg: tree_sitter::Node,
-        source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        let arg_text = get_node_text(&arg, source);
-        
-        // Check node type if specified
-        if let Some(expected_type) = &condition.node_type {
-            if arg.kind() != expected_type {
-                return false;
-            }
-        }
-        
-        // Check pattern(s)
-        if let Some(pattern) = &condition.pattern {
-            return match_pattern(pattern, &arg_text);
-        }
-        
-        if let Some(patterns) = &condition.patterns {
-            return match_any_pattern(patterns, &arg_text);
-        }
-        
-        true
-    }
-
-    fn check_in_context_condition(
-        &self,
-        node: &tree_sitter::Node,
-        _condition: &Condition,
-    ) -> bool {
-        if let Some(not_in) = &_condition.not_in {
-            if let Some(parent) = node.parent() {
-                if not_in.contains(&"comment".to_string()) && parent.kind() == "comment" {
-                    return false;
-                }
-                if not_in.contains(&"string".to_string()) && parent.kind() == "string" {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    fn check_has_parent_condition(
-        &self,
-        node: &tree_sitter::Node,
-        condition: &Condition,
-    ) -> bool {
-        if let Some(parent_type) = &condition.parent_type {
-            if let Some(parent) = node.parent() {
-                return parent.kind() == parent_type;
-            }
-            return false;
-        }
-        true
-    }
-
-    fn check_not_literal_condition(
-        &self,
-        node: &tree_sitter::Node,
-        _source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
-            if let Some(position) = condition.argument_position {
-                if let Some(arg) = args_node.named_child(position) {
-                    return !is_literal_node(&arg);
-                }
-            } else {
-                // Check if any argument is not literal
-                for i in 0..args_node.named_child_count() {
-                    if let Some(arg) = args_node.named_child(i) {
-                        if !is_literal_node(&arg) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    fn check_has_ancestor_condition(
-        &self,
-        node: &tree_sitter::Node,
-        condition: &Condition,
-    ) -> bool {
-        if let Some(ancestor_types) = &condition.ancestor_types {
-            let mut current = node.parent();
-            let mut depth = 0;
-            
-            while let Some(parent) = current {
-                if depth > 20 {  // Limit search depth
-                    break;
-                }
-                
-                if ancestor_types.contains(&parent.kind().to_string()) {
-                    return true;
-                }
-                
-                current = parent.parent();
-                depth += 1;
-            }
-        }
-        false
-    }
-
-    fn check_argument_not_sanitized_condition(
-        &self,
-        node: &tree_sitter::Node,
-        source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        if let Some(sanitizer_patterns) = &condition.patterns {
-            if let Some(args_node) = self.parser.language_support().get_arguments_node(node) {
-                for i in 0..args_node.named_child_count() {
-                    if let Some(arg) = args_node.named_child(i) {
-                        let arg_text = get_node_text(&arg, source);
-                        
-                        // Check if argument contains any sanitization patterns
-                        for sanitizer in sanitizer_patterns {
-                            if match_pattern(sanitizer, &arg_text) {
-                                return false;  // Found sanitization, so condition fails
-                            }
-                        }
-                    }
-                }
-            }
-            return true;  // No sanitization found
-        }
-        true
-    }
-
-    fn check_has_sibling_pattern_condition(
-        &self,
-        node: &tree_sitter::Node,
-        source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        if let Some(patterns) = &condition.patterns {
-            if let Some(parent) = node.parent() {
-                let mut cursor = parent.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        let sibling = cursor.node();
-                        if sibling != *node {
-                            let sibling_text = get_node_text(&sibling, source);
-                            if match_any_pattern(patterns, &sibling_text) {
-                                return true;
-                            }
-                        }
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        false
+        check_ast_conditions(node, source, conditions, self.parser.language_support())
     }
 
     fn has_matching_rules(&self, func_name: &str) -> bool {
@@ -286,20 +51,25 @@ impl VulnerabilityScanner {
             &self.rules.malware_detection,
         ];
 
-        for category in &rule_categories {
+        for category in rule_categories {
             if let Some(rules) = category {
-                if rules.iter().any(|rule| rule_matches_pattern(rule, func_name)) {
+                for rule in rules {
+                    if rule_matches_pattern(rule, func_name) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // Check other categories
+        for rules in self.rules.other.values() {
+            for rule in rules {
+                if rule_matches_pattern(rule, func_name) {
                     return true;
                 }
             }
         }
-
-        for rules in self.rules.other.values() {
-            if rules.iter().any(|rule| rule_matches_pattern(rule, func_name)) {
-                return true;
-            }
-        }
-
+        
         false
     }
 
@@ -399,103 +169,7 @@ impl VulnerabilityScanner {
 
     /// Check if a rule applies to a specific file based on file_types filters
     fn rule_applies_to_file(&self, rule: &Rule, filepath: &str) -> bool {
-        // If rule has file_types filter, check it
-        if let Some(file_types) = &rule.file_types {
-            let file_path = std::path::Path::new(filepath);
-            let extension = file_path.extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            
-            // Check extensions filter
-            if let Some(extensions) = &file_types.extensions {
-                if !extensions.iter().any(|ext| {
-                    let clean_ext = if ext.starts_with('.') { &ext[1..] } else { ext };
-                    clean_ext.to_lowercase() == extension
-                }) {
-                    return false;
-                }
-            }
-
-            // Check include_patterns - file must match at least one include pattern (if any)
-            if let Some(include_patterns) = &file_types.include_patterns {
-                if !include_patterns.is_empty() {
-                    let matches_include = include_patterns.iter().any(|pattern| {
-                        self.matches_glob_pattern(pattern, filepath)
-                    });
-                    if !matches_include {
-                        return false;
-                    }
-                }
-            }
-
-            // Check exclude_patterns - file must NOT match any exclude pattern
-            if let Some(exclude_patterns) = &file_types.exclude_patterns {
-                let matches_exclude = exclude_patterns.iter().any(|pattern| {
-                    self.matches_glob_pattern(pattern, filepath)
-                });
-                if matches_exclude {
-                    return false;
-                }
-            }
-        }
-        
-        // If no file type filter, or all filters pass, rule applies to this file
-        true
-    }
-
-    /// Check if a file path matches a glob pattern
-    fn matches_glob_pattern(&self, pattern: &str, file_path: &str) -> bool {
-        use glob::Pattern;
-        
-        // Try exact glob pattern matching first (full path)
-        if let Ok(glob_pattern) = Pattern::new(pattern) {
-            if glob_pattern.matches(file_path) {
-                return true;
-            }
-            
-            // Also try matching against just the filename
-            if let Some(filename) = std::path::Path::new(file_path).file_name() {
-                if let Some(filename_str) = filename.to_str() {
-                    if glob_pattern.matches(filename_str) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // Fallback to simple wildcard matching (for backward compatibility)
-        if pattern.contains('*') {
-            let regex_pattern = pattern.replace('*', ".*");
-            if let Ok(regex) = regex::Regex::new(&format!("^{}$", regex_pattern)) {
-                // Try full path
-                if regex.is_match(file_path) {
-                    return true;
-                }
-                // Try just filename
-                if let Some(filename) = std::path::Path::new(file_path).file_name() {
-                    if let Some(filename_str) = filename.to_str() {
-                        if regex.is_match(filename_str) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Exact string match - check both full path and filename
-        if file_path.contains(pattern) {
-            return true;
-        }
-        if let Some(filename) = std::path::Path::new(file_path).file_name() {
-            if let Some(filename_str) = filename.to_str() {
-                if filename_str.contains(pattern) {
-                    return true;
-                }
-            }
-        }
-
-        false
+        rule_applies_to_file(rule, filepath)
     }
 
     fn check_for_sanitization(
@@ -792,15 +466,15 @@ impl VulnerabilityScanner {
                     continue;
                 }
                 
-                Self::check_rules_category_static("injection_sinks", &rules.injection_sinks, &node, source, filepath, func_name, &mut findings);
-                Self::check_rules_category_static("crypto_rules", &rules.crypto_rules, &node, source, filepath, func_name, &mut findings);
-                Self::check_rules_category_static("path_traversal", &rules.path_traversal, &node, source, filepath, func_name, &mut findings);
-                Self::check_rules_category_static("weak_random", &rules.weak_random, &node, source, filepath, func_name, &mut findings);
-                Self::check_rules_category_static("hardcoded_secrets", &rules.hardcoded_secrets, &node, source, filepath, func_name, &mut findings);
-                Self::check_rules_category_static("malware_detection", &rules.malware_detection, &node, source, filepath, func_name, &mut findings);
+                Self::check_rules_category_static("injection_sinks", &rules.injection_sinks, &node, source, filepath, func_name, &mut findings, language_support);
+                Self::check_rules_category_static("crypto_rules", &rules.crypto_rules, &node, source, filepath, func_name, &mut findings, language_support);
+                Self::check_rules_category_static("path_traversal", &rules.path_traversal, &node, source, filepath, func_name, &mut findings, language_support);
+                Self::check_rules_category_static("weak_random", &rules.weak_random, &node, source, filepath, func_name, &mut findings, language_support);
+                Self::check_rules_category_static("hardcoded_secrets", &rules.hardcoded_secrets, &node, source, filepath, func_name, &mut findings, language_support);
+                Self::check_rules_category_static("malware_detection", &rules.malware_detection, &node, source, filepath, func_name, &mut findings, language_support);
                 
                 for (category, rules_vec) in &rules.other {
-                    Self::check_rules_category_static(category, &Some(rules_vec.clone()), &node, source, filepath, func_name, &mut findings);
+                    Self::check_rules_category_static(category, &Some(rules_vec.clone()), &node, source, filepath, func_name, &mut findings, language_support);
                 }
             }
         }
@@ -845,6 +519,7 @@ impl VulnerabilityScanner {
         filepath: &str,
         func_name: &str,
         findings: &mut Vec<Finding>,
+        language_support: &dyn crate::language::LanguageSupport,
     ) {
         if let Some(rules) = rules_option {
             for rule in rules {
@@ -857,7 +532,7 @@ impl VulnerabilityScanner {
                     let conditions = rule.conditions.as_deref().unwrap_or(&[]);
                     
                     // Enhanced condition checking
-                    if Self::check_ast_conditions_static(node, source, conditions) {
+                    if Self::check_ast_conditions_static(node, source, conditions, language_support) {
                         // Check for sanitization if specified in rule
                         if let Some(sanitizers) = &rule.sanitizers {
                             if Self::check_for_sanitization_static(node, source, sanitizers) {
@@ -905,103 +580,7 @@ impl VulnerabilityScanner {
 
     /// Static version of rule_applies_to_file
     fn rule_applies_to_file_static(rule: &Rule, filepath: &str) -> bool {
-        // If rule has file_types filter, check it
-        if let Some(file_types) = &rule.file_types {
-            let file_path = std::path::Path::new(filepath);
-            let extension = file_path.extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            
-            // Check extensions filter
-            if let Some(extensions) = &file_types.extensions {
-                if !extensions.iter().any(|ext| {
-                    let clean_ext = if ext.starts_with('.') { &ext[1..] } else { ext };
-                    clean_ext.to_lowercase() == extension
-                }) {
-                    return false;
-                }
-            }
-
-            // Check include_patterns - file must match at least one include pattern (if any)
-            if let Some(include_patterns) = &file_types.include_patterns {
-                if !include_patterns.is_empty() {
-                    let matches_include = include_patterns.iter().any(|pattern| {
-                        Self::matches_glob_pattern_static(pattern, filepath)
-                    });
-                    if !matches_include {
-                        return false;
-                    }
-                }
-            }
-
-            // Check exclude_patterns - file must NOT match any exclude pattern
-            if let Some(exclude_patterns) = &file_types.exclude_patterns {
-                let matches_exclude = exclude_patterns.iter().any(|pattern| {
-                    Self::matches_glob_pattern_static(pattern, filepath)
-                });
-                if matches_exclude {
-                    return false;
-                }
-            }
-        }
-        
-        // If no file type filter, or all filters pass, rule applies to this file
-        true
-    }
-
-    /// Static version of matches_glob_pattern
-    fn matches_glob_pattern_static(pattern: &str, file_path: &str) -> bool {
-        use glob::Pattern;
-        
-        // Try exact glob pattern matching first (full path)
-        if let Ok(glob_pattern) = Pattern::new(pattern) {
-            if glob_pattern.matches(file_path) {
-                return true;
-            }
-            
-            // Also try matching against just the filename
-            if let Some(filename) = std::path::Path::new(file_path).file_name() {
-                if let Some(filename_str) = filename.to_str() {
-                    if glob_pattern.matches(filename_str) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // Fallback to simple wildcard matching (for backward compatibility)
-        if pattern.contains('*') {
-            let regex_pattern = pattern.replace('*', ".*");
-            if let Ok(regex) = regex::Regex::new(&format!("^{}$", regex_pattern)) {
-                // Try full path
-                if regex.is_match(file_path) {
-                    return true;
-                }
-                // Try just filename
-                if let Some(filename) = std::path::Path::new(file_path).file_name() {
-                    if let Some(filename_str) = filename.to_str() {
-                        if regex.is_match(filename_str) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Exact string match - check both full path and filename
-        if file_path.contains(pattern) {
-            return true;
-        }
-        if let Some(filename) = std::path::Path::new(file_path).file_name() {
-            if let Some(filename_str) = filename.to_str() {
-                if filename_str.contains(pattern) {
-                    return true;
-                }
-            }
-        }
-
-        false
+        rule_applies_to_file(rule, filepath)
     }
 
     /// Static version of check_ast_conditions
@@ -1009,51 +588,9 @@ impl VulnerabilityScanner {
         node: &tree_sitter::Node,
         source: &[u8],
         conditions: &[Condition],
+        language_support: &dyn crate::language::LanguageSupport,
     ) -> bool {
-        if conditions.is_empty() {
-            return true;
-        }
-
-        for condition in conditions {
-            if !Self::check_single_condition_static(node, source, condition) {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Static version of check_single_condition (simplified version)
-    fn check_single_condition_static(
-        node: &tree_sitter::Node,
-        _source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        match condition.condition_type.as_str() {
-            "not_literal" => {
-                // Simplified version - check if any argument is not literal
-                if let Some(parent) = node.parent() {
-                    let mut cursor = parent.walk();
-                    if cursor.goto_first_child() {
-                        loop {
-                            let child = cursor.node();
-                            if !is_literal_node(&child) {
-                                return true;
-                            }
-                            if !cursor.goto_next_sibling() {
-                                break;
-                            }
-                        }
-                    }
-                }
-                false
-            }
-            "not_in_protective_context" => {
-                !is_in_protective_context(node)
-            }
-            // For other condition types, default to true for now
-            // This is a simplified implementation for performance
-            _ => true,
-        }
+        check_ast_conditions(node, source, conditions, language_support)
     }
 
     /// Static version of check_for_sanitization

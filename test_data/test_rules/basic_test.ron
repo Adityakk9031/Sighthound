@@ -1,16 +1,12 @@
 {
-    injection_sinks: Some([
+    injection_sinks: [
         (
             pattern: "execute",
-            finding_type: Some("test"),
-            conditions: None,
-            file_types: None,
+            finding_type: "test",
         ),
         (
             pattern: "readObject",
-            finding_type: Some("test"),
-            conditions: None,
-            file_types: None,
+            finding_type: "test",
         ),
-    ]),
+    ],
 } 

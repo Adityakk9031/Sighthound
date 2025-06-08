@@ -6,6 +6,38 @@ This document explains how to write effective vulnerability detection rules that
 
 The rules engine detects security vulnerabilities by matching patterns in code and applying conditions to filter out false positives. The key to effective rules is **precision over breadth** - targeting specific dangerous patterns while excluding common legitimate uses.
 
+### Rule Syntax: Clean and Intuitive
+
+🎉 **NEW**: We've implemented clean syntax that removes the need for `Some()` wrappers while maintaining full optionality support.
+
+**✅ Clean Syntax (Current)**:
+```ron
+{
+    injection_sinks: [
+        (
+            pattern: "cursor.execute",
+            finding_type: "sql_injection",
+            severity: "high",
+            confidence: "medium",
+        ),
+    ],
+}
+```
+
+**📜 Legacy Syntax (Still Supported)**:
+```ron
+{
+    injection_sinks: Some([
+        (
+            pattern: "cursor.execute",
+            finding_type: Some("sql_injection"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+        ),
+    ]),
+}
+```
+
 ### Common False Positive Patterns (Avoid These!)
 
 Based on real-world analysis, these patterns generate many false positives:
@@ -28,34 +60,34 @@ Rules are organized in RON format with named categories:
 ```ron
 {
     // Named categories contain arrays of rules
-    injection_sinks: Some([
+    injection_sinks: [
         (
             pattern: "cursor.execute",
-            finding_type: Some("sql_injection"),
-            severity: Some("high"),
-            confidence: Some("high"),
-            conditions: Some([
+            finding_type: "sql_injection",
+            severity: "high",
+            confidence: "high",
+            conditions: [
                 (
                     type: "not_literal",
-                    argument_position: Some(0),
+                    argument_position: 0,
                 ),
-            ]),
+            ],
         ),
-    ]),
+    ],
     
-    malware_detection: Some([
+    malware_detection: [
         (
             patterns: [
                 "hashlib.sha256",
                 "hashlib.sha1"
             ],
-            finding_type: Some("cryptomining"),
+            finding_type: "cryptomining",
             // Add conditions to avoid false positives
-            conditions: Some([
-                (type: "has_argument", patterns: Some(["*nonce*", "*mining*", "*hashrate*"])),
-            ]),
+            conditions: [
+                (type: "has_argument", patterns: ["*nonce*", "*mining*", "*hashrate*"]),
+            ],
         ),
-    ]),
+    ],
 }
 ```
 
@@ -72,18 +104,18 @@ Each rule is a tuple with these fields:
     patterns: ["pattern1", "pattern2"],
     
     // Required fields
-    finding_type: Some("vulnerability_type"),
+    finding_type: "vulnerability_type",
     
     // Optional fields for accuracy
-    severity: Some("high"),           // critical, high, medium, low
-    confidence: Some("medium"),       // high, medium, low - be realistic!
-    conditions: Some([...]),          // Key to reducing false positives
-    sanitizers: Some([...]),          // Known safe functions
-    file_types: Some((               // Restrict to relevant files
+    severity: "high",           // critical, high, medium, low
+    confidence: "medium",       // high, medium, low - be realistic!
+    conditions: [...],          // Key to reducing false positives
+    sanitizers: [...],          // Known safe functions
+    file_types: (               // Restrict to relevant files
         extensions: [".py"],
-        include_patterns: None,
-        exclude_patterns: Some(["*test*"]), // Exclude test files
-    )),
+        include_patterns: ["*models*", "*views*"],
+        exclude_patterns: ["*test*"], // Exclude test files
+    ),
 )
 ```
 
@@ -95,7 +127,7 @@ Each rule is a tuple with these fields:
 ```ron
 (
     pattern: "os.system",  // Will flag ALL os.system calls
-    finding_type: Some("command_injection"),
+    finding_type: "command_injection",
 )
 ```
 
@@ -103,13 +135,13 @@ Each rule is a tuple with these fields:
 ```ron
 (
     pattern: "os.system",
-    finding_type: Some("command_injection"),
-    conditions: Some([
+    finding_type: "command_injection",
+    conditions: [
         // Only flag dynamic content, not hardcoded commands
-        (type: "not_literal", argument_position: Some(0)),
+        (type: "not_literal", argument_position: 0),
         // Look for user input patterns
-        (type: "has_argument", patterns: Some(["*user*", "*input*", "*request*"])),
-    ]),
+        (type: "has_argument", patterns: ["*user*", "*input*", "*request*"]),
+    ],
 )
 ```
 
@@ -118,22 +150,22 @@ Each rule is a tuple with these fields:
 The `conditions` field is your most powerful tool for accuracy:
 
 ```ron
-conditions: Some([
+conditions: [
     // Exclude hardcoded/literal values (major false positive reducer)
-    (type: "not_literal", argument_position: Some(0)),
+    (type: "not_literal", argument_position: 0),
     
     // Exclude comments and strings  
-    (type: "in_context", not_in: Some(["comment", "string_literal"])),
+    (type: "in_context", not_in: ["comment", "string_literal"]),
     
     // Look for suspicious argument patterns
-    (type: "has_argument", patterns: Some(["*user*", "*input*", "*request*"])),
+    (type: "has_argument", patterns: ["*user*", "*input*", "*request*"]),
     
     // Exclude known safe functions
-    (type: "argument_not_sanitized", patterns: Some(["*escape*", "*sanitize*"])),
+    (type: "argument_not_sanitized", patterns: ["*escape*", "*sanitize*"]),
     
     // Less likely to report in protected contexts
     (type: "not_in_protective_context"),
-]),
+],
 ```
 
 ### 3. Set Realistic Confidence Levels
@@ -144,32 +176,31 @@ Many false positives come from overconfident rules:
 // ❌ Too confident for a broad pattern
 (
     pattern: "subprocess.Popen",
-    confidence: Some("high"),  // This will cause false positives
+    confidence: "high",  // This will cause false positives
 )
 
 // ✅ Realistic confidence with conditions
 (
     pattern: "subprocess.Popen", 
-    confidence: Some("medium"),  // More honest assessment
-    conditions: Some([
-        (type: "has_argument", patterns: Some(["*shell=True*", "*cmd*", "*command*"])),
-        (type: "not_literal", argument_position: Some(0)),
-    ]),
+    confidence: "medium",  // More honest assessment
+    conditions: [
+        (type: "has_argument", patterns: ["*shell=True*", "*cmd*", "*command*"]),
+        (type: "not_literal", argument_position: 0),
+    ],
 )
 ```
 
 ### 4. Exclude Test Files and Safe Contexts
 
 ```ron
-file_types: Some((
+file_types: (
     extensions: [".py"],
-    include_patterns: None,
-    exclude_patterns: Some([
+    exclude_patterns: [
         "*test*",           // Exclude test files
         "*example*",        // Exclude example code
         "*demo*",           // Exclude demos
-    ]),
-)),
+    ],
+),
 ```
 
 ## Pattern Types and Best Practices
@@ -206,7 +237,7 @@ pattern: "regex:^(eval|exec)$"  // Exact matches only
 **Most important condition for reducing false positives!**
 
 ```ron
-(type: "not_literal", argument_position: Some(0))
+(type: "not_literal", argument_position: 0)
 ```
 
 **Prevents false positives like**:
@@ -217,7 +248,7 @@ cursor.execute(user_query)             # ← Variable (potentially unsafe)
 
 ### `has_argument` - Look for Suspicious Patterns
 ```ron
-(type: "has_argument", patterns: Some(["*user*", "*input*", "*request*"]))
+(type: "has_argument", patterns: ["*user*", "*input*", "*request*"])
 ```
 
 **Targets dangerous patterns**:
@@ -228,7 +259,7 @@ os.system("ls -la")          # ← No user pattern (less suspicious)
 
 ### `argument_not_sanitized` - Check for Safety Measures
 ```ron
-(type: "argument_not_sanitized", patterns: Some(["*escape*", "*sanitize*", "*quote*"]))
+(type: "argument_not_sanitized", patterns: ["*escape*", "*sanitize*", "*quote*"])
 ```
 
 **Excludes sanitized input**:
@@ -241,7 +272,7 @@ os.system(user_input)               # ← Will trigger (not sanitized)
 
 ### `in_context` - Exclude Comments and Strings
 ```ron
-(type: "in_context", not_in: Some(["comment", "string_literal"]))
+(type: "in_context", not_in: ["comment", "string_literal"])
 ```
 
 **Prevents matches in**:
@@ -274,7 +305,7 @@ risky_operation()      # ← More suspicious (no protection)
 ```ron
 (
     pattern: "os.path.join",
-    finding_type: Some("credential_theft"),  // Too generic!
+    finding_type: "credential_theft",  // Too generic!
 )
 ```
 
@@ -282,17 +313,17 @@ risky_operation()      # ← More suspicious (no protection)
 ```ron
 (
     pattern: "os.path.join",
-    finding_type: Some("credential_theft"),
-    confidence: Some("medium"),  // More realistic
-    conditions: Some([
+    finding_type: "credential_theft",
+    confidence: "medium",  // More realistic
+    conditions: [
         // Look for credential-related paths
-        (type: "has_argument", patterns: Some([
+        (type: "has_argument", patterns: [
             "*password*", "*secret*", "*key*", "*token*", 
             "*credential*", "*.ssh*", "*id_rsa*"
-        ])),
+        ]),
         // Exclude normal path construction
-        (type: "not_literal", argument_position: Some(1)),
-    ]),
+        (type: "not_literal", argument_position: 1),
+    ],
 )
 ```
 
@@ -302,7 +333,7 @@ risky_operation()      # ← More suspicious (no protection)
 ```ron
 (
     pattern: "os.path.exists", 
-    finding_type: Some("anti_analysis"),  // Too broad!
+    finding_type: "anti_analysis",  // Too broad!
 )
 ```
 
@@ -310,15 +341,15 @@ risky_operation()      # ← More suspicious (no protection)
 ```ron
 (
     pattern: "os.path.exists",
-    finding_type: Some("anti_analysis"),
-    confidence: Some("low"),  // Honest about confidence
-    conditions: Some([
+    finding_type: "anti_analysis",
+    confidence: "low",  // Honest about confidence
+    conditions: [
         // Look for analysis tool paths
-        (type: "has_argument", patterns: Some([
+        (type: "has_argument", patterns: [
             "*debugger*", "*wireshark*", "*procmon*", "*olly*",
             "*ida*", "*x64dbg*", "*vmware*", "*virtualbox*"
-        ])),
-    ]),
+        ]),
+    ],
 )
 ```
 
@@ -328,7 +359,7 @@ risky_operation()      # ← More suspicious (no protection)
 ```ron
 (
     pattern: "socket.socket",
-    finding_type: Some("backdoor"),  // Flags legitimate networking!
+    finding_type: "backdoor",  // Flags legitimate networking!
 )
 ```
 
@@ -339,19 +370,19 @@ risky_operation()      # ← More suspicious (no protection)
         "socket.socket",
         "socket.create_connection"
     ],
-    finding_type: Some("suspicious_network"),
-    confidence: Some("low"),  // Be realistic
-    conditions: Some([
+    finding_type: "suspicious_network",
+    confidence: "low",  // Be realistic
+    conditions: [
         // Look for backdoor patterns
-        (type: "has_argument", patterns: Some([
+        (type: "has_argument", patterns: [
             "*bind*", "*listen*", "*accept*",
             "*shell*", "*cmd*", "*reverse*"
-        ])),
+        ]),
         // Exclude normal client connections
-        (type: "argument_not_sanitized", patterns: Some([
+        (type: "argument_not_sanitized", patterns: [
             "*http*", "*https*", "*api*", "*service*"
-        ])),
-    ]),
+        ]),
+    ],
 )
 ```
 
@@ -365,33 +396,33 @@ risky_operation()      # ← More suspicious (no protection)
         "*.executemany", 
         "cursor.execute"
     ],
-    finding_type: Some("sql_injection"),
-    severity: Some("high"),
-    confidence: Some("high"),
-    conditions: Some([
+    finding_type: "sql_injection",
+    severity: "high",
+    confidence: "high",
+    conditions: [
         // Must be dynamic content (not hardcoded queries)
-        (type: "not_literal", argument_position: Some(0)),
+        (type: "not_literal", argument_position: 0),
         
         // Look for string formatting/concatenation
-        (type: "has_argument", patterns: Some([
+        (type: "has_argument", patterns: [
             "*+*", "*%*", "*format*", "*f\"*", "*.format(*"
-        ])),
+        ]),
         
         // Not sanitized with proper methods
-        (type: "argument_not_sanitized", patterns: Some([
+        (type: "argument_not_sanitized", patterns: [
             "*escape*", "*quote*", "psycopg2.sql.*", "*parameterized*"
-        ])),
+        ]),
         
         // Exclude comments and test code
-        (type: "in_context", not_in: Some(["comment", "string_literal"])),
-    ]),
-    sanitizers: Some([
+        (type: "in_context", not_in: ["comment", "string_literal"]),
+    ],
+    sanitizers: [
         "psycopg2.sql.SQL", "*.escape", "*.quote"
-    ]),
-    file_types: Some((
+    ],
+    file_types: (
         extensions: [".py"],
-        exclude_patterns: Some(["*test*", "*example*"]),
-    )),
+        exclude_patterns: ["*test*", "*example*"],
+    ),
 )
 ```
 
@@ -401,11 +432,11 @@ risky_operation()      # ← More suspicious (no protection)
 Place most restrictive conditions first for performance:
 
 ```ron
-conditions: Some([
-    (type: "not_literal", argument_position: Some(0)),      // Most restrictive
-    (type: "in_context", not_in: Some(["comment"])),        // Medium
-    (type: "has_argument", patterns: Some(["*user*"])),     // Least restrictive
-]),
+conditions: [
+    (type: "not_literal", argument_position: 0),      // Most restrictive
+    (type: "in_context", not_in: ["comment"]),        // Medium
+    (type: "has_argument", patterns: ["*user*"]),     // Least restrictive
+],
 ```
 
 ### 2. Multiple Patterns for Related Functionality
@@ -415,20 +446,20 @@ patterns: [
     "base64.standard_b64decode", 
     "base64.urlsafe_b64decode"
 ],
-finding_type: Some("code_obfuscation"),
-conditions: Some([
+finding_type: "code_obfuscation",
+conditions: [
     // Only flag if combined with execution
-    (type: "has_sibling_pattern", patterns: Some(["exec", "eval"])),
-]),
+    (type: "has_sibling_pattern", patterns: ["exec", "eval"]),
+],
 ```
 
 ### 3. File Type Scoping
 ```ron
-file_types: Some((
+file_types: (
     extensions: [".py", ".pyw"],
-    include_patterns: Some(["*config*", "*settings*"]),  // Focus on config files
-    exclude_patterns: Some(["*test*", "*example*", "*demo*"]),
-)),
+    include_patterns: ["*config*", "*settings*"],  // Focus on config files
+    exclude_patterns: ["*test*", "*example*", "*demo*"],
+),
 ```
 
 ## Confidence Level Guidelines
@@ -439,12 +470,12 @@ file_types: Some((
 - Minimal false positive rate
 
 ```ron
-confidence: Some("high"),
-conditions: Some([
-    (type: "not_literal", argument_position: Some(0)),
-    (type: "has_argument", patterns: Some(["*injection_pattern*"])),
-    (type: "argument_not_sanitized", patterns: Some(["*escape*"])),
-]),
+confidence: "high",
+conditions: [
+    (type: "not_literal", argument_position: 0),
+    (type: "has_argument", patterns: ["*injection_pattern*"]),
+    (type: "argument_not_sanitized", patterns: ["*escape*"]),
+],
 ```
 
 ### Medium Confidence (80-95% accuracy)
@@ -452,11 +483,11 @@ conditions: Some([
 - May require manual review of some findings
 
 ```ron
-confidence: Some("medium"),
-conditions: Some([
-    (type: "not_literal", argument_position: Some(0)),
-    (type: "has_argument", patterns: Some(["*user*", "*input*"])),
-]),
+confidence: "medium",
+conditions: [
+    (type: "not_literal", argument_position: 0),
+    (type: "has_argument", patterns: ["*user*", "*input*"]),
+],
 ```
 
 ### Low Confidence (60-80% accuracy)
@@ -464,10 +495,10 @@ conditions: Some([
 - Useful for discovery but expect false positives
 
 ```ron
-confidence: Some("low"),
-conditions: Some([
-    (type: "has_argument", patterns: Some(["*suspicious*"])),
-]),
+confidence: "low",
+conditions: [
+    (type: "has_argument", patterns: ["*suspicious*"]),
+],
 ```
 
 ## Rule Categories and Organization
@@ -492,6 +523,95 @@ conditions: Some([
 - `path_traversal`: Directory traversal attempts
 - `sensitive_files`: Access to system files
 - `file_manipulation`: Suspicious file operations
+
+## Clean Syntax Examples
+
+### Simple Rule
+```ron
+{
+    injection_sinks: [
+        (
+            pattern: "eval",
+            finding_type: "code_injection",
+            severity: "critical",
+        ),
+    ],
+}
+```
+
+### Complex Rule with All Features
+```ron
+{
+    deserialization: [
+        (
+            patterns: [
+                "pickle.loads",
+                "pickle.load",
+                "cPickle.loads"
+            ],
+            finding_type: "insecure_deserialization",
+            severity: "critical",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "has_argument", patterns: ["*user*", "*request*", "*input*"]),
+                (type: "argument_not_sanitized", patterns: ["*safe*", "*verify*"]),
+            ],
+            sanitizers: [
+                "safe_pickle.loads",
+                "verify_pickle"
+            ],
+            file_types: (
+                extensions: [".py"],
+                include_patterns: ["*views*", "*controllers*", "*handlers*"],
+                exclude_patterns: ["*test*", "*example*"],
+            ),
+        ),
+    ],
+}
+```
+
+## Migration from Legacy Syntax
+
+### Quick Migration Guide
+
+**Legacy → Clean Syntax**:
+1. Remove `Some([...])` → `[...]` for arrays
+2. Remove `Some("value")` → `"value"` for strings  
+3. Remove `Some((struct))` → `(struct)` for structs
+4. Remove `None` fields entirely (they're optional)
+5. Remove `Some(number)` → `number` for numeric values
+
+**Example Migration**:
+```ron
+// Legacy (still works)
+(
+    pattern: "eval",
+    finding_type: Some("code_injection"),
+    severity: Some("high"),
+    conditions: Some([
+        (type: "not_literal", argument_position: Some(0)),
+    ]),
+    file_types: Some((
+        extensions: Some([".py"]),
+        exclude_patterns: Some(["*test*"]),
+    )),
+)
+
+// Clean syntax (preferred)
+(
+    pattern: "eval",
+    finding_type: "code_injection",
+    severity: "high",
+    conditions: [
+        (type: "not_literal", argument_position: 0),
+    ],
+    file_types: (
+        extensions: [".py"],
+        exclude_patterns: ["*test*"],
+    ),
+)
+```
 
 ## Best Practices for LLM Rule Generation
 
@@ -522,7 +642,7 @@ conditions: Some([
 // Excludes literal queries and properly sanitized inputs
 (
     patterns: ["*.execute", "*.query"],
-    finding_type: Some("sql_injection"),
+    finding_type: "sql_injection",
     // ... conditions
 )
 ```

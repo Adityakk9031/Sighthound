@@ -2,10 +2,10 @@ use anyhow::Result;
 use std::path::Path;
 use crate::language::LanguageSupport;
 use crate::rules::{Rule, Rules, Condition, rule_matches_pattern};
-use crate::{traverse_calls_only, match_pattern, get_node_text_slice, check_for_injection_pattern};
+use crate::{traverse_calls_only, get_node_text_slice, check_for_injection_pattern};
 use super::types::{Finding, ScanContext, FilteringStats};
-use glob::Pattern;
-use regex;
+use super::utils::{rule_applies_to_file_path};
+use super::conditions::{check_ast_conditions};
 
 pub struct FileTypeAwareAnalyzer {
     language_support: Box<dyn LanguageSupport>,
@@ -98,107 +98,7 @@ impl FileTypeAwareAnalyzer {
     }
 
     fn rule_applies_to_file(&self, rule: &Rule, file_path: &Path) -> bool {
-        // If rule has file_types filter, check it
-        if let Some(file_types) = self.get_rule_file_types(rule) {
-            let file_path_str = file_path.to_string_lossy();
-            let extension = file_path.extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            
-            // Check extensions filter
-            if let Some(extensions) = &file_types.extensions {
-                if !extensions.iter().any(|ext| {
-                    let clean_ext = if ext.starts_with('.') { &ext[1..] } else { ext };
-                    clean_ext.to_lowercase() == extension
-                }) {
-                    return false;
-                }
-            }
-
-            // Check include_patterns - file must match at least one include pattern (if any)
-            if let Some(include_patterns) = &file_types.include_patterns {
-                if !include_patterns.is_empty() {
-                    let matches_include = include_patterns.iter().any(|pattern| {
-                        let matches = self.matches_glob_pattern(pattern, &file_path_str);
-                        matches
-                    });
-                    if !matches_include {
-                        return false;
-                    }
-                }
-            }
-
-            // Check exclude_patterns - file must NOT match any exclude pattern
-            if let Some(exclude_patterns) = &file_types.exclude_patterns {
-                let matches_exclude = exclude_patterns.iter().any(|pattern| {
-                    let matches = self.matches_glob_pattern(pattern, &file_path_str);
-                    matches
-                });
-                if matches_exclude {
-                    return false;
-                }
-            }
-        }
-        
-        // If no file type filter, or all filters pass, rule applies to this file
-        true
-    }
-
-    /// Check if a file path matches a glob pattern
-    fn matches_glob_pattern(&self, pattern: &str, file_path: &str) -> bool {
-        // Try exact glob pattern matching first (full path)
-        if let Ok(glob_pattern) = Pattern::new(pattern) {
-            if glob_pattern.matches(file_path) {
-                return true;
-            }
-            
-            // Also try matching against just the filename
-            if let Some(filename) = std::path::Path::new(file_path).file_name() {
-                if let Some(filename_str) = filename.to_str() {
-                    if glob_pattern.matches(filename_str) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // Fallback to simple wildcard matching (for backward compatibility)
-        if pattern.contains('*') {
-            let regex_pattern = pattern.replace('*', ".*");
-            if let Ok(regex) = regex::Regex::new(&format!("^{}$", regex_pattern)) {
-                // Try full path
-                if regex.is_match(file_path) {
-                    return true;
-                }
-                // Try just filename
-                if let Some(filename) = std::path::Path::new(file_path).file_name() {
-                    if let Some(filename_str) = filename.to_str() {
-                        if regex.is_match(filename_str) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Exact string match - check both full path and filename
-        if file_path.contains(pattern) {
-            return true;
-        }
-        if let Some(filename) = std::path::Path::new(file_path).file_name() {
-            if let Some(filename_str) = filename.to_str() {
-                if filename_str.contains(pattern) {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    fn get_rule_file_types<'a>(&self, rule: &'a Rule) -> Option<&'a crate::rules::FileTypes> {
-        rule.file_types.as_ref()
+        rule_applies_to_file_path(rule, file_path)
     }
 
     fn scan_with_rules(&mut self, context: &ScanContext, rules: Vec<Rule>) -> Result<Vec<Finding>> {
@@ -290,64 +190,6 @@ impl FileTypeAwareAnalyzer {
         source: &[u8],
         conditions: &[Condition],
     ) -> bool {
-        conditions.iter().all(|condition| self.check_condition(node, source, condition))
-    }
-
-    fn check_condition(
-        &self,
-        node: &tree_sitter::Node,
-        source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        match condition.condition_type.as_str() {
-            "has_argument" => self.check_has_argument_condition(node, source, condition),
-            "in_context" => self.check_in_context_condition(condition),
-            "has_parent" => self.check_has_parent_condition(node, condition),
-            _ => false,
-        }
-    }
-
-    fn check_has_argument_condition(
-        &self,
-        node: &tree_sitter::Node,
-        source: &[u8],
-        condition: &Condition,
-    ) -> bool {
-        if let Some(pattern) = &condition.pattern {
-            if let Some(args_node) = self.language_support.get_arguments_node(node) {
-                let mut cursor = args_node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        let arg = cursor.node();
-                        let arg_text = get_node_text_slice(&arg, source);
-                        if match_pattern(pattern, arg_text) {
-                            return true;
-                        }
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    fn check_in_context_condition(&self, _condition: &Condition) -> bool {
-        // Simplified implementation
-        if let Some(_context_pattern) = &_condition.pattern {
-            // Check if node is in specific context (simplified)
-            return true;
-        }
-        false
-    }
-
-    fn check_has_parent_condition(&self, node: &tree_sitter::Node, condition: &Condition) -> bool {
-        if let Some(parent_type) = &condition.parent_type {
-            if let Some(parent) = node.parent() {
-                return parent.kind() == parent_type;
-            }
-        }
-        false
+        check_ast_conditions(node, source, conditions, self.language_support.as_ref())
     }
 }

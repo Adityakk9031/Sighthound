@@ -3,41 +3,34 @@
         // Django HttpResponse with user input - XSS risk
         (
             pattern: "HttpResponse",
-            finding_type: Some("django_xss"),
-            severity: Some("high"),
-            confidence: Some("medium"),
-            conditions: None,
-            file_types: Some((
+            finding_type: "django_xss",
+            severity: "high",
+            confidence: "medium",
+            file_types: (
                 extensions: [".py"],
                 include_patterns: ["*views*", "*controller*"],
-                exclude_patterns: None,
-            )),
+            ),
         ),
         // render_to_string without escaping
         (
             pattern: "render_to_string",
-            finding_type: Some("django_xss"),
-            severity: Some("medium"),
-            confidence: Some("medium"),
-            conditions: None,
-            file_types: Some((
+            finding_type: "django_xss",
+            severity: "medium",
+            confidence: "medium",
+            file_types: (
                 extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
+            ),
         ),
         // Django mark_safe with user input
         (
             pattern: "mark_safe",
-            finding_type: Some("django_xss_mark_safe"),
-            severity: Some("high"),
-            confidence: Some("medium"),
-            conditions: None,
-            file_types: Some((
+            finding_type: "django_xss_mark_safe",
+            severity: "high",
+            confidence: "medium",
+            file_types: (
                 extensions: [".py"],
                 include_patterns: ["*views*", "*templates*", "*utils*"],
-                exclude_patterns: None,
-            )),
+            ),
         ),
         // Template context without autoescape
         (
@@ -45,15 +38,13 @@
                 "django.template.Context",
                 "*.render_to_response"
             ],
-            finding_type: Some("django_template_xss"),
-            severity: Some("medium"),
-            confidence: Some("medium"),
-            conditions: None,
-            file_types: Some((
+            finding_type: "django_template_xss",
+            severity: "medium",
+            confidence: "medium",
+            file_types: (
                 extensions: [".py"],
                 include_patterns: ["*views*", "*context_processors*"],
-                exclude_patterns: None,
-            )),
+            ),
         ),
         // Direct template string rendering with user input
         (
@@ -61,28 +52,22 @@
                 "django.template.Template",
                 "Template.render"
             ],
-            finding_type: Some("django_template_injection"),
-            severity: Some("high"), 
-            confidence: Some("high"),
-            conditions: None,
-            file_types: Some((
+            finding_type: "django_template_injection",
+            severity: "high", 
+            confidence: "high",
+            file_types: (
                 extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
+            ),
         ),
         // Unsafe mark_safe usage
         (
             pattern: "django.utils.safestring.mark_safe",
-            finding_type: Some("django_unsafe_mark_safe"),
-            severity: Some("medium"),
-            confidence: Some("medium"),
-            conditions: None,
-            file_types: Some((
+            finding_type: "django_unsafe_mark_safe",
+            severity: "medium",
+            confidence: "medium",
+            file_types: (
                 extensions: [".py"],
-                include_patterns: None,
-                exclude_patterns: None,
-            )),
+            ),
         ),
     ],
 }

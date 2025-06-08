@@ -114,6 +114,114 @@ where
     deserializer.deserialize_any(PatternsVisitor)
 }
 
+// Custom deserializer that accepts both [Rule, Rule] and Some([Rule, Rule]) for rule arrays
+fn deserialize_rule_vec<'de, D>(deserializer: D) -> Result<Option<Vec<Rule>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct RuleVecVisitor;
+
+    impl<'de> Visitor<'de> for RuleVecVisitor {
+        type Value = Option<Vec<Rule>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a vector of rules or Option<Vec<Rule>>")
+        }
+
+        // Handle direct array: rules: [Rule, Rule]
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(item) = seq.next_element()? {
+                vec.push(item);
+            }
+            Ok(if vec.is_empty() { None } else { Some(vec) })
+        }
+
+        // Handle option: rules: Some([Rule, Rule])
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let vec = Vec::<Rule>::deserialize(deserializer)?;
+            Ok(Some(vec))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(RuleVecVisitor)
+}
+
+// Custom deserializer that accepts both "value" and Some("value") for optional string fields
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct OptionalStringVisitor;
+
+    impl<'de> Visitor<'de> for OptionalStringVisitor {
+        type Value = Option<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or Option<String>")
+        }
+
+        // Handle direct string: field: "value"
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.to_string()))
+        }
+
+        // Handle option: field: Some("value")
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let s = String::deserialize(deserializer)?;
+            Ok(Some(s))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(OptionalStringVisitor)
+}
+
 // Fast injection pattern checking using language-specific patterns
 pub fn check_for_injection_pattern(text: &str, language_support: &dyn LanguageSupport) -> bool {
     language_support.injection_patterns().iter().any(|regex| regex.is_match(text))
@@ -178,15 +286,23 @@ pub struct Rule {
     #[serde(deserialize_with = "deserialize_patterns")]
     pub patterns: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
     pub finding_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conditions: Option<Vec<Condition>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_file_types")]
     pub file_types: Option<FileTypes>,
     // Enhanced fields for better analysis
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
     pub severity: Option<String>,                      // Critical, High, Medium, Low
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
     pub confidence: Option<String>,                    // High, Medium, Low
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sanitizers: Option<Vec<String>>,              // Known sanitization functions
@@ -195,16 +311,28 @@ pub struct Rule {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Rules {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rule_vec")]
     pub injection_sinks: Option<Vec<Rule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rule_vec")]
     pub crypto_rules: Option<Vec<Rule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rule_vec")]
     pub path_traversal: Option<Vec<Rule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rule_vec")]
     pub weak_random: Option<Vec<Rule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rule_vec")]
     pub hardcoded_secrets: Option<Vec<Rule>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_rule_vec")]
     pub malware_detection: Option<Vec<Rule>>,
     #[serde(flatten)]
     pub other: HashMap<String, Vec<Rule>>,
@@ -467,4 +595,57 @@ pub fn is_in_protective_context(node: &tree_sitter::Node) -> bool {
     }
     
     false
+}
+
+// Custom deserializer that accepts both (struct) and Some((struct)) for FileTypes
+fn deserialize_optional_file_types<'de, D>(deserializer: D) -> Result<Option<FileTypes>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct OptionalFileTypesVisitor;
+
+    impl<'de> Visitor<'de> for OptionalFileTypesVisitor {
+        type Value = Option<FileTypes>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a FileTypes struct or Option<FileTypes>")
+        }
+
+        // Handle direct struct: file_types: (...)
+        fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::MapAccess<'de>,
+        {
+            let file_types = FileTypes::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            Ok(Some(file_types))
+        }
+
+        // Handle option: file_types: Some((...))
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let file_types = FileTypes::deserialize(deserializer)?;
+            Ok(Some(file_types))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(OptionalFileTypesVisitor)
 } 
