@@ -1,0 +1,129 @@
+{
+    path_traversal: Some([
+        // Unsafe file upload handling
+        (
+            patterns: [
+                "django.core.files.storage.FileSystemStorage",
+                "default_storage.save",
+                "*.save"
+            ],
+            finding_type: Some("django_unsafe_file_upload"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Using user-provided filename directly
+                (type: "has_argument", patterns: Some([
+                    "*request.FILES*", "*form.cleaned_data*", "*upload*"
+                ])),
+                
+                // Not validating filename or path
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*secure_filename*", "*basename*", "*validate*", "*clean*"
+                ])),
+                
+                // Not in protective context
+                (type: "not_in_protective_context"),
+            ]),
+            sanitizers: Some([
+                "django.utils.text.get_valid_filename",
+                "os.path.basename",
+                "pathlib.Path.name"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*forms*", "*upload*"]),
+                exclude_patterns: Some(["*test*"]),
+            )),
+        ),
+        // Unrestricted file type upload
+        (
+            patterns: [
+                "FileField",
+                "ImageField",
+                "django.forms.FileField"
+            ],
+            finding_type: Some("django_unrestricted_file_upload"),
+            severity: Some("medium"),
+            confidence: Some("low"),
+            conditions: Some([
+                // Missing upload_to or validation
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*upload_to*", "*validators*", "*clean_*"
+                ])),
+            ]),
+            sanitizers: Some([
+                "django.core.validators.FileExtensionValidator",
+                "clean_fieldname"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*models*", "*forms*"]),
+                exclude_patterns: Some(["*test*"]),
+            )),
+        ),
+        
+        // Media files served without authentication
+        (
+            patterns: [
+                "django.views.static.serve",
+                "MEDIA_URL",
+                "MEDIA_ROOT"
+            ],
+            finding_type: Some("django_exposed_media_files"),
+            severity: Some("medium"),
+            confidence: Some("low"),
+            conditions: Some([
+                // Serving media files in production
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*@login_required*", "*permission*", "*auth*"
+                ])),
+            ]),
+            sanitizers: Some([
+                "django.contrib.auth.decorators.login_required",
+                "nginx", "apache"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*urls*", "*views*", "*settings*"]),
+                exclude_patterns: Some(["*test*", "*local*", "*dev*"]),
+            )),
+        ),
+        
+        // Dangerous file operations with user paths
+        (
+            patterns: [
+                "os.remove",
+                "os.unlink", 
+                "shutil.rmtree",
+                "pathlib.Path.unlink"
+            ],
+            finding_type: Some("django_unsafe_file_deletion"),
+            severity: Some("critical"),
+            confidence: Some("high"),
+            conditions: Some([
+                // Using paths from user input
+                (type: "has_argument", patterns: Some([
+                    "*request*", "*form*", "*user*", "*upload*"
+                ])),
+                
+                // Not validating paths properly
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*abspath*", "*realpath*", "*startswith*", "*in_directory*"
+                ])),
+                
+                // Not in protective context
+                (type: "not_in_protective_context"),
+            ]),
+            sanitizers: Some([
+                "os.path.abspath",
+                "os.path.commonpath",
+                "pathlib.Path.resolve"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: Some(["*test*", "*migration*"]),
+            )),
+        ),
+    ]),
+} 

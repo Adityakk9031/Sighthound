@@ -1,0 +1,89 @@
+{
+    injection_sinks: Some([
+        // Django cursor.execute with f-strings - SQL injection
+        (
+            patterns: ["cursor.execute", "*.execute", "*.executemany"],
+            finding_type: Some("sql_injection"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Must be dynamic content (not hardcoded queries)
+                (type: "not_literal", argument_position: Some(0)),
+                
+                // Look for string formatting/concatenation
+                (type: "has_argument", patterns: Some([
+                    "*f\"*", "*+*", "*%*", "*format*", "*.format(*"
+                ])),
+                
+                // Not sanitized with proper methods
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*escape*", "*quote*", "psycopg2.sql.*", "*parameterized*", 
+                    "*mogrify*", "*prepare*"
+                ])),
+                
+                // Exclude comments and string literals
+                (type: "in_context", not_in: Some(["comment", "string_literal"])),
+            ]),
+            sanitizers: Some([
+                "psycopg2.sql.SQL", "*.escape", "*.quote", "*.mogrify", 
+                "connection.prepare", "psycopg2.extensions.quote_ident"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*models*", "*utils*", "*services*", "*handlers*"]),
+                exclude_patterns: Some(["*test*", "*migration*", "*example*", "*demo*"]),
+            )),
+        ),
+        
+        // Django QuerySet.extra() - dangerous method with SQL injection potential
+        (
+            pattern: "*.extra",
+            finding_type: Some("sql_injection"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Look for user input patterns
+                (type: "has_argument", patterns: Some([
+                    "*user*", "*input*", "*request*", "*param*", "*data*", 
+                    "*query*", "*get*", "*post*"
+                ])),
+                
+                // Not in a comment or string literal
+                (type: "in_context", not_in: Some(["comment", "string_literal"])),
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*models*", "*utils*", "*services*", "*handlers*"]),
+                exclude_patterns: Some(["*test*", "*migration*", "*example*", "*demo*"]),
+            )),
+        ),
+        
+        // Django raw SQL methods
+        (
+            patterns: ["*.raw", "raw_sql", "RawSQL"],
+            finding_type: Some("sql_injection"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Must be dynamic content
+                (type: "not_literal", argument_position: Some(0)),
+                
+                // Look for user input patterns
+                (type: "has_argument", patterns: Some([
+                    "*user*", "*input*", "*request*", "*param*", "*data*", 
+                    "*query*", "*get*", "*post*"
+                ])),
+                
+                // Not sanitized
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*escape*", "*quote*", "*parameterized*"
+                ])),
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*models*", "*utils*", "*services*", "*handlers*"]),
+                exclude_patterns: Some(["*test*", "*migration*", "*example*", "*demo*"]),
+            )),
+        ),
+    ]),
+}

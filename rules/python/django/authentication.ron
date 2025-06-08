@@ -1,0 +1,176 @@
+{
+    injection_sinks: Some([
+        // Unsafe user authentication bypass
+        (
+            patterns: [
+                "django.contrib.auth.authenticate",
+                "User.objects.get",
+                "User.objects.filter"
+            ],
+            finding_type: Some("django_auth_bypass"),
+            severity: Some("critical"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Using request data directly without validation
+                (type: "has_argument", patterns: Some([
+                    "*request.POST*", "*request.GET*", "*request.data*"
+                ])),
+                
+                // Not using proper form validation
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*form.is_valid*", "*form.cleaned_data*", "*authenticate*"
+                ])),
+                
+                // Not in protective context
+                (type: "not_in_protective_context"),
+            ]),
+            sanitizers: Some([
+                "django.contrib.auth.authenticate",
+                "django.contrib.auth.forms.AuthenticationForm"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*auth*", "*login*"]),
+                exclude_patterns: Some(["*test*"]),
+            )),
+        ),
+        
+        // Unsafe user lookup allowing enumeration
+        (
+            patterns: [
+                "User.objects.get",
+                "get_user_model().objects.get"
+            ],
+            finding_type: Some("django_user_enumeration"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Using username/email from request
+                (type: "has_argument", patterns: Some([
+                    "*username*", "*email*", "*request*"
+                ])),
+                
+                // Not handling DoesNotExist properly
+                (type: "not_in_protective_context"),
+            ]),
+            sanitizers: Some([
+                "get_object_or_404",
+                "try:", "except"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*", "*auth*"]),
+                exclude_patterns: Some(["*test*"]),
+            )),
+        ),
+        
+        // Missing authentication decorators
+        (
+            patterns: [
+                "def ",
+                "class.*View"
+            ],
+            finding_type: Some("django_missing_auth_decorator"),
+            severity: Some("medium"),
+            confidence: Some("low"),
+            conditions: Some([
+                // Contains request parameter or self.request
+                (type: "has_argument", patterns: Some([
+                    "*request*", "*self.request*"
+                ])),
+                
+                // Missing authentication decorators
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*@login_required*", "*@permission_required*",
+                    "*LoginRequiredMixin*", "*PermissionRequiredMixin*"
+                ])),
+            ]),
+            sanitizers: Some([
+                "django.contrib.auth.decorators.login_required",
+                "django.contrib.auth.mixins.LoginRequiredMixin"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*"]),
+                exclude_patterns: Some(["*test*", "*public*", "*api*"]),
+            )),
+        ),
+        
+        // Insecure password handling
+        (
+            patterns: [
+                "User.objects.create",
+                "User.objects.create_user",
+                "set_password"
+            ],
+            finding_type: Some("django_insecure_password"),
+            severity: Some("high"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Using raw password without hashing
+                (type: "has_argument", patterns: Some([
+                    "*password*", "*pwd*"
+                ])),
+                
+                // Not using proper password methods
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*make_password*", "*set_password*", "*create_user*"
+                ])),
+            ]),
+            sanitizers: Some([
+                "django.contrib.auth.hashers.make_password",
+                "User.set_password",
+                "User.objects.create_user"
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: None,
+                exclude_patterns: Some(["*test*", "*migration*"]),
+            )),
+        ),
+    ]),
+    
+    crypto_rules: Some([
+        // Weak session configuration
+        (
+            patterns: [
+                "SESSION_COOKIE_SECURE",
+                "SESSION_COOKIE_HTTPONLY",
+                "SESSION_COOKIE_SAMESITE"
+            ],
+            finding_type: Some("django_insecure_session_config"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Set to insecure values
+                (type: "has_argument", patterns: Some([
+                    "*=*False*", "*= False*", "*None*", "*= None*"
+                ])),
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*settings*"]),
+                exclude_patterns: Some(["*test*", "*local*"]),
+            )),
+        ),
+        
+        // CSRF exemption without justification
+        (
+            pattern: "@csrf_exempt",
+            finding_type: Some("django_csrf_exempt"),
+            severity: Some("medium"),
+            confidence: Some("medium"),
+            conditions: Some([
+                // Should have a comment explaining why
+                (type: "argument_not_sanitized", patterns: Some([
+                    "*# API*", "*# webhook*", "*# third-party*", "*# external*"
+                ])),
+            ]),
+            file_types: Some((
+                extensions: [".py"],
+                include_patterns: Some(["*views*"]),
+                exclude_patterns: Some(["*test*"]),
+            )),
+        ),
+    ]),
+} 
