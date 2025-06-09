@@ -275,8 +275,26 @@ impl ScanningLogic {
         
         // Special handling for injection sinks
         if finding_type == "injection_sinks" || finding_type.contains("injection") {
-            if !Self::has_injection_pattern(node, source, language_support) {
-                return None;
+            // Check if arguments have injection patterns
+            let has_injection = Self::has_injection_pattern(node, source, language_support);
+            
+            if !has_injection {
+                // For SQL injection, additionally check if arguments contain user inputs or concat
+                if finding_type.contains("sql") {
+                    // Check if node text contains "+" or "concat" - common in string concatenation
+                    let node_text = get_node_text(node, source).to_lowercase();
+                    let contains_concat = node_text.contains("+") || 
+                                          node_text.contains("concat") || 
+                                          node_text.contains("format");
+                    
+                    if contains_concat {
+                        // Finding continues to be reported
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
             }
         }
         

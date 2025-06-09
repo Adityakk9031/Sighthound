@@ -566,7 +566,16 @@ pub fn validate_rule_patterns(rule: &Rule) -> Result<(), String> {
 
 // Check if a node represents a literal value (reduced false positive risk)
 pub fn is_literal_node(node: &tree_sitter::Node) -> bool {
-    matches!(node.kind(), "string" | "integer" | "float" | "true" | "false" | "null" | "none")
+    match node.kind() {
+        "integer" | "float" | "true" | "false" | "null" | "none" => true,
+        "string" | "string_literal" | "template_string" => {
+            // For strings, we need to check if they contain dynamic content
+            // This is a basic check - in practice, we should examine the string content
+            // to see if it contains format specifiers, interpolation, etc.
+            false  // Treat all strings as potentially dynamic for injection analysis
+        },
+        _ => false,
+    }
 }
 
 // Check if a node is in a protective context
