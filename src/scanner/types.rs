@@ -1,6 +1,5 @@
 use serde::Serialize;
 use std::path::PathBuf;
-use tree_sitter::Tree;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Finding {
@@ -16,17 +15,6 @@ pub struct FileInfo {
     pub path: PathBuf,
     pub size: u64,
     pub extension: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ScanContext {
-    pub language_name: String,
-    pub rules_file: String,
-    pub parallel: bool,
-    pub max_threads: Option<usize>,
-    pub filepath: String,
-    pub source: Vec<u8>,
-    pub tree: Tree,
 }
 
 #[derive(Debug, Clone, Default)]
