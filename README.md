@@ -158,3 +158,24 @@ This project is open source. Please check the license file for details.
 - Run against specific file
 - Glob Support ✅
 - Tree-sitter support ✅
+
+## 🧪 Testing
+
+The test organization follows a layered approach for better maintainability:
+
+### Directory Structure
+
+1. **tests/**: Contains all test code
+   - **unit/**: Unit tests for individual components
+   - **integration/**: Tests for multiple components working together
+   - **end_to_end/**: Tests for the entire system
+
+2. **test_fixtures/**: Contains all test data and fixtures
+   - **python/**: Python test files for testing Python-specific vulnerabilities
+   - **java/**: Java test files for testing Java-specific vulnerabilities
+   - **javascript/**: JavaScript test files for testing JavaScript-specific vulnerabilities
+   - **rules/**: Test rule files in RON format
+
+3. **test_scripts/**: Contains scripts and utilities for running tests
+
+For more details about testing, see [README-test.md](README-test.md).

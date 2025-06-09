@@ -44,3 +44,15 @@ tempfile = "3.8"
 [profile.release]
 opt-level = 3
 lto = true
+
+[[test]]
+name = "unit_tests"
+path = "tests/unit/main.rs"
+
+[[test]]
+name = "integration_tests"
+path = "tests/integration/main.rs"
+
+[[test]]
+name = "end_to_end_tests"
+path = "tests/end_to_end/main.rs"

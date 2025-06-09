@@ -1,5 +1,6 @@
 use find_vulns::rules::Rules;
 use find_vulns::VulnerabilityScanner;
+use std::path::Path;
 
 // Helper function to create temporary test files
 
@@ -118,7 +119,7 @@ mod django_xss_tests {
                 let mut scanner = VulnerabilityScanner::new("python", rules)
                     .expect("Failed to create scanner");
                 let results = scanner.find_vulnerabilities_single_threaded(
-                    "test_data/python/django",
+                    "test_fixtures/python/django",
                     "python"
                 ).expect("Failed to scan directory");
                 
@@ -129,6 +130,16 @@ mod django_xss_tests {
                 println!("Warning: Failed to load Django rules directory: {}", e);
                 // Don't fail the test - this indicates a rules configuration issue
             }
+        }
+    }
+
+    #[test]
+    fn test_django_scanner_output() {
+        // Skip if django directory doesn't exist
+        let django_dir = Path::new("test_fixtures/python/django");
+        if !django_dir.exists() {
+            println!("Skipping Django test because test_fixtures/python/django directory doesn't exist");
+            return;
         }
     }
 } 
