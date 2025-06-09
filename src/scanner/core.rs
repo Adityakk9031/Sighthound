@@ -95,7 +95,7 @@ impl VulnerabilityScanner {
             println!("No {} files found in {}", language_name, root_dir);
             return Ok(Vec::new());
         }
-        
+
         let (file_progress, finding_progress) = self.setup_progress_bars(files.len());
         let total_findings = Arc::new(AtomicUsize::new(0));
         
@@ -161,7 +161,7 @@ impl VulnerabilityScanner {
             println!("No {} files found in {}", language_name, root_dir);
             return Ok(Vec::new());
         }
-        
+
         let (file_progress, finding_progress) = self.setup_progress_bars(files.len());
         let total_findings = Arc::new(AtomicUsize::new(0));
         
@@ -265,4 +265,4 @@ pub fn print_summary(findings: &[Finding]) {
     }
 
     println!("\nTotal vulnerabilities found: {}", findings.len());
-} 
+}

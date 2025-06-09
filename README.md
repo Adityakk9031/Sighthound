@@ -4,22 +4,13 @@ A fast, efficient vulnerability scanner written in Rust that uses tree-sitter to
 
 ## Features
 
-- **AST-based analysis**: Uses tree-sitter for accurate parsing of Python code
+- **AST-based analysis**: Uses tree-sitter for accurate parsing of code
 - **Configurable rules**: JSON-based rule system for different vulnerability types
 - **Pattern matching**: Supports wildcards, regex patterns, and exact matching
 - **Context-aware**: Analyzes function arguments and AST context for better accuracy
 - **Performance**: Written in Rust for speed and memory efficiency
 - **Detailed reporting**: Provides file locations, line numbers, and vulnerability summaries
 
-## Dependencies
-
-The scanner uses the following Rust crates:
-- `tree-sitter` and `tree-sitter-python` for AST parsing
-- `serde` and `serde_json` for JSON rule parsing
-- `regex` for pattern matching
-- `walkdir` for directory traversal
-- `clap` for command-line interface
-- `anyhow` for error handling
 
 ## Installation
 
@@ -46,7 +37,7 @@ Or using the built binary:
 ### Parameters
 
 - `<root_directory>`: The directory to scan recursively
-- `<language>`: Programming language (currently only "python" is supported)
+- `<language>`: Programming language 
 - `<rules_file>`: JSON file containing vulnerability detection rules
 
 ### Example
