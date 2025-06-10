@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test HTML with Vulnerabilities</title>
+</head>
+<body>
+    <!-- Test 1: JavaScript URL in href -->
+    <a href="javascript:alert('XSS')">Click me</a>
+    
+    <!-- Test 2: Inline event handler -->
+    <button onclick="eval(userInput)">Dangerous Button</button>
+    
+    <!-- Test 3: Script tag with dynamic content -->
+    <script>
+        document.write(userInput);
+        eval("alert('test')");
+    </script>
+    
+    <!-- Test 4: Form with javascript action -->
+    <form action="javascript:submitForm()">
+        <input type="text" name="data">
+    </form>
+    
+    <!-- Test 5: iframe with srcdoc -->
+    <iframe srcdoc="<script>alert('xss')</script>"></iframe>
+    
+    <!-- Test 6: Data URL -->
+    <img src="data:text/html,<script>alert('xss')</script>">
+    
+    <!-- Test 7: Style with expression (IE) -->
+    <div style="width: expression(alert('xss'))"></div>
+    
+    <!-- Test 8: Meta refresh -->
+    <meta http-equiv="refresh" content="0;url=javascript:alert('xss')">
+    
+    <!-- Test 9: Event handlers with template-like syntax -->
+    <div onmouseover="processInput(${userInput})">Hover me</div>
+    
+    <!-- Test 10: postMessage without origin check -->
+    <script>
+        window.postMessage("data", "*");
+    </script>
+</body>
+</html> 

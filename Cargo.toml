@@ -15,16 +15,21 @@ name = "find_vulns"
 path = "src/lib.rs"
 
 [features]
-default = ["python", "java", "javascript"]
+default = ["python", "java", "javascript", "tsx", "html", "django"]
 python = ["tree-sitter-python"]
 java = ["tree-sitter-java"]
 javascript = ["tree-sitter-javascript"]
+tsx = ["tree-sitter-typescript"]
+html = ["tree-sitter-html"]
+django = ["tree-sitter-html"]  # Reuse HTML parser for Django templates
 
 [dependencies]
-tree-sitter = "0.22"
-tree-sitter-python = { version = "0.21", optional = true }
-tree-sitter-java = { version = "0.21", optional = true }
-tree-sitter-javascript = { version = "0.21", optional = true }
+tree-sitter = "0.24"
+tree-sitter-python = { version = "0.23", optional = true }
+tree-sitter-java = { version = "0.23", optional = true }
+tree-sitter-javascript = { version = "0.23", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-html = { version = "0.23", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ron = "0.8"

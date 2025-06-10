@@ -63,3 +63,4 @@ perf.data.old
 target/
 debug/
 release/
+.DS_Store

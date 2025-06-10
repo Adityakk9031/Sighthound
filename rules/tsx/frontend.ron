@@ -1,0 +1,272 @@
+{
+    xss_sinks: [
+        // React dangerouslySetInnerHTML - Critical XSS vector
+        (
+            pattern: "dangerouslySetInnerHTML",
+            finding_type: "react_xss",
+            severity: "critical",
+            confidence: "high",
+            conditions: [
+                (type: "has_argument", patterns: ["*__html*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx"],
+                exclude_patterns: ["*test*", "*spec*", "*story*", "*.stories.*", "*demo*", "*example*"],
+            ),
+        ),
+        // DOM manipulation with innerHTML - High precision targeting
+        (
+            patterns: ["innerHTML", "outerHTML"],
+            finding_type: "dom_xss",
+            severity: "high",
+            confidence: "medium",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "has_argument", patterns: ["*user*", "*input*", "*param*", "*props*", "*state*"]),
+                (type: "argument_not_sanitized", patterns: ["*escape*", "*sanitize*", "*DOMPurify*"]),
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*test*", "*vendor*", "*node_modules*", "*spec*"],
+            ),
+        ),
+        // React refs with dangerous operations - More specific
+        (
+            pattern: "ref",
+            finding_type: "react_ref_xss",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*.innerHTML*", "*.outerHTML*", "*.insertAdjacentHTML*"]),
+                (type: "not_literal", argument_position: 0),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx"],
+                exclude_patterns: ["*test*", "*story*"],
+            ),
+        ),
+    ],
+
+    code_injection: [
+        // eval() usage - Critical security risk
+        (
+            pattern: "eval",
+            finding_type: "code_injection",
+            severity: "critical",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "not_in_protective_context"),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*vendor*", "*node_modules*", "*test*", "*polyfill*"],
+            ),
+        ),
+        // Function constructor - Code injection risk
+        (
+            patterns: ["Function", "new Function"],
+            finding_type: "code_injection",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "has_argument", patterns: ["*user*", "*input*", "*dynamic*", "*external*"]),
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*vendor*", "*node_modules*", "*polyfill*"],
+            ),
+        ),
+        // setTimeout/setInterval with string code - More specific
+        (
+            patterns: ["setTimeout", "setInterval"],
+            finding_type: "code_injection",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "has_argument", patterns: ["*eval*", "*Function*", "*user*", "*input*"]),
+                (type: "argument_not_sanitized", patterns: ["*validate*", "*sanitize*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*test*", "*vendor*"],
+            ),
+        ),
+    ],
+
+    react_specific: [
+        // JSX expression injection in event handlers - More precise
+        (
+            patterns: ["onClick", "onLoad", "onError", "onMouseOver", "onFocus", "onBlur"],
+            finding_type: "jsx_event_injection",
+            severity: "medium",
+            confidence: "low", // More realistic confidence
+            conditions: [
+                (type: "has_argument", patterns: ["*eval*", "*Function*", "*dangerouslySetInnerHTML*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "has_argument", patterns: ["*user*", "*input*", "*props*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx"],
+                exclude_patterns: ["*test*", "*story*", "*demo*"],
+            ),
+        ),
+        // React.createElement with dangerous props
+        (
+            pattern: "React.createElement",
+            finding_type: "react_create_element_xss",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*dangerouslySetInnerHTML*", "*innerHTML*"]),
+                (type: "not_literal", argument_position: 1), // Second argument is props
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+        // Dynamic component rendering - Lower confidence, more specific
+        (
+            patterns: ["React.lazy", "import"],
+            finding_type: "dynamic_component_loading",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: ["*user*", "*input*", "*external*", "*runtime*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*validate*", "*whitelist*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx"],
+                exclude_patterns: ["*test*", "*story*", "*demo*"],
+            ),
+        ),
+    ],
+
+    url_injection: [
+        // Dynamic imports with user input - Enhanced precision
+        (
+            pattern: "import",
+            finding_type: "dynamic_import_injection",
+            severity: "high",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*user*", "*input*", "*param*", "*query*", "*external*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*validate*", "*whitelist*", "*sanitize*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*test*", "*vendor*"],
+            ),
+        ),
+        // href with javascript: protocol - Very specific
+        (
+            pattern: "href",
+            finding_type: "javascript_url",
+            severity: "medium",
+            confidence: "high",
+            conditions: [
+                (type: "has_argument", patterns: ["*javascript:*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx"],
+                exclude_patterns: ["*test*", "*example*"],
+            ),
+        ),
+        // src attribute with user input - Better conditions
+        (
+            pattern: "src",
+            finding_type: "src_injection",
+            severity: "medium",
+            confidence: "low", // More realistic
+            conditions: [
+                (type: "has_argument", patterns: ["*user*", "*input*", "*param*", "*dynamic*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*validate*", "*sanitize*", "*encode*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx"],
+                exclude_patterns: ["*test*", "*story*", "*demo*"],
+            ),
+        ),
+    ],
+
+    client_side_storage: [
+        // localStorage with sensitive data - More specific patterns
+        (
+            patterns: ["localStorage.setItem", "sessionStorage.setItem"],
+            finding_type: "sensitive_data_storage",
+            severity: "medium",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: [
+                    "*token*", "*password*", "*secret*", "*key*", "*auth*", 
+                    "*jwt*", "*session*", "*credential*"
+                ]),
+                (type: "not_literal", argument_position: 1), // Value argument
+                (type: "argument_not_sanitized", patterns: ["*encrypt*", "*hash*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*test*", "*demo*"],
+            ),
+        ),
+        // document.cookie without secure flags - More precise
+        (
+            pattern: "document.cookie",
+            finding_type: "insecure_cookie",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "not_has_argument", patterns: ["*Secure*", "*HttpOnly*", "*SameSite*"]),
+                (type: "has_argument", patterns: ["*=*"]), // Setting a cookie
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+
+    postmessage_vulnerabilities: [
+        // postMessage without origin validation - Better targeting
+        (
+            pattern: "postMessage",
+            finding_type: "postmessage_no_origin_check",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*\"*\"*", "*'*'*"]), // Wildcard origins
+                (type: "not_has_argument", patterns: ["*origin*", "*check*", "*validate*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*test*", "*demo*"],
+            ),
+        ),
+        // addEventListener for message events - Lower confidence
+        (
+            pattern: "addEventListener",
+            finding_type: "message_listener_no_validation",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: ["*message*"]),
+                (type: "not_has_argument", patterns: ["*origin*", "*source*", "*validate*"]),
+            ],
+            file_types: (
+                extensions: [".tsx", ".jsx", ".ts", ".js"],
+                exclude_patterns: ["*test*", "*vendor*"],
+            ),
+        ),
+    ],
+} 

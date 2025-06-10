@@ -11,8 +11,8 @@ pub struct Cli {
     #[arg(help = "Root directory to scan for vulnerabilities")]
     pub root_dir: String,
     
-    /// Language to scan (currently only 'python' is supported)
-    #[arg(help = "Programming language to scan (currently: python)")]
+    /// Language to scan (python, java, javascript, tsx, html, django)
+    #[arg(help = "Programming language to scan (python, java, javascript, tsx, html, django)")]
     pub language: String,
     
     /// Rules file or directory path (RON format only)

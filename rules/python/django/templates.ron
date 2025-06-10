@@ -1,0 +1,359 @@
+{
+    template_injection: [
+        // Django template variables marked as safe - Critical finding
+        (
+            patterns: ["|safe", "|mark_safe"],
+            finding_type: "django_template_xss_safe",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "has_argument", patterns: ["*user*", "*input*", "*request*", "*form*", "*param*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*escape*", "*clean*", "*validate*"]),
+            ],
+            file_types: (
+                extensions: [".html", ".txt", ".xml"],
+                include_patterns: ["*template*", "*django*"],
+                exclude_patterns: ["*test*", "*example*"],
+            ),
+        ),
+        // Autoescape disabled - Always dangerous
+        (
+            patterns: ["{% autoescape off %}", "{%autoescape off%}"],
+            finding_type: "django_autoescape_disabled",
+            severity: "critical",
+            confidence: "high",
+            conditions: [
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".html", ".txt", ".xml"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*", "*demo*"],
+            ),
+        ),
+        // Django template variables without escaping in dangerous contexts
+        (
+            patterns: ["{{", "}}"],
+            finding_type: "django_template_var_js_context",
+            severity: "high",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*<script*", "*javascript:*", "*on*=*"]),
+                (type: "not_has_argument", patterns: ["*|escapejs*", "*|escape*"]),
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+
+    javascript_context_injection: [
+        // Django variables in script tags - Critical XSS vector
+        (
+            patterns: ["{{", "}}"],
+            finding_type: "django_js_template_injection",
+            severity: "critical",
+            confidence: "high",
+            conditions: [
+                (type: "in_context", context: "script_tag"),
+                (type: "not_has_argument", patterns: ["*|escapejs*", "*|json_script*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*", "*demo*"],
+            ),
+        ),
+        // Event handlers with Django variables - Enhanced targeting
+        (
+            patterns: [
+                "onclick", "onload", "onerror", "onmouseover", "onfocus",
+                "onblur", "onchange", "onsubmit"
+            ],
+            finding_type: "django_event_handler_injection",
+            severity: "high",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*{{*", "*{%*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "not_has_argument", patterns: ["*|escapejs*", "*|escape*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+        // href attributes with Django variables - Better conditions
+        (
+            pattern: "href",
+            finding_type: "django_href_injection",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*{{*", "*javascript:*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*|urlencode*", "*|escape*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+
+    filter_vulnerabilities: [
+        // Dangerous template filters - Lower confidence for complex pattern
+        (
+            patterns: ["|escape", "|force_escape"],
+            finding_type: "django_double_escape",
+            severity: "low",
+            confidence: "low", // Hard to detect reliably
+            conditions: [
+                (type: "has_argument", patterns: ["*|safe*", "*|mark_safe*"]),
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*", "*example*"],
+            ),
+        ),
+        // Raw filter usage - Very dangerous
+        (
+            pattern: "|raw",
+            finding_type: "django_raw_filter",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+        // Template variables in JSON context without json_script - Enhanced
+        (
+            patterns: ["{{", "}}"],
+            finding_type: "django_json_injection",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "in_context", context: "json"),
+                (type: "not_has_argument", patterns: ["*|escapejs*", "*|json_script*"]),
+                (type: "has_argument", patterns: ["*user*", "*input*", "*form*"]),
+            ],
+            file_types: (
+                extensions: [".html", ".json"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+
+    template_tag_vulnerabilities: [
+        // Include tag without proper context - Better targeting
+        (
+            patterns: ["{% include", "{%include"],
+            finding_type: "django_include_injection",
+            severity: "medium",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: ["*user*", "*input*", "*request*", "*param*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*validate*", "*clean*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*", "*example*"],
+            ),
+        ),
+        // Extends tag with user input - Very dangerous
+        (
+            patterns: ["{% extends", "{%extends"],
+            finding_type: "django_extends_injection",
+            severity: "high",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*user*", "*input*", "*request*", "*param*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*validate*", "*whitelist*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+        // Ssi tag usage (server-side includes) - Always dangerous
+        (
+            patterns: ["{% ssi", "{%ssi"],
+            finding_type: "django_ssi_injection",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+
+    url_injection: [
+        // URL tag with user input - Enhanced precision
+        (
+            patterns: ["{% url", "{%url"],
+            finding_type: "django_url_injection",
+            severity: "medium",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: ["*user*", "*input*", "*request*", "*param*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*validate*", "*clean*", "*escape*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*", "*example*"],
+            ),
+        ),
+        // Static tag with user input - Lower risk but still concerning
+        (
+            patterns: ["{% static", "{%static"],
+            finding_type: "django_static_injection",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: ["*user*", "*input*", "*request*", "*param*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "argument_not_sanitized", patterns: ["*validate*", "*clean*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*", "*demo*"],
+            ),
+        ),
+    ],
+
+    form_vulnerabilities: [
+        // Forms without CSRF token - Critical security issue
+        (
+            pattern: "<form",
+            finding_type: "django_missing_csrf",
+            severity: "high",
+            confidence: "medium", // Improved confidence
+            conditions: [
+                (type: "not_has_argument", patterns: ["*csrf_token*", "*{% csrf_token %}*"]),
+                (type: "has_argument", patterns: ["*method*=*post*", "*method=\"post\"*"]),
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*", "*form*"],
+                exclude_patterns: ["*test*", "*demo*"],
+            ),
+        ),
+        // Hidden inputs with user data - Enhanced targeting
+        (
+            pattern: "type=\"hidden\"",
+            finding_type: "django_hidden_field_injection",
+            severity: "medium",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: ["*{{*user*", "*{{*request*", "*{{*param*"]),
+                (type: "not_has_argument", patterns: ["*|escape*", "*|clean*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*", "*form*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+
+    content_type_vulnerabilities: [
+        // Template response without content type header - Very low confidence
+        (
+            patterns: ["{{", "}}"],
+            finding_type: "django_template_content_type",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "file_extension", patterns: [".xml", ".json", ".csv"]),
+                (type: "has_argument", patterns: ["*user*", "*input*"]),
+                (type: "in_context", not_in: ["comment"]),
+            ],
+            file_types: (
+                extensions: [".xml", ".json", ".csv"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*", "*example*"],
+            ),
+        ),
+        // SVG templates with user input - Dangerous combination
+        (
+            patterns: ["{{", "}}"],
+            finding_type: "django_svg_injection",
+            severity: "high",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*<svg*", "*<script*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "not_has_argument", patterns: ["*|escape*", "*|safe*"]),
+            ],
+            file_types: (
+                extensions: [".svg"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+
+    comment_vulnerabilities: [
+        // HTML comments with template variables - Information disclosure
+        (
+            patterns: ["<!--", "-->"],
+            finding_type: "django_comment_injection",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: ["*{{*", "*{%*"]),
+                (type: "has_argument", patterns: ["*user*", "*password*", "*secret*", "*debug*"]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*", "*demo*"],
+            ),
+        ),
+        // Template comments that might leak sensitive info - Enhanced
+        (
+            patterns: ["{#", "#}"],
+            finding_type: "django_template_comment_leak",
+            severity: "low",
+            confidence: "medium", // Comments are easier to detect
+            conditions: [
+                (type: "has_argument", patterns: [
+                    "*password*", "*secret*", "*key*", "*token*", 
+                    "*api*", "*debug*", "*todo*", "*hack*"
+                ]),
+            ],
+            file_types: (
+                extensions: [".html"],
+                include_patterns: ["*template*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+} 

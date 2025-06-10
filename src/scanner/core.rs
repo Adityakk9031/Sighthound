@@ -16,7 +16,6 @@ use super::shared::ScanningLogic;
 pub struct VulnerabilityScanner {
     parser: LanguageParser,
     rules: Rules,
-    language_name: String,
 }
 
 impl VulnerabilityScanner {
@@ -25,7 +24,6 @@ impl VulnerabilityScanner {
         Ok(Self { 
             parser, 
             rules,
-            language_name: language_name.to_string(),
         })
     }
 
