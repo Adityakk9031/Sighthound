@@ -4,21 +4,20 @@ use clap::Parser;
 #[command(
     name = "find_vulns",
     about = "A fast vulnerability scanner for source code",
-    long_about = "Corgea Greppy - A high-performance vulnerability scanner that uses tree-sitter for AST-based analysis with parallel processing support.\n\nSupports both single rule files and directories containing multiple rule files for modular rule management. Rules must be in RON format."
+    long_about = "Corgea Greppy - A high-performance vulnerability scanner that uses tree-sitter for AST-based analysis with parallel processing support.\n\nSupports both explicit mode (specify language and rules) and auto-detection mode (automatically detect file types and load appropriate rules). Rules must be in RON format."
 )]
 pub struct Cli {
     /// Root directory to scan
     #[arg(help = "Root directory to scan for vulnerabilities")]
     pub root_dir: String,
     
-    /// Language to scan (python, java, javascript, tsx, html, django)
+    /// Language to scan (optional - triggers explicit mode when used with rules_path)
     #[arg(help = "Programming language to scan (python, java, javascript, tsx, html, django)")]
-    pub language: String,
+    pub language: Option<String>,
     
-    /// Rules file or directory path (RON format only)
-    /// If a directory is provided, all .ron files will be loaded and merged
+    /// Rules file or directory path (optional - triggers explicit mode when used with language)
     #[arg(help = "Path to rules file (.ron) or directory containing multiple .ron rule files")]
-    pub rules_path: String,
+    pub rules_path: Option<String>,
     
     /// Output format (text, json, csv)
     #[arg(short, long, default_value = "text", help = "Output format: text, json, or csv")]
