@@ -30,7 +30,6 @@ fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
     }
 }
 
-/// Parallel file discovery with 20-50% performance improvement
 fn discover_files_by_language_parallel(root_dir: &str) -> Result<HashMap<String, Vec<PathBuf>>> {
     let all_paths: Vec<PathBuf> = WalkDir::new(root_dir)
         .follow_links(false)
