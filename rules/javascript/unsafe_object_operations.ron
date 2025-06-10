@@ -1,0 +1,101 @@
+{
+    json_parsing: [
+        (
+            pattern: "JSON.parse",
+            finding_type: "unsafe_json_parsing",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "not_in_protective_context"),
+                (type: "argument_not_sanitized", patterns: ["*try*", "*catch*", "*validate*"]),
+            ],
+        ),
+    ],
+    
+    prototype_pollution: [
+        (
+            patterns: [
+                "*.__proto__",
+                "*.constructor.prototype"
+            ],
+            finding_type: "prototype_pollution",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "has_argument", patterns: ["*=*", "*assign*"]),
+            ],
+        ),
+        (
+            pattern: "Object.assign",
+            finding_type: "prototype_pollution",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "not_literal", argument_position: 1),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "has_argument", patterns: ["*__proto__*", "*constructor*", "*prototype*"]),
+                (type: "argument_not_sanitized", patterns: ["*filter*", "*validate*", "*sanitize*"]),
+            ],
+        ),
+        (
+            patterns: [
+                "Object.create",
+                "Object.setPrototypeOf"
+            ],
+            finding_type: "prototype_manipulation",
+            severity: "medium",
+            confidence: "low",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "has_argument", patterns: ["*+*", "*concat*", "*$*", "*`*"]),
+            ],
+        ),
+    ],
+    
+    unsafe_property_access: [
+        (
+            patterns: [
+                "*[*__proto__*]",
+                "*[*constructor*]",
+                "*[*prototype*]"
+            ],
+            finding_type: "dynamic_prototype_access",
+            severity: "medium",
+            confidence: "low",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "has_argument", patterns: ["*+*", "*concat*", "*$*", "*`*"]),
+            ],
+        ),
+    ],
+    
+    deep_merge_vulnerabilities: [
+        (
+            patterns: [
+                "*.merge",
+                "*.extend",
+                "*.assign"
+            ],
+            finding_type: "unsafe_deep_merge",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "not_literal", argument_position: 1),
+                (type: "has_argument", patterns: ["*deep*", "*recursive*"]),
+                (type: "argument_not_sanitized", patterns: ["*filter*", "*validate*"]),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+            ],
+        ),
+    ],
+    
+    file_types: (
+        extensions: [".js", ".jsx", ".mjs", ".ts"],
+        exclude_patterns: ["*test*", "*spec*", "*mock*", "*__tests__*", "*polyfill*"],
+    ),
+} 

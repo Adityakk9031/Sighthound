@@ -1,0 +1,88 @@
+{
+    unsafe_navigation: [
+        (
+            patterns: [
+                "location.href",
+                "window.location.href",
+                "document.location.href"
+            ],
+            finding_type: "open_redirect",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "has_argument", patterns: ["*+*", "*concat*", "*$*", "*`*"]),
+                (type: "argument_not_sanitized", patterns: ["*encodeURI*", "*validate*", "*whitelist*"]),
+            ],
+        ),
+        (
+            patterns: [
+                "location.replace",
+                "location.assign",
+                "window.location.replace",
+                "window.location.assign"
+            ],
+            finding_type: "open_redirect",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "has_argument", patterns: ["*+*", "*concat*", "*$*", "*`*"]),
+            ],
+        ),
+        (
+            pattern: "window.open",
+            finding_type: "open_redirect",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "has_argument", patterns: ["*+*", "*concat*", "*$*", "*`*"]),
+                (type: "argument_not_sanitized", patterns: ["*encodeURI*", "*validate*"]),
+            ],
+        ),
+    ],
+    
+    javascript_protocol: [
+        (
+            patterns: [
+                "*.href",
+                "*.src",
+                "*.action"
+            ],
+            finding_type: "javascript_protocol_injection",
+            severity: "high",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: ["*javascript:*", "*JAVASCRIPT:*"]),
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+            ],
+        ),
+    ],
+    
+    hash_manipulation: [
+        (
+            patterns: [
+                "location.hash",
+                "window.location.hash"
+            ],
+            finding_type: "client_side_redirect",
+            severity: "medium",
+            confidence: "low",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "has_argument", patterns: ["*+*", "*concat*", "*$*", "*`*"]),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+            ],
+        ),
+    ],
+    
+    file_types: (
+        extensions: [".js", ".jsx", ".mjs", ".ts"],
+        exclude_patterns: ["*test*", "*spec*", "*mock*", "*__tests__*"],
+    ),
+} 

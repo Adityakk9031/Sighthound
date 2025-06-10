@@ -1,0 +1,107 @@
+{
+    storage_exposure: [
+        (
+            patterns: [
+                "localStorage.setItem",
+                "sessionStorage.setItem"
+            ],
+            finding_type: "sensitive_data_storage",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: [
+                    "*password*", "*pass*", "*token*", "*key*", "*secret*", 
+                    "*auth*", "*credential*", "*api_key*", "*access_token*",
+                    "*refresh_token*", "*session*", "*jwt*", "*bearer*"
+                ]),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+            ],
+        ),
+        (
+            patterns: [
+                "localStorage.getItem",
+                "sessionStorage.getItem"
+            ],
+            finding_type: "sensitive_data_retrieval",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: [
+                    "*password*", "*pass*", "*token*", "*key*", "*secret*", 
+                    "*auth*", "*credential*", "*api_key*"
+                ]),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+            ],
+        ),
+    ],
+    
+    console_exposure: [
+        (
+            patterns: [
+                "console.log",
+                "console.info",
+                "console.warn",
+                "console.error",
+                "console.debug"
+            ],
+            finding_type: "sensitive_data_logging",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "has_argument", patterns: [
+                    "*password*", "*pass*", "*token*", "*key*", "*secret*",
+                    "*auth*", "*credential*", "*api_key*", "*access_token*",
+                    "*refresh_token*", "*jwt*", "*bearer*", "*private*"
+                ]),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "not_in_protective_context"),
+            ],
+        ),
+    ],
+    
+    url_exposure: [
+        (
+            patterns: [
+                "location.search",
+                "location.hash",
+                "window.location.search",
+                "window.location.hash",
+                "URLSearchParams"
+            ],
+            finding_type: "sensitive_data_in_url",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: [
+                    "*password*", "*pass*", "*token*", "*key*", "*secret*",
+                    "*auth*", "*credential*", "*api_key*"
+                ]),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+            ],
+        ),
+    ],
+    
+    indexeddb_exposure: [
+        (
+            patterns: [
+                "*.put",
+                "*.add"
+            ],
+            finding_type: "sensitive_data_indexeddb",
+            severity: "low",
+            confidence: "low",
+            conditions: [
+                (type: "has_argument", patterns: [
+                    "*password*", "*pass*", "*token*", "*key*", "*secret*",
+                    "*auth*", "*credential*", "*private*"
+                ]),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+            ],
+        ),
+    ],
+    
+    file_types: (
+        extensions: [".js", ".jsx", ".mjs", ".ts"],
+        exclude_patterns: ["*test*", "*spec*", "*mock*", "*__tests__*", "*debug*", "*dev*"],
+    ),
+} 

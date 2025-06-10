@@ -1,0 +1,81 @@
+{
+    dom_xss_sinks: [
+        (
+            pattern: "*.innerHTML",
+            finding_type: "dom_xss",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "argument_not_sanitized", patterns: ["*sanitize*", "*escape*", "*encode*"]),
+            ],
+        ),
+        (
+            pattern: "*.outerHTML",
+            finding_type: "dom_xss",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "argument_not_sanitized", patterns: ["*sanitize*", "*escape*", "*encode*"]),
+            ],
+        ),
+        (
+            patterns: [
+                "document.write",
+                "document.writeln"
+            ],
+            finding_type: "dom_xss",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "has_argument", patterns: ["*+*", "*concat*", "*$*", "*`*"]),
+            ],
+        ),
+        (
+            pattern: "*.insertAdjacentHTML",
+            finding_type: "dom_xss",
+            severity: "high",
+            confidence: "high",
+            conditions: [
+                (type: "not_literal", argument_position: 1),
+                (type: "in_context", not_in: ["comment", "string_literal"]),
+                (type: "argument_not_sanitized", patterns: ["*sanitize*", "*escape*", "*encode*"]),
+            ],
+        ),
+        (
+            patterns: [
+                "*.append",
+                "*.prepend",
+                "*.after",
+                "*.before"
+            ],
+            finding_type: "dom_xss",
+            severity: "medium",
+            confidence: "medium",
+            conditions: [
+                (type: "not_literal", argument_position: 0),
+                (type: "has_argument", patterns: ["*<*", "*>*", "*html*", "*HTML*"]),
+                (type: "argument_not_sanitized", patterns: ["*text*", "*sanitize*"]),
+            ],
+        ),
+    ],
+    
+    sanitizers: [
+        "DOMPurify.sanitize",
+        "*.textContent",
+        "*.innerText",
+        "document.createTextNode",
+        "encodeURIComponent",
+        "encodeURI",
+    ],
+    
+    file_types: (
+        extensions: [".js", ".jsx", ".mjs"],
+        exclude_patterns: ["*test*", "*spec*", "*mock*", "*__tests__*"],
+    ),
+} 
