@@ -263,7 +263,7 @@ pub struct Condition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub argument_position: Option<usize>,              // Specific argument index
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub within_lines: Option<usize>,                   // Distance constraint
+    pub within_lines: Option<usize>,                   // Distance constraint for proximity checks
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_patterns")]
@@ -271,7 +271,7 @@ pub struct Condition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ancestor_types: Option<Vec<String>>,           // Required ancestor node types
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub check_siblings: Option<bool>,                  // Check sibling nodes
+    pub check_siblings: Option<bool>,                  // Check sibling nodes for related patterns
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -308,7 +308,7 @@ pub struct Rule {
     pub sanitizers: Option<Vec<String>>,              // Known sanitization functions
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Rules {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
@@ -457,46 +457,6 @@ impl Rules {
             }
         }
     }
-
-    pub fn save_to_file(&self, rules_file: &str) -> Result<()> {
-        let path = Path::new(rules_file);
-        let extension = path.extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        match extension.as_str() {
-            "ron" => {
-                // Use basic pretty config without struct names
-                let config = ron::ser::PrettyConfig::new()
-                    .struct_names(false)
-                    .enumerate_arrays(false)
-                    .compact_arrays(false);
-                let content = ron::ser::to_string_pretty(self, config)
-                    .context("Failed to serialize rules to RON")?;
-                
-                fs::write(rules_file, content)
-                    .context(format!("Failed to write rules file: {}", rules_file))
-            },
-            _ => {
-                Err(anyhow::anyhow!("Unsupported file format. Only .ron files are supported for rules."))
-            }
-        }
-    }
-}
-
-impl Default for Rules {
-    fn default() -> Self {
-        Self {
-            injection_sinks: None,
-            crypto_rules: None,
-            path_traversal: None,
-            weak_random: None,
-            hardcoded_secrets: None,
-            malware_detection: None,
-            other: HashMap::new(),
-        }
-    }
 }
 
 pub fn match_pattern(pattern: &str, text: &str) -> bool {
@@ -506,9 +466,8 @@ pub fn match_pattern(pattern: &str, text: &str) -> bool {
         if let Ok(regex) = Regex::new(&format!("^{}$", regex_pattern)) {
             return regex.is_match(text);
         }
-    } else if pattern.starts_with("regex:") {
+    } else if let Some(regex_pattern) = pattern.strip_prefix("regex:") {
         // Direct regex pattern
-        let regex_pattern = &pattern[6..];
         if let Ok(regex) = Regex::new(regex_pattern) {
             return regex.is_match(text);
         }

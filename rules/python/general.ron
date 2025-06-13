@@ -337,7 +337,7 @@
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
-                exclude_patterns: None,
+                exclude_patterns: Some(["*migrations*", "*test*", "*example*", "*demo*"]),
             )),
         ),
         (
@@ -347,7 +347,7 @@
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
-                exclude_patterns: None,
+                exclude_patterns: Some(["*migrations*", "*test*", "*example*", "*demo*"]),
             )),
         ),
         // Weak Encryption
@@ -358,7 +358,7 @@
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
-                exclude_patterns: None,
+                exclude_patterns: Some(["*migrations*", "*test*", "*example*", "*demo*"]),
             )),
         ),
         (
@@ -368,7 +368,7 @@
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
-                exclude_patterns: None,
+                exclude_patterns: Some(["*migrations*", "*test*", "*example*", "*demo*"]),
             )),
         ),
     ]),
@@ -573,7 +573,7 @@
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
-                exclude_patterns: None,
+                exclude_patterns: Some(["*migrations*", "*test*", "*example*", "*demo*"]),
             )),
         ),
         // eval deserialization vulnerability
@@ -598,7 +598,7 @@
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
-                exclude_patterns: None,
+                exclude_patterns: Some(["*migrations*", "*test*", "*example*", "*demo*"]),
             )),
             sanitizers: Some([
                 "*escape*", "*sanitize*", "*validate*", "ast.literal_eval"
@@ -622,7 +622,7 @@
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
-                exclude_patterns: None,
+                exclude_patterns: Some(["*migrations*", "*test*", "*example*", "*demo*"]),
             )),
         ),
         (
@@ -638,7 +638,7 @@
             file_types: Some((
                 extensions: [".py"],
                 include_patterns: None,
-                exclude_patterns: None,
+                exclude_patterns: Some(["*migrations*", "*test*", "*example*", "*demo*"]),
             )),
         ),
     ],
