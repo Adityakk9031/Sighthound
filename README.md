@@ -244,13 +244,14 @@ This project is open source. Please check the license file for details.
 ## Roadmap
 
 - Multiples patterns ✅
-- Source & sink analysis
 - Run scan on all rules ✅
 - Run scan on a directory of rules ✅
-- Run against specific file
 - Glob Support ✅
 - Tree-sitter support ✅
 - Auto-detection mode ✅
+- Run against specific file
+- Improve Taint analysis with Source & sink analysis
+- Make language additions/removal modular
 
 ## 🧪 Testing
 
