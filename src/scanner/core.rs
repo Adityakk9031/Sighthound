@@ -43,12 +43,35 @@ impl VulnerabilityScanner {
         let mut files = Vec::new();
         let target_extension = self.parser.file_extension();
         
+        // Common environment directories to skip
+        let skip_dirs = [
+            "venv", "env", ".venv", ".env",
+            "node_modules", ".git",
+            "__pycache__", ".pytest_cache",
+            "target", "build", "dist",
+            ".idea", ".vscode",
+        ];
+        
         for entry in WalkDir::new(root_dir)
             .follow_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
+            
+            // Skip environment directories
+            if path.is_dir() {
+                if let Some(dir_name) = path.file_name() {
+                    if let Some(name) = dir_name.to_str() {
+                        if skip_dirs.iter().any(|&skip| name == skip) {
+                            continue;
+                        }
+                    }
+                }
+                continue;
+            }
+            
+            // Process files
             if path.is_file() {
                 if let Some(extension) = path.extension() {
                     if let Some(ext_str) = extension.to_str() {
