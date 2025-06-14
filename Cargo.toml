@@ -43,6 +43,7 @@ indicatif = "0.17"
 glob = "0.3"
 crossbeam = "0.8"
 num_cpus = "1.16"
+syntect = "5.1"
 
 [dev-dependencies]
 tempfile = "3.8"

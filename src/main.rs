@@ -12,6 +12,10 @@ use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 use std::collections::BTreeMap;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style, ThemeSet};
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
 
 fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
     match file_path.extension()?.to_str()? {
@@ -125,6 +129,32 @@ fn setup_progress_bars(total_files: usize) -> (ProgressBar, ProgressBar) {
     (file_progress, finding_progress)
 }
 
+fn detect_syntax(file_path: &str) -> &'static str {
+    match std::path::Path::new(file_path).extension().and_then(|e| e.to_str()) {
+        Some("py") => "Python",
+        Some("js") | Some("mjs") => "JavaScript",
+        Some("ts") | Some("tsx") => "TypeScript",
+        Some("rs") => "Rust",
+        Some("java") => "Java",
+        Some("html") => "HTML",
+        Some("css") => "CSS",
+        Some("json") => "JSON",
+        Some("md") => "Markdown",
+        Some("sh") => "Shell",
+        Some("go") => "Go",
+        Some("php") => "PHP",
+        Some("rb") => "Ruby",
+        Some("swift") => "Swift",
+        Some("kt") => "Kotlin",
+        Some("scala") => "Scala",
+        Some("c") => "C",
+        Some("cpp") | Some("cc") | Some("cxx") | Some("hpp") => "C++",
+        Some("cs") => "C#",
+        Some("sql") => "SQL",
+        _ => "Plain Text",
+    }
+}
+
 fn print_findings_json(findings: &[Finding]) {
     match serde_json::to_string_pretty(findings) {
         Ok(json) => println!("{}", json),
@@ -143,6 +173,11 @@ fn print_findings_csv(findings: &[Finding]) {
 
 fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) {
     if !summary_only {
+        // Initialize syntax highlighting
+        let ps = SyntaxSet::load_defaults_newlines();
+        let ts = ThemeSet::load_defaults();
+        let theme = &ts.themes["base16-ocean.dark"];
+
         // Pre-sort findings by file and severity for better grouping
         let mut sorted_findings: Vec<_> = findings.iter().collect();
         sorted_findings.sort_by(|a, b| {
@@ -155,6 +190,7 @@ fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) 
         let mut current_file = None;
         let mut file_contents = String::new();
         let mut lines = Vec::new();
+        let mut syntax = None;
 
         for finding in sorted_findings {
             // Only read file when it changes
@@ -165,6 +201,11 @@ fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) 
                     Err(_) => continue,
                 };
                 lines = file_contents.lines().collect();
+                
+                // Set up syntax highlighting for the new file
+                let syntax_name = detect_syntax(&finding.file);
+                syntax = ps.find_syntax_by_name(syntax_name);
+                
                 println!("\n\x1b[1;34m{}\x1b[0m", finding.file);
             }
 
@@ -180,7 +221,7 @@ fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) 
             let start_line = line_num.saturating_sub(3);
             let end_line = (line_num + 3).min(lines.len());
 
-            println!();
+            println!("");
             println!("    {}{}●\x1b[0m {} on line {}", 
                     severity_color, 
                     severity_color, 
@@ -188,11 +229,30 @@ fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) 
                     line_num);
             println!();
 
-            // Print surrounding context
-            for i in start_line..end_line {
-                let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
-                println!("    {}{:4} | {}", prefix, i + 1, lines[i]);
+            // Print surrounding context with syntax highlighting
+            if let Some(syntax) = syntax {
+                let mut h = HighlightLines::new(syntax, theme);
+                for i in start_line..end_line {
+                    let line = lines[i];
+                    let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap_or_default();
+                    let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
+                    print!("    {}{:4} | ", prefix, i + 1);
+                    
+                    for (style, text) in ranges {
+                        let fg = style.foreground;
+                        print!("\x1b[38;2;{};{};{}m{}\x1b[0m",
+                            fg.r, fg.g, fg.b, text);
+                    }
+                    println!();
+                }
+            } else {
+                // Fallback to plain text if syntax highlighting fails
+                for i in start_line..end_line {
+                    let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
+                    println!("    {}{:4} | {}", prefix, i + 1, lines[i]);
+                }
             }
+            println!();
         }
     }
     print_summary(findings);

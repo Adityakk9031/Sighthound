@@ -325,6 +325,13 @@ impl ScanningLogic {
         let root_node = tree.root_node();
         
         for node in traverse_calls_only(root_node, language_support) {
+            // Skip nodes that are in comments
+            if let Some(parent) = node.parent() {
+                if parent.kind() == "comment" {
+                    continue;
+                }
+            }
+            
             if let Some(func_name) = language_support.get_function_name(&node, source) {
                 // Quick pre-filter: only check nodes that have potentially matching rules
                 let has_potential_match = rules.iter().any(|rule| rule_matches_pattern(rule, func_name));
