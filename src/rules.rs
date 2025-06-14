@@ -415,7 +415,7 @@ impl Rules {
             return Err(anyhow::anyhow!("No valid .ron rules files found in directory: {}", rules_dir));
         }
 
-        println!("📋 Loaded {} rules files: {}", loaded_files.len(), loaded_files.join(", "));
+        println!("📋 Loaded {} rule files", loaded_files.len());
 
         // Merge all rules into a single Rules instance
         Self::merge_rules(all_rules)

@@ -143,57 +143,55 @@ fn print_findings_csv(findings: &[Finding]) {
 
 fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) {
     if !summary_only {
-        // Group findings by file, then by severity
-        let mut grouped: BTreeMap<&str, BTreeMap<&str, Vec<&Finding>>> = BTreeMap::new();
-        for finding in findings {
-            grouped
-                .entry(&finding.file)
-                .or_default()
-                .entry(&finding.severity)
-                .or_default()
-                .push(finding);
-        }
+        // Pre-sort findings by file and severity for better grouping
+        let mut sorted_findings: Vec<_> = findings.iter().collect();
+        sorted_findings.sort_by(|a, b| {
+            a.file.cmp(&b.file)
+                .then(a.severity.cmp(&b.severity))
+                .then(a.line.cmp(&b.line))
+        });
 
-        for (file, severities) in &grouped {
-            // Read file contents once per file
-            let file_contents = match fs::read_to_string(file) {
-                Ok(contents) => contents,
-                Err(_) => continue, // Skip if we can't read the file
+        // Group findings by file
+        let mut current_file = None;
+        let mut file_contents = String::new();
+        let mut lines = Vec::new();
+
+        for finding in sorted_findings {
+            // Only read file when it changes
+            if current_file != Some(&finding.file) {
+                current_file = Some(&finding.file);
+                file_contents = match fs::read_to_string(&finding.file) {
+                    Ok(contents) => contents,
+                    Err(_) => continue,
+                };
+                lines = file_contents.lines().collect();
+                println!("\n\x1b[1;34m{}\x1b[0m", finding.file);
+            }
+
+            let severity_color = match finding.severity.to_lowercase().as_str() {
+                "critical" => "\x1b[31m", // Red
+                "high" => "\x1b[31;1m",   // Bright red
+                "medium" => "\x1b[33m",   // Yellow
+                "low" => "\x1b[32m",      // Green
+                _ => "\x1b[0m",           // Default
             };
-            let lines: Vec<&str> = file_contents.lines().collect();
 
-            println!("\n\x1b[1;34m{}\x1b[0m", file);
-            
-            for (severity, findings) in severities {
-                let severity_color = match severity.to_lowercase().as_str() {
-                    "critical" => "\x1b[31m", // Red
-                    "high" => "\x1b[31;1m",   // Bright red
-                    "medium" => "\x1b[33m",   // Yellow
-                    "low" => "\x1b[32m",      // Green
-                    _ => "\x1b[0m",           // Default
-                };
-                let severity_text = match severity.to_lowercase().as_str() {
-                    "critical" => format!("{}●\x1b[0m", severity_color),
-                    "high" => format!("{}●\x1b[0m", severity_color),
-                    "medium" => format!("{}●\x1b[0m", severity_color),
-                    "low" => format!("{}●\x1b[0m", severity_color),
-                    _ => format!("{}●\x1b[0m", severity_color),
-                };
+            let line_num = finding.line;
+            let start_line = line_num.saturating_sub(3);
+            let end_line = (line_num + 3).min(lines.len());
 
-                for finding in findings {
-                    let line_num = finding.line;
-                    let start_line = line_num.saturating_sub(2); // Show 2 lines before
-                    let end_line = (line_num + 2).min(lines.len()); // Show 2 lines after
+            println!();
+            println!("    {}{}●\x1b[0m {} on line {}", 
+                    severity_color, 
+                    severity_color, 
+                    finding.finding_type, 
+                    line_num);
+            println!();
 
-                    println!();
-                    println!("    {}{}{} {} on line {}", severity_color, severity_text, "\x1b[0m", finding.finding_type, line_num);
-                    println!();
-                    // Print surrounding context
-                    for i in start_line..end_line {
-                        let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
-                        println!("    {}{:4} | {}", prefix, i + 1, lines[i]);
-                    }
-                }
+            // Print surrounding context
+            for i in start_line..end_line {
+                let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
+                println!("    {}{:4} | {}", prefix, i + 1, lines[i]);
             }
         }
     }
