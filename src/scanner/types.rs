@@ -8,6 +8,7 @@ pub struct Finding {
     pub function: String,
     pub finding_type: String,
     pub code: String,
+    pub severity: String,
 }
 
 #[derive(Debug, Clone)]

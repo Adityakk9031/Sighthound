@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use std::collections::BTreeMap;
 
 fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
     match file_path.extension()?.to_str()? {
@@ -142,14 +143,57 @@ fn print_findings_csv(findings: &[Finding]) {
 
 fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) {
     if !summary_only {
+        // Group findings by file, then by severity
+        let mut grouped: BTreeMap<&str, BTreeMap<&str, Vec<&Finding>>> = BTreeMap::new();
         for finding in findings {
-            if verbose {
-                println!("{}:{} - {} - {} - {}", 
-                        finding.file, finding.line, finding.finding_type, 
-                        finding.function, finding.code);
-            } else {
-                println!("{}:{} - {} - {}", 
-                        finding.file, finding.line, finding.finding_type, finding.function);
+            grouped
+                .entry(&finding.file)
+                .or_default()
+                .entry(&finding.severity)
+                .or_default()
+                .push(finding);
+        }
+
+        for (file, severities) in &grouped {
+            // Read file contents once per file
+            let file_contents = match fs::read_to_string(file) {
+                Ok(contents) => contents,
+                Err(_) => continue, // Skip if we can't read the file
+            };
+            let lines: Vec<&str> = file_contents.lines().collect();
+
+            println!("\n\x1b[1;34m{}\x1b[0m", file);
+            
+            for (severity, findings) in severities {
+                let severity_color = match severity.to_lowercase().as_str() {
+                    "critical" => "\x1b[31m", // Red
+                    "high" => "\x1b[31;1m",   // Bright red
+                    "medium" => "\x1b[33m",   // Yellow
+                    "low" => "\x1b[32m",      // Green
+                    _ => "\x1b[0m",           // Default
+                };
+                let severity_text = match severity.to_lowercase().as_str() {
+                    "critical" => format!("{}●\x1b[0m", severity_color),
+                    "high" => format!("{}●\x1b[0m", severity_color),
+                    "medium" => format!("{}●\x1b[0m", severity_color),
+                    "low" => format!("{}●\x1b[0m", severity_color),
+                    _ => format!("{}●\x1b[0m", severity_color),
+                };
+
+                for finding in findings {
+                    let line_num = finding.line;
+                    let start_line = line_num.saturating_sub(2); // Show 2 lines before
+                    let end_line = (line_num + 2).min(lines.len()); // Show 2 lines after
+
+                    println!();
+                    println!("    {}{}{} {} on line {}", severity_color, severity_text, "\x1b[0m", finding.finding_type, line_num);
+                    println!();
+                    // Print surrounding context
+                    for i in start_line..end_line {
+                        let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
+                        println!("    {}{:4} | {}", prefix, i + 1, lines[i]);
+                    }
+                }
             }
         }
     }

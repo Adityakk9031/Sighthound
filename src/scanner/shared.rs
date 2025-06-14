@@ -228,6 +228,7 @@ impl ScanningLogic {
         function: &str,
         finding_type: &str,
         source: &[u8],
+        severity: &str,
     ) -> Finding {
         Finding {
             file: file.to_string(),
@@ -235,6 +236,7 @@ impl ScanningLogic {
             function: function.to_string(),
             finding_type: finding_type.to_string(),
             code: get_node_text(node, source).trim().to_string(),
+            severity: severity.to_string(),
         }
     }
 
@@ -272,6 +274,7 @@ impl ScanningLogic {
         
         // Determine finding type
         let finding_type = rule.finding_type.as_deref().unwrap_or("vulnerability");
+        let severity = rule.severity.as_deref().unwrap_or("medium");
         
         // Special handling for injection sinks
         if finding_type == "injection_sinks" || finding_type.contains("injection") {
@@ -304,7 +307,7 @@ impl ScanningLogic {
         }
         
         // Create the finding
-        let mut finding = Self::create_finding(filepath, node, func_name, finding_type, source);
+        let mut finding = Self::create_finding(filepath, node, func_name, finding_type, source, severity);
         Self::add_finding_metadata(&mut finding, rule, node);
         
         Some(finding)

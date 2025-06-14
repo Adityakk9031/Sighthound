@@ -260,30 +260,54 @@ impl VulnerabilityScanner {
 }
 
 pub fn print_summary(findings: &[Finding]) {
-    println!("\nVulnerability Summary -----------------");
+    println!("\n\x1b[1;36m=== Vulnerability Summary ===\x1b[0m");
 
+    // Group findings by severity
+    let mut severity_counts: HashMap<String, usize> = HashMap::new();
     let mut finding_types: HashMap<String, usize> = HashMap::new();
-    for finding in findings {
-        *finding_types.entry(finding.finding_type.clone()).or_insert(0) += 1;
-    }
-
-    let mut sorted_types: Vec<_> = finding_types.iter().collect();
-    sorted_types.sort_by_key(|&(k, _)| k);
-    for (finding_type, count) in sorted_types {
-        println!("{}: {} occurrences", finding_type, count);
-    }
-
     let mut file_counts: HashMap<String, usize> = HashMap::new();
+
     for finding in findings {
+        *severity_counts.entry(finding.severity.clone()).or_insert(0) += 1;
+        *finding_types.entry(finding.finding_type.clone()).or_insert(0) += 1;
         *file_counts.entry(finding.file.clone()).or_insert(0) += 1;
     }
 
-    println!("\nMost vulnerable files:");
+    // Print severity breakdown
+    println!("\n\x1b[1;33mSeverity Breakdown:\x1b[0m");
+    let severity_order = ["critical", "high", "medium", "low"];
+    for severity in severity_order {
+        if let Some(count) = severity_counts.get(severity) {
+            let color = match severity {
+                "critical" => "\x1b[31;1m", // Bright red
+                "high" => "\x1b[31m",      // Red
+                "medium" => "\x1b[33m",    // Yellow
+                "low" => "\x1b[32m",       // Green
+                _ => "\x1b[0m",
+            };
+            println!("  {}{}\x1b[0m {} findings", 
+                    color, 
+                    "●",
+                    count);
+        }
+    }
+
+    // Print finding types
+    println!("\n\x1b[1;33mFinding Types:\x1b[0m");
+    let mut sorted_types: Vec<_> = finding_types.iter().collect();
+    sorted_types.sort_by(|a, b| b.1.cmp(a.1)); // Sort by count descending
+    for (finding_type, count) in sorted_types {
+        println!("  \x1b[36m●\x1b[0m {}: {} occurrences", finding_type, count);
+    }
+
+    // Print most vulnerable files
+    println!("\n\x1b[1;33mMost Vulnerable Files:\x1b[0m");
     let mut sorted_files: Vec<_> = file_counts.iter().collect();
     sorted_files.sort_by(|a, b| b.1.cmp(a.1));
     for (file_path, count) in sorted_files.iter().take(5) {
-        println!("{}: {} vulnerabilities", file_path, count);
+        println!("  \x1b[34m●\x1b[0m {}: {} vulnerabilities", file_path, count);
     }
 
-    println!("\nTotal vulnerabilities found: {}", findings.len());
+    // Print total
+    println!("\n\x1b[1;36mTotal Findings: \x1b[1;33m{}\x1b[0m", findings.len());
 }
