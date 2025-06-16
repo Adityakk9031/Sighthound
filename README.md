@@ -7,12 +7,12 @@ A fast, efficient vulnerability scanner written in Rust that uses tree-sitter to
 - **AST-based analysis**: Uses tree-sitter for accurate parsing of code
 - **Auto-detection mode**: Automatically detects file types and loads appropriate rules
 - **Explicit mode**: Specify exact language and rules for targeted scanning
-- **Configurable rules**: JSON-based rule system for different vulnerability types
+- **Configurable rules**: RON-based rule system for different vulnerability types
 - **Pattern matching**: Supports wildcards, regex patterns, and exact matching
 - **Context-aware**: Analyzes function arguments and AST context for better accuracy
 - **Performance**: Written in Rust for speed and memory efficiency
 - **Detailed reporting**: Provides file locations, line numbers, and vulnerability summaries
-
+- **Multiple output formats**: Text, JSON, and CSV output options
 
 ## Installation
 
@@ -57,7 +57,7 @@ cargo run -- <root_directory> <language> <rules_file>
 #### Explicit Mode  
 - `<root_directory>`: The directory to scan recursively
 - `<language>`: Programming language (python, java, javascript, tsx, html, django)
-- `<rules_file>`: Ron file containing vulnerability detection rules
+- `<rules_file>`: RON file containing vulnerability detection rules
 
 ### Examples
 
@@ -67,6 +67,9 @@ cargo run -- ./my_project
 
 # Auto-detection with JSON output
 cargo run -- ./my_project --output-format json
+
+# Auto-detection with CSV output
+cargo run -- ./my_project --output-format csv
 
 # Auto-detection with verbose output
 cargo run -- ./my_project --verbose
@@ -79,6 +82,9 @@ cargo run -- ./my_project python rules/python
 
 # Single-threaded mode for debugging
 cargo run -- ./my_project --single-threaded
+
+# Specify number of threads
+cargo run -- ./my_project --threads 4
 ```
 
 ### Supported File Types
@@ -86,34 +92,50 @@ cargo run -- ./my_project --single-threaded
 The auto-detection mode supports:
 - **Python** (`.py`) - Uses `rules/python/` 
 - **Java** (`.java`) - Uses `rules/java/`
-- **JavaScript** (`.js`) - Uses `rules/javascript/`
+- **JavaScript** (`.js`, `.mjs`) - Uses `rules/javascript/`
 - **TypeScript JSX** (`.tsx`) - Uses `rules/tsx/`
 - **HTML** (`.html`) - Uses `rules/html/`
 
 ## Rule Format
 
-Rules are defined in Ron format with the following structure:
+Rules are defined in RON format with the following structure:
 
-```json
+```ron
 {
-  "injection_sinks": [
-    {
-      "pattern": "*.execute*",
-      "finding_type": "sql_injection",
-      "conditions": [
-        {
-          "type": "has_argument",
-          "pattern": "*%s*"
-        }
-      ]
-    }
-  ],
-  "crypto_rules": [
-    {
-      "pattern": "hashlib.md5",
-      "finding_type": "weak_crypto"
-    }
-  ]
+    injection_sinks: [
+        (
+            pattern: "cursor.execute",
+            finding_type: "sql_injection",
+            severity: "high",
+            confidence: "medium",
+            conditions: [
+                (
+                    type: "not_literal",
+                    argument_position: 0,
+                ),
+                (
+                    type: "has_argument",
+                    patterns: ["*SELECT*", "*INSERT*"],
+                ),
+            ],
+            file_types: (
+                extensions: [".py"],
+                include_patterns: ["*models*", "*views*"],
+                exclude_patterns: ["*test*"],
+            ),
+        ),
+    ],
+    crypto_rules: [
+        (
+            patterns: [
+                "hashlib.md5",
+                "hashlib.sha1"
+            ],
+            finding_type: "weak_crypto",
+            severity: "high",
+            confidence: "high",
+        ),
+    ],
 }
 ```
 
@@ -124,6 +146,7 @@ Rules are defined in Ron format with the following structure:
 - `path_traversal`: Path traversal vulnerabilities
 - `weak_random`: Weak random number generation
 - `hardcoded_secrets`: Hardcoded credentials/secrets
+- `malware_detection`: Malicious code patterns
 - Custom categories can be added
 
 ### Pattern Types
@@ -131,37 +154,45 @@ Rules are defined in Ron format with the following structure:
 1. **Exact match**: `"os.system"`
 2. **Wildcard**: `"*.execute*"` (matches any string containing "execute")
 3. **Regex**: `"regex:^subprocess\.(run|call)$"`
+4. **Multiple patterns**: `patterns: ["pattern1", "pattern2"]`
+
+### Rule Fields
+
+- `pattern` or `patterns`: The pattern(s) to match
+- `finding_type`: Type of vulnerability
+- `severity`: Critical, High, Medium, Low
+- `confidence`: High, Medium, Low
+- `conditions`: Additional matching conditions
+- `file_types`: File type restrictions
+- `sanitizers`: Known safe functions
 
 ### Conditions
 
 Rules can include conditions for more precise matching:
 
+- `not_literal`: Check if argument is not a literal value
 - `has_argument`: Check if function has specific arguments
+- `has_sibling_pattern`: Check for related patterns in sibling nodes
+- `argument_not_sanitized`: Check if input is not sanitized
 - `in_context`: Context-aware checks (e.g., not in comments)
-- `has_parent`: Check parent AST node types
 
 ### File Type Targeting
 
 Each rule can specify which file types it applies to:
 
 ```ron
-file_types: Some((
+file_types: (
     extensions: [".py", ".pyw"],
-    include_patterns: ["**/models/**", "**/views/**"],
-    exclude_patterns: ["**/test/**", "**/migrations/**"],
-)),
+    include_patterns: ["*models*", "*views*"],
+    exclude_patterns: ["*test*", "*migrations*"],
+),
 ```
 
-## Output
+## Output Formats
 
-The scanner provides:
+The scanner provides three output formats:
 
-1. **Individual findings**: File path, line number, vulnerability type, and function name
-2. **Summary statistics**: Count by vulnerability type
-3. **Most vulnerable files**: Files with the highest number of issues
-4. **Total count**: Overall vulnerability count
-
-### Auto-Detection Mode Example Output:
+### Text Output (Default)
 ```
 🚀 Starting Auto-Detection Scan!
 📂 Target directory: ./my_project
@@ -191,41 +222,25 @@ Most vulnerable files:
 Total vulnerabilities found: 3
 ```
 
-### Explicit Mode Example Output:
-```
-🚀 Starting Explicit Scan (parallel mode)!
-📂 Target directory: ./my_project
-🔧 Language: python
-📋 Rules directory: rules/python
-🔍 Running scan with 40 rules
-
-./app/models.py:42 - sql_injection - cursor.execute
-./app/views.py:15 - command_injection - os.system
-./utils/crypto.py:8 - weak_crypto - hashlib.md5
-
-Vulnerability Summary -----------------
-command_injection: 1 occurrences
-sql_injection: 1 occurrences
-weak_crypto: 1 occurrences
-
-Most vulnerable files:
-./app/models.py: 1 vulnerabilities
-./app/views.py: 1 vulnerabilities
-./utils/crypto.py: 1 vulnerabilities
-
-Total vulnerabilities found: 3
+### JSON Output
+```json
+[
+  {
+    "file": "./src/models.py",
+    "line": 42,
+    "function": "cursor.execute",
+    "finding_type": "sql_injection",
+    "severity": "high",
+    "code": "cursor.execute('SELECT * FROM users WHERE id = ' + user_input)"
+  }
+]
 ```
 
-## Comparison with Python Version
-
-The Rust implementation provides:
-
-- **Better performance**: Faster parsing and analysis
-- **Memory efficiency**: Lower memory usage for large codebases
-- **Type safety**: Compile-time guarantees for correctness
-- **Enhanced error handling**: Better error messages and recovery
-- **Modern CLI**: Using `clap` for better command-line experience
-- **Auto-detection**: Automatically scans all supported file types
+### CSV Output
+```csv
+file,line,function,finding_type,code
+./src/models.py,42,cursor.execute,sql_injection,"cursor.execute('SELECT * FROM users WHERE id = ' + user_input)"
+```
 
 ## Contributing
 
@@ -240,36 +255,13 @@ To add support for new languages:
 
 This project is open source. Please check the license file for details. 
 
-
 ## Roadmap
 
-- Multiples patterns ✅
+- Multiple patterns ✅
 - Run scan on all rules ✅
 - Run scan on a directory of rules ✅
 - Glob Support ✅
 - Tree-sitter support ✅
-- Auto-detection mode ✅
-- Run against specific file
-- Improve Taint analysis with Source & sink analysis
-- Make language additions/removal modular
-
-## 🧪 Testing
-
-The test organization follows a layered approach for better maintainability:
-
-### Directory Structure
-
-1. **tests/**: Contains all test code
-   - **unit/**: Unit tests for individual components
-   - **integration/**: Tests for multiple components working together
-   - **end_to_end/**: Tests for the entire system
-
-2. **test_fixtures/**: Contains all test data and fixtures
-   - **python/**: Python test files for testing Python-specific vulnerabilities
-   - **java/**: Java test files for testing Java-specific vulnerabilities
-   - **javascript/**: JavaScript test files for testing JavaScript-specific vulnerabilities
-   - **rules/**: Test rule files in RON format
-
-3. **test_scripts/**: Contains scripts and utilities for running tests
-
-For more details about testing, see [README-test.md](README-test.md).
+- Enhanced rule conditions ✅
+- Multiple output formats ✅
+- Parallel processing ✅
