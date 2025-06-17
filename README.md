@@ -1,6 +1,8 @@
-# Vulnerability Scanner - Rust Implementation
+![Sighthound Banner](assets/logo.png)
 
-A fast, efficient vulnerability scanner written in Rust that uses tree-sitter to analyze source code for security issues.
+# Sighthound
+
+A blazing fast, and precise scanner to find source code for security issues.
 
 ## Features
 
