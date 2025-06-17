@@ -13,7 +13,6 @@ use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
-use syntect::util::LinesWithEndings;
 
 fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
     match file_path.extension()?.to_str()? {
@@ -169,7 +168,7 @@ fn print_findings_csv(findings: &[Finding]) {
     }
 }
 
-fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool, duration: std::time::Duration) {
+fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool, duration: std::time::Duration) {
     if !summary_only {
         // Initialize syntax highlighting
         let ps = SyntaxSet::load_defaults_newlines();
@@ -272,7 +271,7 @@ fn main() -> Result<()> {
         (Some(language), Some(rules_path)) => {
             let rules = Rules::load_from_path(rules_path)?;
             let total_rules = ScanningLogic::count_total_rules(&rules);
-            let mut scanner = VulnerabilityScanner::new(language, rules)?;
+            let scanner = VulnerabilityScanner::new(language, rules)?;
 
             let (mode, thread_info) = get_mode_info(cli.single_threaded, cli.threads);
             
@@ -290,11 +289,7 @@ fn main() -> Result<()> {
             println!("🔍 Running scan with {} rules", total_rules);
             println!();
 
-            if cli.single_threaded {
-                scanner.find_vulnerabilities_single_threaded(&cli.root_dir, language)?
-            } else {
-                scanner.find_vulnerabilities_parallel(&cli.root_dir, language, true)?
-            }
+            scanner.find_vulnerabilities_parallel(&cli.root_dir, language, true)?
         }
         (None, None) => {
             let (mode, thread_info) = get_mode_info(cli.single_threaded, cli.threads);

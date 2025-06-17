@@ -1,7 +1,6 @@
 use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,6 +11,7 @@ use crate::parser::LanguageParser;
 use memmap2::Mmap;
 use std::fs::File;
 use std::time::Duration;
+use std::thread::JoinHandle;
 
 use crate::rules::Rules;
 use super::types::Finding;
@@ -38,6 +38,18 @@ where
             }
         }
     })?
+}
+
+// Progress bar ticker helper shared by outer and inner scanners
+fn start_progress_ticker(bar: ProgressBar, counter: Arc<AtomicUsize>) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        loop {
+            let val = counter.load(Ordering::Relaxed) as u64;
+            bar.set_position(val);
+            if val >= bar.length().unwrap_or(0) { break; }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    })
 }
 
 pub struct VulnerabilityScanner {
@@ -120,22 +132,7 @@ impl VulnerabilityScanner {
         use rayon::slice::ParallelSlice;
 
         let processed = Arc::new(AtomicUsize::new(0));
-        let progress_handle = if let Some(ref bar) = file_progress {
-            let bar_clone = bar.clone();
-            Some({
-                let processed = Arc::clone(&processed);
-                std::thread::spawn(move || {
-                    loop {
-                        let val = processed.load(Ordering::Relaxed) as u64;
-                        bar_clone.set_position(val);
-                        if val >= bar_clone.length().unwrap_or(0) {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                })
-            })
-        } else { None };
+        let progress_handle = file_progress.as_ref().map(|b| start_progress_ticker(b.clone(), Arc::clone(&processed)) );
 
         let findings: Vec<Finding> = files
             .par_chunks(chunk_size)
@@ -184,31 +181,10 @@ impl VulnerabilityScanner {
         Ok(findings)
     }
 
-    pub fn find_vulnerabilities_single_threaded(&self, root_dir: &str, _language_name: &str) -> Result<Vec<Finding>> {
-        let files = self.discover_files(root_dir)?;
-        if files.is_empty() { return Ok(Vec::new()); }
-        let mut all_findings = Vec::new();
-        let all_rules = ScanningLogic::get_all_rules(&self.rules);
-
-        for path in files {
-            let filepath = path.to_string_lossy().to_string();
-            if let Ok(source) = fs::read(&filepath) {
-                match with_local_parser(&self.language, |parser| {
-                    let tree = parser.parse(&source)?;
-                    Ok(ScanningLogic::scan_file_with_rules(
-                        &filepath,
-                        &source,
-                        &tree,
-                        &all_rules,
-                        parser.language_support(),
-                    ))
-                }) {
-                    Ok(fnds) => all_findings.extend(fnds),
-                    Err(e) => eprintln!("Failed to parse {}: {}", filepath, e),
-                }
-            }
-        }
-        Ok(all_findings)
+    pub fn find_vulnerabilities_single_threaded(&self, root_dir: &str, language_name: &str) -> Result<Vec<Finding>> {
+        // Reuse the parallel scanner with a single-thread rayon pool.
+        rayon::ThreadPoolBuilder::new().num_threads(1).build_global().ok();
+        self.find_vulnerabilities_parallel(root_dir, language_name, true)
     }
 }
 
