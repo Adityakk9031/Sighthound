@@ -3,6 +3,7 @@ pub mod language;
 pub mod parser;
 pub mod rules;
 pub mod scanner;
+pub mod skip;
 
 // Re-export the main types and functions that main.rs needs
 pub use cli::Cli;

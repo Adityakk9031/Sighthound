@@ -13,6 +13,7 @@ use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
+use find_vulns::skip::SKIP_DIRS;
 
 fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
     match file_path.extension()?.to_str()? {
@@ -36,14 +37,20 @@ fn discover_files_by_language_parallel(root_dir: &str) -> Result<HashMap<String,
     let all_paths: Vec<PathBuf> = WalkDir::new(root_dir)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|e| {
+            if e.file_type().is_dir() {
+                if let Some(name) = e.file_name().to_str() {
+                    return !SKIP_DIRS.contains(&name);
+                }
+            }
+            true
+        })
         .par_bridge()
         .filter_map(|entry| {
             entry.ok().and_then(|e| {
                 if e.path().is_file() {
                     Some(e.path().to_path_buf())
-                } else {
-                    None
-                }
+                } else { None }
             })
         })
         .collect();

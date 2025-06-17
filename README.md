@@ -6,15 +6,11 @@ A blazing fast, and precise scanner to find source code for security issues.
 
 ## Features
 
-- **AST-based analysis**: Uses tree-sitter for accurate parsing of code
-- **Auto-detection mode**: Automatically detects file types and loads appropriate rules
-- **Explicit mode**: Specify exact language and rules for targeted scanning
+- **Performance**: Written in Rust for speed and memory efficiency
+- **Multi-threaded scanning**: Parallel processing for faster scans of large codebases
+- **Context-aware**: Analyzes function arguments and AST context for better accuracy
 - **Configurable rules**: RON-based rule system for different vulnerability types
 - **Pattern matching**: Supports wildcards, regex patterns, and exact matching
-- **Context-aware**: Analyzes function arguments and AST context for better accuracy
-- **Performance**: Written in Rust for speed and memory efficiency
-- **Detailed reporting**: Provides file locations, line numbers, and vulnerability summaries
-- **Multiple output formats**: Text, JSON, and CSV output options
 
 ## Installation
 

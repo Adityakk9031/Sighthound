@@ -16,6 +16,7 @@ use std::thread::JoinHandle;
 use crate::rules::Rules;
 use super::types::Finding;
 use super::shared::ScanningLogic;
+use crate::skip::SKIP_DIRS;
 
 thread_local! {
     // Store (language_name, parser) so we can reuse per language inside each thread
@@ -71,29 +72,20 @@ impl VulnerabilityScanner {
         let parser = LanguageParser::new(&self.language)?;
         let target_extension = parser.file_extension();
         
-        // Common environment directories to skip
-        let skip_dirs = [
-            "venv", "env", ".venv", ".env",
-            "node_modules", ".git",
-            "__pycache__", ".pytest_cache",
-            "target", "build", "dist",
-            ".idea", ".vscode",
-        ];
-
         for entry in WalkDir::new(root_dir)
             .follow_links(false)
             .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    if let Some(name) = e.file_name().to_str() {
+                        return !SKIP_DIRS.contains(&name);
+                    }
+                }
+                true
+            })
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if skip_dirs.contains(&name) {
-                        continue;
-                    }
-                }
-                continue;
-            }
             if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                     if format!(".{}", ext) == target_extension {
