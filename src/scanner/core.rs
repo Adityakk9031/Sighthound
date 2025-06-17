@@ -6,42 +6,58 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use walkdir::WalkDir;
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
-
+use indicatif::{ProgressBar, ProgressStyle};
+use std::cell::RefCell;
 use crate::parser::LanguageParser;
+use memmap2::Mmap;
+use std::fs::File;
+use std::time::Duration;
+
 use crate::rules::Rules;
 use super::types::Finding;
 use super::shared::ScanningLogic;
 
+thread_local! {
+    // Store (language_name, parser) so we can reuse per language inside each thread
+    static TLS_PARSER: RefCell<Option<(String, LanguageParser)>> = RefCell::new(None);
+}
+
+fn with_local_parser<F, R>(language: &str, f: F) -> Result<R>
+where
+    F: FnOnce(&mut LanguageParser) -> Result<R>,
+{
+    TLS_PARSER.try_with(|cell| {
+        let mut opt = cell.borrow_mut();
+        match *opt {
+            Some((ref lang, ref mut parser)) if lang == language => f(parser),
+            _ => {
+                let mut parser = LanguageParser::new(language)?;
+                let result = f(&mut parser)?;
+                *opt = Some((language.to_string(), parser));
+                Ok(result)
+            }
+        }
+    })?
+}
+
 pub struct VulnerabilityScanner {
-    parser: LanguageParser,
+    language: String,
     rules: Rules,
 }
 
 impl VulnerabilityScanner {
     pub fn new(language_name: &str, rules: Rules) -> Result<Self> {
-        let parser = LanguageParser::new(language_name)?;
         Ok(Self { 
-            parser, 
+            language: language_name.to_string(),
             rules,
         })
     }
 
-    fn scan_file_optimized(&self, filepath: &str, source: &[u8], tree: &tree_sitter::Tree) -> Vec<Finding> {
-        // Use shared scanning logic
-        let all_rules = ScanningLogic::get_all_rules(&self.rules);
-        ScanningLogic::scan_file_with_rules(
-            filepath,
-            source,
-            tree,
-            &all_rules,
-            self.parser.language_support(),
-        )
-    }
-
     fn discover_files(&self, root_dir: &str) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
-        let target_extension = self.parser.file_extension();
+        // Get extension once using a fresh parser (cheap, happens only once)
+        let parser = LanguageParser::new(&self.language)?;
+        let target_extension = parser.file_extension();
         
         // Common environment directories to skip
         let skip_dirs = [
@@ -51,215 +67,152 @@ impl VulnerabilityScanner {
             "target", "build", "dist",
             ".idea", ".vscode",
         ];
-        
+
         for entry in WalkDir::new(root_dir)
             .follow_links(false)
             .into_iter()
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            
-            // Skip environment directories
             if path.is_dir() {
-                if let Some(dir_name) = path.file_name() {
-                    if let Some(name) = dir_name.to_str() {
-                        if skip_dirs.iter().any(|&skip| name == skip) {
-                            continue;
-                        }
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if skip_dirs.contains(&name) {
+                        continue;
                     }
                 }
                 continue;
             }
-            
-            // Process files
             if path.is_file() {
-                if let Some(extension) = path.extension() {
-                    if let Some(ext_str) = extension.to_str() {
-                        let file_ext = format!(".{}", ext_str);
-                        if file_ext == target_extension {
-                            files.push(path.to_path_buf());
-                        }
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if format!(".{}", ext) == target_extension {
+                        files.push(path.to_path_buf());
                     }
                 }
             }
         }
-        
         Ok(files)
     }
 
-    fn setup_progress_bars(&self, total_files: usize) -> (ProgressBar, ProgressBar) {
-        let multi_progress = MultiProgress::new();
-        
-        let file_progress = multi_progress.add(ProgressBar::new(total_files as u64));
-        file_progress.set_style(
+    fn setup_progress_bars(&self, total_files: usize) -> ProgressBar {
+        let bar = ProgressBar::new(total_files as u64);
+        bar.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
                 .unwrap()
                 .progress_chars("#>-")
         );
-        file_progress.set_message("Scanning files");
-        
-        let finding_progress = multi_progress.add(ProgressBar::new(0));
-        finding_progress.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.yellow} Found {pos} vulnerabilities")
-                .unwrap()
-        );
-        
-        (file_progress, finding_progress)
+        bar.set_message("Scanning files");
+        bar
     }
 
-    pub fn find_vulnerabilities_parallel(&mut self, root_dir: &str, language_name: &str) -> Result<Vec<Finding>> {
+    pub fn find_vulnerabilities_parallel(&self, root_dir: &str, language_name: &str, show_progress: bool) -> Result<Vec<Finding>> {
         let files = self.discover_files(root_dir)?;
-        
         if files.is_empty() {
             println!("No {} files found in {}", language_name, root_dir);
             return Ok(Vec::new());
         }
 
-        let (file_progress, finding_progress) = self.setup_progress_bars(files.len());
+        let file_progress = if show_progress { Some(self.setup_progress_bars(files.len())) } else { None };
         let total_findings = Arc::new(AtomicUsize::new(0));
-        
-        let scanner_rules = Arc::new(self.rules.clone());
-        
+        let all_rules = ScanningLogic::get_all_rules(&self.rules);
+        let chunk_size = 64; // tuned for slower disks
+
+        use rayon::slice::ParallelSlice;
+
+        let processed = Arc::new(AtomicUsize::new(0));
+        let progress_handle = if let Some(ref bar) = file_progress {
+            let bar_clone = bar.clone();
+            Some({
+                let processed = Arc::clone(&processed);
+                std::thread::spawn(move || {
+                    loop {
+                        let val = processed.load(Ordering::Relaxed) as u64;
+                        bar_clone.set_position(val);
+                        if val >= bar_clone.length().unwrap_or(0) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                })
+            })
+        } else { None };
+
         let findings: Vec<Finding> = files
-            .par_iter()
-            .filter_map(|file_path| {
-                let filepath = file_path.to_string_lossy().to_string();
-                
-                match fs::read(&filepath) {
-                    Ok(source) => {
-                        // Create a temporary scanner for this thread
-                        match VulnerabilityScanner::new(language_name, (*scanner_rules).clone()) {
-                            Ok(mut scanner) => {
-                                match scanner.parser.parse(&source) {
-                                    Ok(tree) => {
-                                        let file_findings = scanner.scan_file_optimized(&filepath, &source, &tree);
-                                        
-                                        let finding_count = file_findings.len();
-                                        if finding_count > 0 {
-                                            total_findings.fetch_add(finding_count, Ordering::Relaxed);
-                                            finding_progress.set_position(total_findings.load(Ordering::Relaxed) as u64);
+            .par_chunks(chunk_size)
+            .flat_map(|chunk| {
+                let mut local_vec = Vec::new();
+                for path in chunk {
+                    let filepath_str = path.to_string_lossy().to_string();
+                    match File::open(&path) {
+                        Ok(file) => {
+                            match unsafe { Mmap::map(&file) } {
+                                Ok(mmap) => {
+                                    let source: &[u8] = &mmap;
+                                    match with_local_parser(&self.language, |parser| {
+                                        let tree = parser.parse(source)?;
+                                        Ok(ScanningLogic::scan_file_with_rules(
+                                            &filepath_str,
+                                            source,
+                                            &tree,
+                                            &all_rules,
+                                            parser.language_support(),
+                                        ))
+                                    }) {
+                                        Ok(file_findings) => {
+                                            if !file_findings.is_empty() {
+                                                total_findings.fetch_add(file_findings.len(), Ordering::Relaxed);
+                                            }
+                                            local_vec.extend(file_findings);
                                         }
-                                        
-                                        file_progress.inc(1);
-                                        Some(file_findings)
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to parse {}: {}", filepath, e);
-                                        file_progress.inc(1);
-                                        None
+                                        Err(e) => eprintln!("Failed to parse {}: {}", filepath_str, e),
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to create scanner: {}", e);
-                                file_progress.inc(1);
-                                None
+                                Err(e) => eprintln!("Failed to mmap file {}: {}", filepath_str, e),
                             }
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to read file {}: {}", filepath, e);
-                        file_progress.inc(1);
-                        None
+                        Err(err) => eprintln!("Failed to open file {}: {}", filepath_str, err),
                     }
                 }
+                processed.fetch_add(chunk.len(), Ordering::Relaxed);
+                local_vec
             })
-            .flatten()
             .collect();
-        
-        file_progress.finish_with_message("Scan complete");
-        finding_progress.finish_with_message("Scan complete");
-        
+
+        if let Some(handle) = progress_handle { let _ = handle.join(); }
+        if let Some(bar) = file_progress { bar.finish_with_message("Scan complete"); }
+        println!("Found {} vulnerabilities", total_findings.load(Ordering::Relaxed));
         Ok(findings)
     }
 
-    pub fn find_vulnerabilities_batched(&mut self, root_dir: &str, language_name: &str) -> Result<Vec<Finding>> {
+    pub fn find_vulnerabilities_single_threaded(&self, root_dir: &str, _language_name: &str) -> Result<Vec<Finding>> {
         let files = self.discover_files(root_dir)?;
-        
-        if files.is_empty() {
-            println!("No {} files found in {}", language_name, root_dir);
-            return Ok(Vec::new());
-        }
-
-        let (file_progress, finding_progress) = self.setup_progress_bars(files.len());
-        let total_findings = Arc::new(AtomicUsize::new(0));
-        
-        let scanner_rules = Arc::new(self.rules.clone());
-        
-        let chunk_size = 10;
-        let findings: Vec<Finding> = files
-            .chunks(chunk_size)
-            .par_bridge()
-            .map(|chunk| {
-                let mut chunk_findings = Vec::new();
-                
-                // Create one scanner per chunk
-                if let Ok(mut scanner) = VulnerabilityScanner::new(language_name, (*scanner_rules).clone()) {
-                    for file_path in chunk {
-                        let filepath = file_path.to_string_lossy().to_string();
-                        
-                        match fs::read(&filepath) {
-                            Ok(source) => {
-                                match scanner.parser.parse(&source) {
-                                    Ok(tree) => {
-                                        let file_findings = scanner.scan_file_optimized(&filepath, &source, &tree);
-                                        chunk_findings.extend(file_findings);
-                                    }
-                                    Err(e) => eprintln!("Failed to parse {}: {}", filepath, e),
-                                }
-                            }
-                            Err(e) => eprintln!("Failed to read file {}: {}", filepath, e),
-                        }
-                        
-                        file_progress.inc(1);
-                    }
-                }
-                
-                let chunk_count = chunk_findings.len();
-                if chunk_count > 0 {
-                    total_findings.fetch_add(chunk_count, Ordering::Relaxed);
-                    finding_progress.set_position(total_findings.load(Ordering::Relaxed) as u64);
-                }
-                
-                chunk_findings
-            })
-            .flatten()
-            .collect();
-        
-        file_progress.finish_with_message("Scan complete");
-        finding_progress.finish_with_message("Scan complete");
-        
-        Ok(findings)
-    }
-
-    pub fn find_vulnerabilities_single_threaded(&mut self, root_dir: &str, _language_name: &str) -> Result<Vec<Finding>> {
-        let files = self.discover_files(root_dir)?;
+        if files.is_empty() { return Ok(Vec::new()); }
         let mut all_findings = Vec::new();
-        
-        for file_path in files {
-            let filepath = file_path.to_string_lossy().to_string();
-            
-            match fs::read(&filepath) {
-                Ok(source) => {
-                    match self.parser.parse(&source) {
-                        Ok(tree) => {
-                            let findings = self.scan_file_optimized(&filepath, &source, &tree);
-                            all_findings.extend(findings);
-                        }
-                        Err(e) => eprintln!("Failed to parse {}: {}", filepath, e),
-                    }
+        let all_rules = ScanningLogic::get_all_rules(&self.rules);
+
+        for path in files {
+            let filepath = path.to_string_lossy().to_string();
+            if let Ok(source) = fs::read(&filepath) {
+                match with_local_parser(&self.language, |parser| {
+                    let tree = parser.parse(&source)?;
+                    Ok(ScanningLogic::scan_file_with_rules(
+                        &filepath,
+                        &source,
+                        &tree,
+                        &all_rules,
+                        parser.language_support(),
+                    ))
+                }) {
+                    Ok(fnds) => all_findings.extend(fnds),
+                    Err(e) => eprintln!("Failed to parse {}: {}", filepath, e),
                 }
-                Err(e) => eprintln!("Failed to read file {}: {}", filepath, e),
             }
         }
-        
         Ok(all_findings)
     }
 }
 
-pub fn print_summary(findings: &[Finding]) {
+pub fn print_summary(findings: &[Finding], duration: std::time::Duration) {
     println!("\n\x1b[1;36m=== Vulnerability Summary ===\x1b[0m");
 
     // Group findings by severity
@@ -310,4 +263,5 @@ pub fn print_summary(findings: &[Finding]) {
 
     // Print total
     println!("\n\x1b[1;36mTotal Findings: \x1b[1;33m{}\x1b[0m", findings.len());
+    println!("\x1b[1;36mScan Time: \x1b[1;33m{:.2?}\x1b[0m", duration);
 }

@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::Parser;
 use find_vulns::{Cli, Rules, VulnerabilityScanner, print_summary, Finding};
 use find_vulns::scanner::ScanningLogic;
-use find_vulns::parser::LanguageParser;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
@@ -11,7 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
-use std::collections::BTreeMap;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -171,7 +169,7 @@ fn print_findings_csv(findings: &[Finding]) {
     }
 }
 
-fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) {
+fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool, duration: std::time::Duration) {
     if !summary_only {
         // Initialize syntax highlighting
         let ps = SyntaxSet::load_defaults_newlines();
@@ -255,7 +253,7 @@ fn print_findings_text(findings: &[Finding], verbose: bool, summary_only: bool) 
             println!();
         }
     }
-    print_summary(findings);
+    print_summary(findings, duration);
 }
 
 fn main() -> Result<()> {
@@ -295,11 +293,7 @@ fn main() -> Result<()> {
             if cli.single_threaded {
                 scanner.find_vulnerabilities_single_threaded(&cli.root_dir, language)?
             } else {
-                if cli.root_dir.contains("large") || cli.root_dir.contains("huge") {
-                    scanner.find_vulnerabilities_batched(&cli.root_dir, language)?
-                } else {
-                    scanner.find_vulnerabilities_parallel(&cli.root_dir, language)?
-                }
+                scanner.find_vulnerabilities_parallel(&cli.root_dir, language, true)?
             }
         }
         (None, None) => {
@@ -340,85 +334,72 @@ fn main() -> Result<()> {
             
             println!();
             
-            let mut all_findings = Vec::with_capacity(total_files / 20);
-            let mut total_files_scanned = 0;
-            let mut total_rules_loaded = 0;
-            
-            for (language, files) in files_by_language {
-                let rules_dir = format!("rules/{}", language);
-                match Rules::load_from_directory(&rules_dir) {
-                    Ok(rules) => {
-                        let rule_count = ScanningLogic::count_total_rules(&rules);
-                        total_rules_loaded += rule_count;
-                        
-                        println!("🚀 Scanning {} {} files with {} rules...", files.len(), language, rule_count);
-                        
-                        let mut parser = LanguageParser::new(&language)?;
-                        let all_rules = ScanningLogic::get_all_rules(&rules);
-                        
-                        for file_path in &files {
-                            let filepath = file_path.to_string_lossy().to_string();
-                            match fs::read(&filepath) {
-                                Ok(source) => {
-                                    match parser.parse(&source) {
-                                        Ok(tree) => {
-                                            let findings = ScanningLogic::scan_file_with_rules(
-                                                &filepath,
-                                                &source,
-                                                &tree,
-                                                &all_rules,
-                                                parser.language_support(),
-                                            );
-                                            
-                                            let finding_count = findings.len();
-                                            if finding_count > 0 {
-                                                let current_total = total_findings.fetch_add(finding_count, Ordering::Relaxed) + finding_count;
-                                                if let Some(ref progress) = finding_progress {
-                                                    progress.set_position(current_total as u64);
-                                                }
-                                            }
-                                            
-                                            all_findings.extend(findings);
-                                            total_files_scanned += 1;
-                                            
-                                            if let Some(ref progress) = file_progress {
-                                                progress.inc(1);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            eprintln!("Failed to parse {}: {}", filepath, e);
-                                            if let Some(ref progress) = file_progress {
-                                                progress.inc(1);
-                                            }
+            use rayon::prelude::*;
+
+            // Convert to Vec to own data
+            let lang_jobs: Vec<(String, Vec<PathBuf>)> = files_by_language.into_iter().collect();
+
+            let processed_files = Arc::new(AtomicUsize::new(0));
+            let progress_handle = if let Some(ref bar) = file_progress {
+                let bar_clone = bar.clone();
+                let proc_clone = Arc::clone(&processed_files);
+                Some(std::thread::spawn(move || {
+                    use std::time::Duration;
+                    loop {
+                        let val = proc_clone.load(Ordering::Relaxed) as u64;
+                        bar_clone.set_position(val);
+                        if val >= bar_clone.length().unwrap_or(0) { break; }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }))
+            } else { None };
+
+            let total_rules_loaded = Arc::new(AtomicUsize::new(0));
+            let all_findings: Vec<Finding> = lang_jobs
+                .par_iter()
+                .flat_map(|(language, files)| {
+                    let rules_dir = format!("rules/{}", language);
+                    match Rules::load_from_directory(&rules_dir) {
+                        Ok(rules) => {
+                            let rule_count = ScanningLogic::count_total_rules(&rules);
+                            total_rules_loaded.fetch_add(rule_count, Ordering::Relaxed);
+                            
+                            println!("🚀 Scanning {} {} files with {} rules...", files.len(), language, rule_count);
+                            
+                            let scanner = VulnerabilityScanner::new(&language, rules).expect("scanner");
+                            
+                            match scanner.find_vulnerabilities_parallel(&cli.root_dir, &language, false) {
+                                Ok(fnds) => {
+                                    processed_files.fetch_add(files.len(), Ordering::Relaxed);
+                                    if let Some(ref fbar) = finding_progress {
+                                        if !fnds.is_empty() {
+                                            let pos = total_findings.fetch_add(fnds.len(), Ordering::Relaxed) + fnds.len();
+                                            fbar.set_position(pos as u64);
                                         }
                                     }
+                                    fnds
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to read file {}: {}", filepath, e);
-                                    if let Some(ref progress) = file_progress {
-                                        progress.inc(1);
-                                    }
+                                    eprintln!("Failed scanning {}: {}", language, e);
+                                    Vec::new()
                                 }
                             }
                         }
+                        Err(e) => {
+                            eprintln!("⚠️  Failed to load rules for {}: {}", language, e);
+                            Vec::new()
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("⚠️  Failed to load rules for {}: {}", language, e);
-                        eprintln!("   Make sure {} directory exists with .ron rule files", rules_dir);
-                    }
-                }
-            }
-            
-            if let Some(ref progress) = file_progress {
-                progress.finish_with_message("Scan complete");
-            }
-            if let Some(ref progress) = finding_progress {
-                progress.finish_with_message("Scan complete");
-            }
+                })
+                .collect();
+
+            if let Some(handle) = progress_handle { let _ = handle.join(); }
+            if let Some(ref bar) = file_progress { bar.finish_with_message("Scan complete"); }
+            if let Some(ref bar) = finding_progress { bar.finish_with_message("Scan complete"); }
             
             println!();
             println!("📊 Scanned {} files total with {} rules across {} languages", 
-                    total_files_scanned, total_rules_loaded, detected_languages.len());
+                    total_files, total_rules_loaded.load(Ordering::Relaxed), detected_languages.len());
             println!("⚡ File discovery performance: {:.2?}", discovery_time);
             
             all_findings
@@ -451,7 +432,7 @@ fn main() -> Result<()> {
     match cli.output_format.as_str() {
         "json" => print_findings_json(&findings),
         "csv" => print_findings_csv(&findings),
-        "text" | _ => print_findings_text(&findings, cli.verbose, cli.summary_only),
+        "text" | _ => print_findings_text(&findings, cli.verbose, cli.summary_only, duration),
     }
 
     Ok(())
