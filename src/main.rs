@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -112,25 +112,13 @@ fn get_mode_info(single_threaded: bool, threads: Option<usize>) -> (String, Stri
     (mode.to_string(), thread_info)
 }
 
-fn setup_progress_bars(total_files: usize) -> (ProgressBar, ProgressBar) {
-    let multi_progress = MultiProgress::new();
-    
-    let file_progress = multi_progress.add(ProgressBar::new(total_files as u64));
-    if let Ok(style) = ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
-    {
-        file_progress.set_style(style.progress_chars("#>-"));
+fn setup_progress_bar(total_files: usize) -> ProgressBar {
+    let bar = ProgressBar::new(total_files as u64);
+    if let Ok(style) = ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files {msg}") {
+        bar.set_style(style.progress_chars("#>-"));
     }
-    file_progress.set_message("Scanning files");
-    
-    let finding_progress = multi_progress.add(ProgressBar::new(0));
-    if let Ok(style) = ProgressStyle::default_bar()
-        .template("{spinner:.yellow} Found {pos} vulnerabilities")
-    {
-        finding_progress.set_style(style);
-    }
-    
-    (file_progress, finding_progress)
+    bar.set_draw_target(ProgressDrawTarget::stderr());
+    bar
 }
 
 fn detect_syntax(file_path: &str) -> &'static str {
@@ -327,12 +315,9 @@ fn main() -> Result<()> {
             let total_files: usize = files_by_language.values().map(|files| files.len()).sum();
             let total_findings = Arc::new(AtomicUsize::new(0));
             
-            let (file_progress, finding_progress) = if !cli.single_threaded {
-                let (fp, fp2) = setup_progress_bars(total_files);
-                (Some(fp), Some(fp2))
-            } else {
-                (None, None)
-            };
+            let file_progress = if !cli.single_threaded {
+                Some(setup_progress_bar(total_files))
+            } else { None };
             
             println!();
             
@@ -345,11 +330,14 @@ fn main() -> Result<()> {
             let progress_handle = if let Some(ref bar) = file_progress {
                 let bar_clone = bar.clone();
                 let proc_clone = Arc::clone(&processed_files);
+                let findings_clone = Arc::clone(&total_findings);
                 Some(std::thread::spawn(move || {
                     use std::time::Duration;
                     loop {
                         let val = proc_clone.load(Ordering::Relaxed) as u64;
                         bar_clone.set_position(val);
+                        let vulns = findings_clone.load(Ordering::Relaxed);
+                        bar_clone.set_message(format!("| {} vulns", vulns));
                         if val >= bar_clone.length().unwrap_or(0) { break; }
                         std::thread::sleep(Duration::from_millis(100));
                     }
@@ -366,23 +354,22 @@ fn main() -> Result<()> {
                             let rule_count = ScanningLogic::count_total_rules(&rules);
                             total_rules_loaded.fetch_add(rule_count, Ordering::Relaxed);
                             
-                            println!("🚀 Scanning {} {} files with {} rules...", files.len(), language, rule_count);
+                            if let Some(ref bar) = file_progress {
+                                bar.set_message(format!("| scanning {} ({}/{} files)", language, files.len(), total_files));
+                            }
                             
                             let scanner = VulnerabilityScanner::new(&language, rules).expect("scanner");
                             
                             match scanner.find_vulnerabilities_parallel(&cli.root_dir, &language, false) {
                                 Ok(fnds) => {
                                     processed_files.fetch_add(files.len(), Ordering::Relaxed);
-                                    if let Some(ref fbar) = finding_progress {
-                                        if !fnds.is_empty() {
-                                            let pos = total_findings.fetch_add(fnds.len(), Ordering::Relaxed) + fnds.len();
-                                            fbar.set_position(pos as u64);
-                                        }
+                                    if !fnds.is_empty() {
+                                        total_findings.fetch_add(fnds.len(), Ordering::Relaxed);
                                     }
                                     fnds
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed scanning {}: {}", language, e);
+                                    eprintln!("⚠️  Failed to load rules for {}: {}", language, e);
                                     Vec::new()
                                 }
                             }
@@ -397,7 +384,6 @@ fn main() -> Result<()> {
 
             if let Some(handle) = progress_handle { let _ = handle.join(); }
             if let Some(ref bar) = file_progress { bar.finish_with_message("Scan complete"); }
-            if let Some(ref bar) = finding_progress { bar.finish_with_message("Scan complete"); }
             
             println!();
             println!("📊 Scanned {} files total with {} rules across {} languages", 

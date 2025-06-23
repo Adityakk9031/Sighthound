@@ -168,8 +168,10 @@ impl VulnerabilityScanner {
             .collect();
 
         if let Some(handle) = progress_handle { let _ = handle.join(); }
-        if let Some(bar) = file_progress { bar.finish_with_message("Scan complete"); }
-        println!("Found {} vulnerabilities", total_findings.load(Ordering::Relaxed));
+        if let Some(bar) = file_progress {
+            bar.finish_with_message("Scan complete");
+            println!("Found {} vulnerabilities", total_findings.load(Ordering::Relaxed));
+        }
         Ok(findings)
     }
 
