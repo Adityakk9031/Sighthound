@@ -333,6 +333,9 @@ public class VulnerableService {
                                                 function: func_name.to_string(),
                                                 finding_type: "sql_injection".to_string(),
                                                 code: node_text.to_string(),
+                                                severity: "High".to_string(),
+                                                source: None,
+                                                sink: None,
                                             });
                                         }
                                     }
@@ -365,6 +368,9 @@ public class VulnerableService {
                                                 function: func_name.to_string(),
                                                 finding_type: "command_injection".to_string(),
                                                 code: node_text.to_string(),
+                                                severity: "High".to_string(),
+                                                source: None,
+                                                sink: None,
                                             });
                                         }
                                     }

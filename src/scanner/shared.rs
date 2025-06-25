@@ -41,6 +41,17 @@ impl ScanningLogic {
     pub fn get_all_rules(rules: &Rules) -> Vec<Rule> {
         let mut all_rules = Vec::new();
         
+        // Convert unified rules to legacy format for compatibility
+        if let Some(unified_rules) = &rules.rules {
+            for unified_rule in unified_rules {
+                // Only include search mode rules (pattern matching)
+                if unified_rule.is_search_rule() {
+                    all_rules.push(Self::convert_unified_to_legacy_rule(unified_rule));
+                }
+            }
+        }
+        
+        // Include legacy rules
         if let Some(rules_vec) = &rules.injection_sinks {
             all_rules.extend(rules_vec.iter().cloned());
         }
@@ -66,17 +77,38 @@ impl ScanningLogic {
         
         all_rules
     }
+    
+    /// Convert a UnifiedRule to legacy Rule format for pattern matching
+    fn convert_unified_to_legacy_rule(unified_rule: &crate::rules::UnifiedRule) -> Rule {
+        Rule {
+            pattern: unified_rule.pattern.clone(),
+            patterns: unified_rule.patterns.clone(),
+            finding_type: unified_rule.finding_type.clone(),
+            conditions: unified_rule.conditions.clone(),
+            file_types: unified_rule.file_types.clone(),
+            severity: unified_rule.severity.clone(),
+            confidence: unified_rule.confidence.clone(),
+            sanitizers: unified_rule.sanitizers.clone(),
+        }
+    }
 
-    /// Count total number of rules across all categories
+    /// Count total number of rules across all categories (unified + legacy)
     pub fn count_total_rules(rules: &Rules) -> usize {
         let mut count = 0;
         
+        // Count unified rules
+        if let Some(unified_rules) = &rules.rules {
+            count += unified_rules.len();
+        }
+        
+        // Count legacy rules
         if let Some(rules_vec) = &rules.injection_sinks { count += rules_vec.len(); }
         if let Some(rules_vec) = &rules.crypto_rules { count += rules_vec.len(); }
         if let Some(rules_vec) = &rules.path_traversal { count += rules_vec.len(); }
         if let Some(rules_vec) = &rules.weak_random { count += rules_vec.len(); }
         if let Some(rules_vec) = &rules.hardcoded_secrets { count += rules_vec.len(); }
         if let Some(rules_vec) = &rules.malware_detection { count += rules_vec.len(); }
+        if let Some(rules_vec) = &rules.taint_flows { count += rules_vec.len(); }
         
         for rules_vec in rules.other.values() {
             count += rules_vec.len();
@@ -237,6 +269,31 @@ impl ScanningLogic {
             finding_type: finding_type.to_string(),
             code: get_node_text(node, source).trim().to_string(),
             severity: severity.to_string(),
+            source: None,
+            sink: None,
+        }
+    }
+
+    /// Create a finding with source and sink information
+    pub fn create_finding_with_source_sink(
+        file: &str,
+        node: &tree_sitter::Node,
+        function: &str,
+        finding_type: &str,
+        source: &[u8],
+        severity: &str,
+        source_info: Option<crate::scanner::types::SourceInfo>,
+        sink_info: Option<crate::scanner::types::SinkInfo>,
+    ) -> Finding {
+        Finding {
+            file: file.to_string(),
+            line: node.start_position().row + 1,
+            function: function.to_string(),
+            finding_type: finding_type.to_string(),
+            code: get_node_text(node, source).trim().to_string(),
+            severity: severity.to_string(),
+            source: source_info,
+            sink: sink_info,
         }
     }
 
@@ -306,8 +363,17 @@ impl ScanningLogic {
             return None;
         }
         
-        // Create the finding
-        let mut finding = Self::create_finding(filepath, node, func_name, finding_type, source, severity);
+        // Detect source and sink patterns
+        let source_info = Self::detect_source_pattern(node, source, language_support);
+        let sink_info = Self::detect_sink_pattern(node, source, func_name, finding_type);
+        
+        // Create the finding with source/sink information
+        let mut finding = if source_info.is_some() || sink_info.is_some() {
+            Self::create_finding_with_source_sink(filepath, node, func_name, finding_type, source, severity, source_info, sink_info)
+        } else {
+            Self::create_finding(filepath, node, func_name, finding_type, source, severity)
+        };
+        
         Self::add_finding_metadata(&mut finding, rule, node);
         
         Some(finding)
@@ -354,7 +420,198 @@ impl ScanningLogic {
                 }
             }
         }
-        
         findings
+    }
+
+    /// Detect if a node represents a source pattern (user input, etc.)
+    fn detect_source_pattern(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        _language_support: &dyn LanguageSupport,
+    ) -> Option<crate::scanner::types::SourceInfo> {
+        // First check the immediate node
+        let node_text = get_node_text(node, source);
+        
+        // Also check the broader function context to find sources
+        let function_context = Self::get_function_context(node, source);
+        let combined_text = format!("{}\n{}", function_context, node_text);
+        
+        // Common source patterns
+        let source_patterns = [
+            ("request.args.get", "web_request"),
+            ("request.form.get", "web_request"),
+            ("request.json.get", "web_request"),
+            ("request.get", "web_request"),
+            ("request.POST", "web_request"),
+            ("input(", "user_input"),
+            ("raw_input(", "user_input"),
+            ("sys.argv", "command_line"),
+            ("os.environ.get", "environment"),
+            ("os.getenv", "environment"),
+            ("getenv", "environment"),
+            ("$_GET", "web_request"),
+            ("$_POST", "web_request"),
+            ("$_REQUEST", "web_request"),
+            ("System.getenv", "environment"),
+            ("Scanner.nextLine", "user_input"),
+        ];
+        
+        // Check both immediate node and function context
+        for (pattern, source_type) in &source_patterns {
+            if combined_text.contains(pattern) {
+                let variable = Self::extract_variable_from_text(&combined_text);
+                return Some(crate::scanner::types::SourceInfo {
+                    pattern: pattern.to_string(),
+                    variable,
+                    operation: source_type.to_string(),
+                });
+            }
+        }
+        
+        None
+    }
+
+    /// Get the broader function context for source detection
+    fn get_function_context(node: &tree_sitter::Node, source: &[u8]) -> String {
+        // Find the containing function
+        let mut current = node.parent();
+        while let Some(parent) = current {
+            if parent.kind() == "function_definition" || parent.kind() == "method_definition" {
+                return get_node_text(&parent, source);
+            }
+            current = parent.parent();
+        }
+        
+        // If no function found, return empty string
+        String::new()
+    }
+
+    /// Detect if a node represents a sink pattern (dangerous function call, etc.)
+    fn detect_sink_pattern(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        func_name: &str,
+        finding_type: &str,
+    ) -> Option<crate::scanner::types::SinkInfo> {
+        let node_text = get_node_text(node, source);
+        
+        // Determine sink type based on function name and finding type
+        let (_sink_type, operation) = if finding_type.contains("sql") || finding_type.contains("SQL") {
+            ("sql_execution", "database_query")
+        } else if finding_type.contains("command") || finding_type.contains("injection") {
+            ("command_execution", "system_command")
+        } else if finding_type.contains("xss") || finding_type.contains("XSS") {
+            ("html_output", "dom_manipulation")
+        } else if finding_type.contains("crypto") || finding_type.contains("hash") {
+            ("cryptographic", "hashing")
+        } else if finding_type.contains("file") || finding_type.contains("path") {
+            ("file_operation", "file_access")
+        } else {
+            ("generic_sink", "function_call")
+        };
+        
+        // Common sink patterns
+        let sink_patterns = [
+            // SQL execution
+            ("execute", "sql_execution"),
+            ("cursor.execute", "sql_execution"),
+            ("query", "sql_execution"),
+            // Command execution
+            ("os.system", "command_execution"),
+            ("subprocess.call", "command_execution"),
+            ("subprocess.run", "command_execution"),
+            ("exec", "command_execution"),
+            ("eval", "code_execution"),
+            // File operations
+            ("open(", "file_operation"),
+            ("os.path.join", "path_operation"),
+            // Crypto
+            ("hashlib.md5", "weak_crypto"),
+            ("hashlib.sha1", "weak_crypto"),
+            ("DES.new", "weak_crypto"),
+            ("ARC4.new", "weak_crypto"),
+        ];
+        
+        for (pattern, detected_type) in &sink_patterns {
+            if node_text.contains(pattern) || func_name.contains(pattern) {
+                let variable = Self::extract_variable_from_text(&node_text);
+                return Some(crate::scanner::types::SinkInfo {
+                    pattern: pattern.to_string(),
+                    variable,
+                    operation: detected_type.to_string(),
+                });
+            }
+        }
+        
+        // If we have a finding type but no specific pattern, create a generic sink
+        if !finding_type.is_empty() && finding_type != "vulnerability" {
+            let variable = Self::extract_variable_from_text(&node_text);
+            return Some(crate::scanner::types::SinkInfo {
+                pattern: func_name.to_string(),
+                variable,
+                operation: operation.to_string(),
+            });
+        }
+        
+        None
+    }
+
+    /// Extract variable name from node text
+    fn extract_variable_from_text(text: &str) -> Option<String> {
+        // Look for assignment patterns like "var = ..." or "var.method(...)"
+        if let Some(eq_pos) = text.find('=') {
+            let left_side = text[..eq_pos].trim();
+            if let Some(var_name) = left_side.split_whitespace().last() {
+                return Some(var_name.to_string());
+            }
+        }
+        
+        // Look for method call patterns like "object.method(...)"
+        if let Some(dot_pos) = text.find('.') {
+            let left_side = text[..dot_pos].trim();
+            if let Some(var_name) = left_side.split_whitespace().last() {
+                return Some(var_name.to_string());
+            }
+        }
+        
+        // Look for function call patterns like "function(...)"
+        if let Some(paren_pos) = text.find('(') {
+            let func_part = text[..paren_pos].trim();
+            if let Some(func_name) = func_part.split_whitespace().last() {
+                return Some(func_name.to_string());
+            }
+        }
+        
+        None
+    }
+
+    pub fn print_rules_summary(&self, rules: &Rules) {
+        println!("📋 Rules Summary:");
+        if let Some(rules_vec) = &rules.injection_sinks {
+            println!("   • Injection Sinks: {}", rules_vec.len());
+        }
+        if let Some(rules_vec) = &rules.crypto_rules {
+            println!("   • Crypto Rules: {}", rules_vec.len());
+        }
+        if let Some(rules_vec) = &rules.path_traversal {
+            println!("   • Path Traversal: {}", rules_vec.len());
+        }
+        if let Some(rules_vec) = &rules.weak_random {
+            println!("   • Weak Random: {}", rules_vec.len());
+        }
+        if let Some(rules_vec) = &rules.hardcoded_secrets {
+            println!("   • Hardcoded Secrets: {}", rules_vec.len());
+        }
+        if let Some(rules_vec) = &rules.malware_detection {
+            println!("   • Malware Detection: {}", rules_vec.len());
+        }
+        if let Some(rules_vec) = &rules.taint_flows {
+            println!("   • Taint Flows: {}", rules_vec.len());
+        }
+        
+        // Print other rule categories
+        for (category, rules_vec) in &rules.other {
+            println!("   • {}: {}", category, rules_vec.len());
+        }
     }
 } 

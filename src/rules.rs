@@ -170,6 +170,62 @@ where
     deserializer.deserialize_any(RuleVecVisitor)
 }
 
+// Custom deserializer that accepts both [TaintFlowRule, TaintFlowRule] and Some([TaintFlowRule, TaintFlowRule]) for taint flow arrays
+fn deserialize_taint_flows<'de, D>(deserializer: D) -> Result<Option<Vec<TaintFlowRule>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct TaintFlowVecVisitor;
+
+    impl<'de> Visitor<'de> for TaintFlowVecVisitor {
+        type Value = Option<Vec<TaintFlowRule>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a vector of taint flow rules or Option<Vec<TaintFlowRule>>")
+        }
+
+        // Handle direct array: taint_flows: [TaintFlowRule, TaintFlowRule]
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(item) = seq.next_element()? {
+                vec.push(item);
+            }
+            Ok(if vec.is_empty() { None } else { Some(vec) })
+        }
+
+        // Handle option: taint_flows: Some([TaintFlowRule, TaintFlowRule])
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let vec = Vec::<TaintFlowRule>::deserialize(deserializer)?;
+            Ok(Some(vec))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(TaintFlowVecVisitor)
+}
+
 // Custom deserializer that accepts both "value" and Some("value") for optional string fields
 fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
@@ -308,8 +364,55 @@ pub struct Rule {
     pub sanitizers: Option<Vec<String>>,              // Known sanitization functions
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaintFlowRule {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub flow_name: Option<String>,
+    
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub sources: Option<Vec<String>>,
+    
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub sinks: Option<Vec<String>>,
+    
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub propagators: Option<Vec<String>>,
+    
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub sanitizers: Option<Vec<String>>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub severity: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub confidence: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_file_types")]
+    pub file_types: Option<FileTypes>,
+}
+
+// Unified Rules structure that handles both pattern matching and taint analysis
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Rules {
+    // Main rules collection - unified approach
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_unified_rules")]
+    pub rules: Option<Vec<UnifiedRule>>,
+    
+    // Legacy support - these will be converted to UnifiedRule internally
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_rule_vec")]
@@ -334,6 +437,10 @@ pub struct Rules {
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_rule_vec")]
     pub malware_detection: Option<Vec<Rule>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_taint_flows")]
+    pub taint_flows: Option<Vec<TaintFlowRule>>,
     #[serde(flatten)]
     pub other: HashMap<String, Vec<Rule>>,
 }
@@ -435,6 +542,7 @@ impl Rules {
             Self::merge_rule_category(&mut merged.weak_random, rules.weak_random);
             Self::merge_rule_category(&mut merged.hardcoded_secrets, rules.hardcoded_secrets);
             Self::merge_rule_category(&mut merged.malware_detection, rules.malware_detection);
+            Self::merge_taint_flow_category(&mut merged.taint_flows, rules.taint_flows);
 
             // Merge other dynamic categories
             for (key, rules_vec) in rules.other {
@@ -453,6 +561,153 @@ impl Rules {
             } else {
                 *target = Some(source_rules);
             }
+        }
+    }
+
+    /// Helper function to merge taint flow rules
+    fn merge_taint_flow_category(target: &mut Option<Vec<TaintFlowRule>>, source: Option<Vec<TaintFlowRule>>) {
+        if let Some(source_flows) = source {
+            if let Some(target_flows) = target {
+                target_flows.extend(source_flows);
+            } else {
+                *target = Some(source_flows);
+            }
+        }
+    }
+    
+    /// Get all rules as a unified collection, converting legacy rules if needed
+    pub fn get_unified_rules(&self) -> Vec<UnifiedRule> {
+        let mut all_rules = Vec::new();
+        
+        // Add modern unified rules directly
+        if let Some(unified_rules) = &self.rules {
+            all_rules.extend(unified_rules.clone());
+        }
+        
+        // Convert legacy rules to unified format
+        self.convert_legacy_rules(&mut all_rules);
+        
+        all_rules
+    }
+    
+    /// Convert legacy rule categories to unified rules
+    fn convert_legacy_rules(&self, all_rules: &mut Vec<UnifiedRule>) {
+        // Convert injection sinks
+        if let Some(rules) = &self.injection_sinks {
+            for rule in rules {
+                all_rules.push(self.convert_rule_to_unified(rule, "SQL Injection"));
+            }
+        }
+        
+        // Convert crypto rules
+        if let Some(rules) = &self.crypto_rules {
+            for rule in rules {
+                all_rules.push(self.convert_rule_to_unified(rule, "Cryptographic Vulnerability"));
+            }
+        }
+        
+        // Convert path traversal
+        if let Some(rules) = &self.path_traversal {
+            for rule in rules {
+                all_rules.push(self.convert_rule_to_unified(rule, "Path Traversal"));
+            }
+        }
+        
+        // Convert weak random
+        if let Some(rules) = &self.weak_random {
+            for rule in rules {
+                all_rules.push(self.convert_rule_to_unified(rule, "Weak Randomness"));
+            }
+        }
+        
+        // Convert hardcoded secrets
+        if let Some(rules) = &self.hardcoded_secrets {
+            for rule in rules {
+                all_rules.push(self.convert_rule_to_unified(rule, "Hardcoded Secret"));
+            }
+        }
+        
+        // Convert malware detection
+        if let Some(rules) = &self.malware_detection {
+            for rule in rules {
+                all_rules.push(self.convert_rule_to_unified(rule, "Malware Detection"));
+            }
+        }
+        
+        // Convert taint flows
+        if let Some(taint_rules) = &self.taint_flows {
+            for taint_rule in taint_rules {
+                all_rules.push(self.convert_taint_rule_to_unified(taint_rule));
+            }
+        }
+        
+        // Convert other categories
+        for (category, rules) in &self.other {
+            for rule in rules {
+                all_rules.push(self.convert_rule_to_unified(rule, category));
+            }
+        }
+    }
+    
+    /// Convert a legacy Rule to UnifiedRule
+    fn convert_rule_to_unified(&self, rule: &Rule, default_finding_type: &str) -> UnifiedRule {
+        UnifiedRule {
+            id: None,
+            name: None,
+            description: None,
+            mode: "search".to_string(),
+            pattern: rule.pattern.clone(),
+            patterns: rule.patterns.clone(),
+            sources: None,
+            sinks: None,
+            propagators: None,
+            sanitizers: rule.sanitizers.clone(),
+            finding_type: rule.finding_type.clone().or_else(|| Some(default_finding_type.to_string())),
+            severity: rule.severity.clone(),
+            confidence: rule.confidence.clone(),
+            file_types: rule.file_types.clone(),
+            conditions: rule.conditions.clone(),
+            tags: None,
+            message: None,
+        }
+    }
+    
+    /// Convert a legacy TaintFlowRule to UnifiedRule
+    fn convert_taint_rule_to_unified(&self, taint_rule: &TaintFlowRule) -> UnifiedRule {
+        UnifiedRule {
+            id: None,
+            name: taint_rule.flow_name.clone(),
+            description: None,
+            mode: "taint".to_string(),
+            pattern: None,
+            patterns: None,
+            sources: taint_rule.sources.clone(),
+            sinks: taint_rule.sinks.clone(),
+            propagators: taint_rule.propagators.clone(),
+            sanitizers: taint_rule.sanitizers.clone(),
+            finding_type: Some("Taint Flow Vulnerability".to_string()),
+            severity: taint_rule.severity.clone(),
+            confidence: taint_rule.confidence.clone(),
+            file_types: taint_rule.file_types.clone(),
+            conditions: None,
+            tags: None,
+            message: None,
+        }
+    }
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Self {
+            rules: None,
+            injection_sinks: None,
+            crypto_rules: None,
+            path_traversal: None,
+            weak_random: None,
+            hardcoded_secrets: None,
+            malware_detection: None,
+            taint_flows: None,
+            other: HashMap::new(),
         }
     }
 }
@@ -614,4 +869,210 @@ where
     }
 
     deserializer.deserialize_any(OptionalFileTypesVisitor)
+}
+
+// Deserializer for unified rules
+fn deserialize_unified_rules<'de, D>(deserializer: D) -> Result<Option<Vec<UnifiedRule>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct UnifiedRulesVisitor;
+
+    impl<'de> Visitor<'de> for UnifiedRulesVisitor {
+        type Value = Option<Vec<UnifiedRule>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a sequence of unified rules")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut rules = Vec::new();
+            while let Some(rule) = seq.next_element::<UnifiedRule>()? {
+                rules.push(rule);
+            }
+            Ok(Some(rules))
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_seq(self)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_option(UnifiedRulesVisitor)
+}
+
+// Enhanced unified rule structure that supports both pattern matching and taint analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedRule {
+    // Rule identification and metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub id: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub name: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub description: Option<String>,
+    
+    // Analysis mode - determines how the rule is processed
+    #[serde(default = "default_search_mode")]
+    pub mode: String, // "search" (default) or "taint"
+    
+    // Pattern matching (used in search mode and as patterns in taint mode)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_pattern")]
+    pub pattern: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub patterns: Option<Vec<String>>,
+    
+    // Taint analysis fields (used when mode = "taint")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub sources: Option<Vec<String>>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub sinks: Option<Vec<String>>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub propagators: Option<Vec<String>>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_patterns")]
+    pub sanitizers: Option<Vec<String>>,
+    
+    // Metadata and configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub finding_type: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub severity: Option<String>, // Critical, High, Medium, Low
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub confidence: Option<String>, // High, Medium, Low
+    
+    // File filtering
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_file_types")]
+    pub file_types: Option<FileTypes>,
+    
+    // Advanced conditions for pattern matching
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conditions: Option<Vec<Condition>>,
+    
+    // Additional metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    pub message: Option<String>,
+}
+
+fn default_search_mode() -> String {
+    "search".to_string()
+}
+
+impl UnifiedRule {
+    /// Returns true if this is a taint analysis rule
+    pub fn is_taint_rule(&self) -> bool {
+        self.mode == "taint"
+    }
+    
+    /// Returns true if this is a search/pattern matching rule
+    pub fn is_search_rule(&self) -> bool {
+        self.mode == "search" || self.mode.is_empty()
+    }
+    
+    /// Validates that the rule has the required fields for its mode
+    pub fn validate(&self) -> Result<(), String> {
+        match self.mode.as_str() {
+            "search" | "" => {
+                if self.pattern.is_none() && self.patterns.is_none() {
+                    return Err("Search mode rules must have either 'pattern' or 'patterns'".to_string());
+                }
+            }
+            "taint" => {
+                if self.sources.is_none() {
+                    return Err("Taint mode rules must have 'sources'".to_string());
+                }
+                if self.sinks.is_none() {
+                    return Err("Taint mode rules must have 'sinks'".to_string());
+                }
+            }
+            _ => {
+                return Err(format!("Unsupported rule mode: '{}'. Supported modes: 'search', 'taint'", self.mode));
+            }
+        }
+        Ok(())
+    }
+    
+    /// Gets the effective finding type, with fallback logic
+    pub fn get_finding_type(&self) -> String {
+        self.finding_type
+            .clone()
+            .unwrap_or_else(|| {
+                if self.is_taint_rule() {
+                    "Taint Flow Vulnerability".to_string()
+                } else {
+                    "Security Vulnerability".to_string()
+                }
+            })
+    }
+    
+    /// Gets the effective severity with fallback
+    pub fn get_severity(&self) -> String {
+        self.severity.clone().unwrap_or_else(|| "Medium".to_string())
+    }
+    
+    /// Gets the effective confidence with fallback
+    pub fn get_confidence(&self) -> String {
+        self.confidence.clone().unwrap_or_else(|| "Medium".to_string())
+    }
 } 

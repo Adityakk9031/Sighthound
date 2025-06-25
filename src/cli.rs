@@ -38,4 +38,8 @@ pub struct Cli {
     /// Number of threads to use for parallel processing (default: CPU cores)
     #[arg(long, help = "Number of threads for parallel processing (default: auto-detect CPU cores)")]
     pub threads: Option<usize>,
+
+    /// Enable taint analysis mode
+    #[arg(long, help = "Enable taint analysis to track data flows from sources to sinks")]
+    pub taint_analysis: bool,
 } 

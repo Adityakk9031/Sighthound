@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use find_vulns::{Cli, Rules, VulnerabilityScanner, print_summary, Finding};
-use find_vulns::scanner::ScanningLogic;
+use find_vulns::scanner::{ScanningLogic, TaintAnalyzer, TaintAnalysisResult, TaintSummary};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
@@ -155,12 +155,123 @@ fn print_findings_json(findings: &[Finding]) {
 }
 
 fn print_findings_csv(findings: &[Finding]) {
-    println!("file,line,function,finding_type,code");
+    println!("file,line,function,finding_type,code,severity,source_pattern,source_operation,sink_pattern,sink_operation");
     for finding in findings {
         let code = finding.code.replace('"', "\"\"");
-        println!("{},{},{},{},\"{}\"", 
-                finding.file, finding.line, finding.function, finding.finding_type, code);
+        let source_pattern = finding.source.as_ref().map(|s| s.pattern.as_str()).unwrap_or("");
+        let source_operation = finding.source.as_ref().map(|s| s.operation.as_str()).unwrap_or("");
+        let sink_pattern = finding.sink.as_ref().map(|s| s.pattern.as_str()).unwrap_or("");
+        let sink_operation = finding.sink.as_ref().map(|s| s.operation.as_str()).unwrap_or("");
+        
+        println!("{},{},{},{},\"{}\",{},{},{},{},{}", 
+                finding.file, finding.line, finding.function, finding.finding_type, 
+                code, finding.severity, source_pattern, source_operation, sink_pattern, sink_operation);
     }
+}
+
+fn print_taint_analysis_json(result: &TaintAnalysisResult) {
+    match serde_json::to_string_pretty(result) {
+        Ok(json) => println!("{}", json),
+        Err(e) => eprintln!("Error serializing taint analysis to JSON: {}", e),
+    }
+}
+
+fn merge_taint_results(results: Vec<TaintAnalysisResult>) -> TaintAnalysisResult {
+    if results.is_empty() {
+        return TaintAnalysisResult {
+            flows: Vec::new(),
+            summary: TaintSummary {
+                total_flows: 0,
+                unsanitized_flows: 0,
+                sanitized_flows: 0,
+                files_analyzed: 0,
+                functions_analyzed: 0,
+            },
+        };
+    }
+    
+    let mut all_flows = Vec::new();
+    let mut total_files = 0;
+    let mut total_functions = 0;
+    
+    for result in results {
+        all_flows.extend(result.flows);
+        total_files += result.summary.files_analyzed;
+        total_functions += result.summary.functions_analyzed;
+    }
+    
+    let unsanitized_flows = all_flows.iter().filter(|f| !f.is_sanitized).count();
+    let sanitized_flows = all_flows.iter().filter(|f| f.is_sanitized).count();
+    
+    TaintAnalysisResult {
+        flows: all_flows,
+        summary: TaintSummary {
+            total_flows: unsanitized_flows + sanitized_flows,
+            unsanitized_flows,
+            sanitized_flows,
+            files_analyzed: total_files,
+            functions_analyzed: total_functions,
+        },
+    }
+}
+
+fn print_taint_analysis_text(result: &TaintAnalysisResult, duration: std::time::Duration) {
+    println!("\n🔍 Taint Analysis Results");
+    println!("========================");
+    
+    if result.flows.is_empty() {
+        println!("✅ No taint flows detected");
+    } else {
+        for flow in &result.flows {
+            let status_icon = if flow.is_sanitized { "🟡" } else { "🔴" };
+            let status = if flow.is_sanitized { "SANITIZED" } else { "VULNERABLE" };
+            
+            println!("\n{} {} Flow: {}", status_icon, status, flow.flow_id);
+            if let Some(name) = &flow.flow_name {
+                println!("   Flow: {}", name);
+            }
+            println!("   Severity: {} | Confidence: {}", flow.severity, flow.confidence);
+            
+            println!("\n   📍 Source:");
+            println!("      File: {}:{}", flow.source.file, flow.source.line);
+            println!("      Function: {}", flow.source.function);
+            println!("      Variable: {}", flow.source.variable);
+            println!("      Operation: {}", flow.source.operation);
+            println!("      Code: {}", flow.source.code.trim());
+            
+            if !flow.traces.is_empty() {
+                println!("\n   🔄 Traces:");
+                for trace in &flow.traces {
+                    println!("      {}:{} - {} in {} ({})", 
+                            trace.file, trace.line, trace.variable, 
+                            trace.function, trace.operation);
+                }
+            }
+            
+            if !flow.sanitization_points.is_empty() {
+                println!("\n   🛡️  Sanitization:");
+                for sanitizer in &flow.sanitization_points {
+                    println!("      {}:{} - {}", 
+                            sanitizer.file, sanitizer.line, sanitizer.code.trim());
+                }
+            }
+            
+            println!("\n   🎯 Sink:");
+            println!("      File: {}:{}", flow.sink.file, flow.sink.line);
+            println!("      Function: {}", flow.sink.function);
+            println!("      Variable: {}", flow.sink.variable);
+            println!("      Operation: {}", flow.sink.operation);
+            println!("      Code: {}", flow.sink.code.trim());
+        }
+    }
+    
+    println!("\n📊 Summary:");
+    println!("   Total flows: {}", result.summary.total_flows);
+    println!("   Vulnerable flows: {}", result.summary.unsanitized_flows);
+    println!("   Sanitized flows: {}", result.summary.sanitized_flows);
+    println!("   Files analyzed: {}", result.summary.files_analyzed);
+    println!("   Functions analyzed: {}", result.summary.functions_analyzed);
+    println!("   Analysis time: {:.2?}", duration);
 }
 
 fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool, duration: std::time::Duration) {
@@ -180,7 +291,7 @@ fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool,
 
         // Group findings by file
         let mut current_file = None;
-        let mut file_contents = String::new();
+        let mut file_contents: String;
         let mut lines = Vec::new();
         let mut syntax = None;
 
@@ -219,6 +330,22 @@ fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool,
                     severity_color, 
                     finding.finding_type, 
                     line_num);
+            
+            // Display source and sink information if available
+            if let Some(source_info) = &finding.source {
+                println!("    📍 Source: {} ({})", source_info.pattern, source_info.operation);
+                if let Some(var) = &source_info.variable {
+                    println!("       Variable: {}", var);
+                }
+            }
+            
+            if let Some(sink_info) = &finding.sink {
+                println!("    🎯 Sink: {} ({})", sink_info.pattern, sink_info.operation);
+                if let Some(var) = &sink_info.variable {
+                    println!("       Variable: {}", var);
+                }
+            }
+            
             println!();
 
             // Print surrounding context with syntax highlighting
@@ -262,6 +389,164 @@ fn main() -> Result<()> {
 
     let start_time = std::time::Instant::now();
     
+    if cli.taint_analysis {
+        println!("🔍 Taint analysis enabled - tracking data flows from sources to sinks");
+    }
+    
+    if cli.taint_analysis {
+        // Run taint analysis mode
+        let rules = match (&cli.language, &cli.rules_path) {
+            (Some(_language), Some(rules_path)) => Rules::load_from_path(rules_path)?,
+            (None, None) => {
+                // Auto-detect and merge rules from all languages
+                let files_by_language = discover_files_by_language_sequential(&cli.root_dir)?;
+                let mut all_rules = Vec::new();
+                
+                for language in files_by_language.keys() {
+                    let rules_dir = format!("rules/{}", language);
+                    if let Ok(rules) = Rules::load_from_directory(&rules_dir) {
+                        all_rules.push(rules);
+                    }
+                }
+                
+                if all_rules.is_empty() {
+                    return Err(anyhow::anyhow!("No taint flow rules found for analysis"));
+                }
+                
+                Rules::merge_rules(all_rules)?
+            }
+            _ => return Err(anyhow::anyhow!("For taint analysis, please provide both language and rules path, or use auto-detection")),
+        };
+        
+        // Check if we have taint flow rules (unified or legacy)
+        let taint_rules_count = {
+            let mut count = 0;
+            
+            // Count unified taint rules
+            if let Some(unified_rules) = &rules.rules {
+                count += unified_rules.iter().filter(|r| r.is_taint_rule()).count();
+            }
+            
+            // Count legacy taint flow rules
+            if let Some(taint_flows) = &rules.taint_flows {
+                count += taint_flows.len();
+            }
+            
+            count
+        };
+        
+        if taint_rules_count == 0 {
+            return Err(anyhow::anyhow!("No taint flow rules found. Please ensure your rules contain either 'rules' with mode='taint' or 'taint_flows' definitions."));
+        }
+        
+        println!("🔍 Starting Taint Analysis Mode");
+        println!("📂 Target directory: {}", cli.root_dir);
+        
+        let taint_flows_count = taint_rules_count;
+        println!("🔧 Loaded {} taint flow rules", taint_flows_count);
+        
+        // File discovery with timing and feedback
+        let discovery_start = std::time::Instant::now();
+        println!();
+        println!("🔍 Discovering files for taint analysis...");
+        
+        // Analyze files by language
+        let files_by_language = discover_files_by_language_sequential(&cli.root_dir)?;
+        let discovery_time = discovery_start.elapsed();
+        
+        if files_by_language.is_empty() {
+            println!("❌ No supported files found in {}", cli.root_dir);
+            println!("   Supported file types: .py, .java, .js, .tsx, .html");
+            return Ok(());
+        }
+        
+        let total_files: usize = files_by_language.values().map(|files| files.len()).sum();
+        let detected_languages: Vec<String> = files_by_language.keys().cloned().collect();
+        
+        println!("🔍 Detected languages: {} (in {:.2?})", 
+                detected_languages.join(", "), discovery_time);
+        println!("📁 Total files to analyze: {}", total_files);
+        println!();
+        
+        let mut analyzer = TaintAnalyzer::new(rules);
+        let mut all_results = Vec::new();
+        
+        // Setup progress tracking
+        let progress_bar = setup_progress_bar(total_files);
+        let processed_files = Arc::new(AtomicUsize::new(0));
+        let total_flows = Arc::new(AtomicUsize::new(0));
+        
+        // Background thread for progress updates
+        let progress_handle = {
+            let bar_clone = progress_bar.clone();
+            let proc_clone = Arc::clone(&processed_files);
+            let flows_clone = Arc::clone(&total_flows);
+            
+            std::thread::spawn(move || {
+                use std::time::Duration;
+                loop {
+                    let files_done = proc_clone.load(Ordering::Relaxed) as u64;
+                    bar_clone.set_position(files_done);
+                    let flows_found = flows_clone.load(Ordering::Relaxed);
+                    bar_clone.set_message(format!("| {} flows found", flows_found));
+                    
+                    if files_done >= bar_clone.length().unwrap_or(0) { break; }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            })
+        };
+        
+        for (language, files) in files_by_language {
+            if let Ok(mut parser) = find_vulns::parser::LanguageParser::new(&language) {
+                // Update progress bar message to show current language
+                progress_bar.set_message(format!("| analyzing {} ({} files)", language, files.len()));
+                
+                for file_path in files {
+                    let file_path_str = file_path.to_string_lossy();
+                    
+                    if let Ok(source) = std::fs::read(&file_path) {
+                        if let Ok(tree) = parser.parse(&source) {
+                            let result = analyzer.analyze_file(&file_path_str, &source, &tree, parser.language_support());
+                            if !result.flows.is_empty() {
+                                total_flows.fetch_add(result.flows.len(), Ordering::Relaxed);
+                                all_results.push(result);
+                            }
+                        }
+                    }
+                    
+                    // Update processed files counter
+                    processed_files.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+        
+        // Clean up progress tracking
+        let _ = progress_handle.join();
+        progress_bar.finish_with_message("Taint analysis complete");
+        
+        // Merge all results
+        let merged_result = merge_taint_results(all_results);
+        let duration = start_time.elapsed();
+        let analysis_time = duration - discovery_time;
+        
+        // Enhanced summary with performance metrics
+        println!();
+        println!("📊 Analyzed {} files with {} taint flow rules across {} languages", 
+                total_files, taint_flows_count, detected_languages.len());
+        println!("⚡ File discovery: {:.2?} | Analysis: {:.2?}", 
+                discovery_time, analysis_time);
+        
+        println!("⏱️  Taint analysis completed in {:.2?}", duration);
+        println!();
+        
+        match cli.output_format.as_str() {
+            "json" => print_taint_analysis_json(&merged_result),
+            "text" | _ => print_taint_analysis_text(&merged_result, duration),
+        }
+        
+        return Ok(());
+    }
+
     let findings = match (&cli.language, &cli.rules_path) {
         (Some(language), Some(rules_path)) => {
             let rules = Rules::load_from_path(rules_path)?;

@@ -1,0 +1,49 @@
+{
+    taint_flows: [
+        (
+            flow_name: "User Input to Command Execution",
+            sources: ["request.args.get", "request.form.get", "input(", "os.environ.get"],
+            sinks: ["os.system", "subprocess.call", "subprocess.run", "subprocess.Popen", "eval", "exec"],
+            propagators: ["str(", "format(", "+", "join"],
+            sanitizers: ["shlex.quote", "html.escape", "re.escape", "validate_input"],
+            severity: "Critical",
+            confidence: "High",
+        ),
+        (
+            flow_name: "Database Query Injection",
+            sources: ["request.args.get", "request.form.get", "request.json.get", "input("],
+            sinks: [".execute(", ".executemany(", ".raw(", "cursor.execute"],
+            propagators: ["format(", "%" , "+", "f\"", "join"],
+            sanitizers: ["escape_sql", "quote_identifier", "parameterized_query"],
+            severity: "Critical", 
+            confidence: "High",
+        ),
+        (
+            flow_name: "Path Traversal",
+            sources: ["request.args.get", "request.form.get", "os.environ.get", "input("],
+            sinks: ["open(", "file(", "os.path.join", "pathlib.Path", "shutil.copy"],
+            propagators: ["os.path.join", "+", "format(", "f\""],
+            sanitizers: ["os.path.abspath", "os.path.normpath", "secure_filename"],
+            severity: "High",
+            confidence: "Medium",
+        ),
+        (
+            flow_name: "Template Injection",
+            sources: ["request.args.get", "request.form.get", "request.json.get"],
+            sinks: ["Template(", ".render(", "render_template_string"],
+            propagators: ["+", "format(", "f\"", "join"],
+            sanitizers: ["escape", "Markup.escape", "bleach.clean"],
+            severity: "High",
+            confidence: "Medium",
+        ),
+        (
+            flow_name: "Deserialization Attack",
+            sources: ["request.data", "request.get_data", "input(", "file.read"],
+            sinks: ["pickle.loads", "yaml.load", "json.loads", "eval"],
+            propagators: ["decode(", "b64decode", "+"],
+            sanitizers: ["yaml.safe_load", "json.loads", "validate_input"],
+            severity: "Critical",
+            confidence: "High",
+        ),
+    ]
+} 

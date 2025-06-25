@@ -1,0 +1,153 @@
+{
+    // Unified rules that support both pattern matching and taint analysis
+    rules: Some([
+        // Pattern matching rule (search mode) - traditional vulnerability detection
+        (
+            id: Some("python-sql-injection-direct"),
+            name: Some("Direct SQL Injection Pattern"),
+            description: Some("Detects direct SQL injection patterns in Python code"),
+            mode: "search",
+            patterns: Some([
+                "execute",
+                "executemany",
+                "cursor.execute",
+                "connection.execute"
+            ]),
+            finding_type: Some("SQL Injection"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            file_types: Some((
+                extensions: Some(["py"]),
+            )),
+            conditions: Some([
+                (
+                    type: "not_in_string_literal",
+                ),
+                (
+                    type: "contains_user_input",
+                    patterns: Some([
+                        "request.*",
+                        "input(*",
+                        "sys.argv",
+                        "os.environ"
+                    ]),
+                )
+            ]),
+            tags: Some(["injection", "sql", "cwe-89"]),
+            message: Some("Potential SQL injection vulnerability detected"),
+        ),
+        
+        // Taint analysis rule - data flow tracking
+        (
+            id: Some("python-command-injection-taint"),
+            name: Some("Command Injection via Taint Flow"),
+            description: Some("Tracks user input flowing to command execution functions"),
+            mode: "taint",
+            sources: Some([
+                "request.args.get",
+                "request.form.get",
+                "request.json",
+                "input(",
+                "sys.argv",
+                "os.environ.get",
+                "os.getenv"
+            ]),
+            sinks: Some([
+                "os.system",
+                "os.popen",
+                "subprocess.call",
+                "subprocess.run",
+                "subprocess.Popen",
+                "eval",
+                "exec"
+            ]),
+            sanitizers: Some([
+                "shlex.quote",
+                "pipes.quote",
+                "html.escape",
+                "urllib.parse.quote"
+            ]),
+            propagators: Some([
+                "str.format",
+                ".join",
+                ".replace",
+                ".strip",
+                ".lower",
+                ".upper"
+            ]),
+            finding_type: Some("Command Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            file_types: Some((
+                extensions: Some(["py"]),
+            )),
+            tags: Some(["injection", "command", "cwe-78"]),
+            message: Some("User input flows to command execution without proper sanitization"),
+        ),
+        
+        // Another pattern matching rule - cryptographic issues
+        (
+            id: Some("python-weak-crypto"),
+            name: Some("Weak Cryptographic Algorithm"),
+            description: Some("Detects usage of weak cryptographic algorithms"),
+            mode: "search",
+            patterns: Some([
+                "hashlib.md5",
+                "hashlib.sha1",
+                "Crypto.Hash.MD5",
+                "Crypto.Hash.SHA1",
+                "DES.new",
+                "ARC4.new"
+            ]),
+            finding_type: Some("Weak Cryptography"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            file_types: Some((
+                extensions: Some(["py"]),
+            )),
+            tags: Some(["crypto", "weak", "cwe-327"]),
+            message: Some("Weak cryptographic algorithm detected"),
+        ),
+        
+        // Taint rule for path traversal
+        (
+            id: Some("python-path-traversal-taint"),
+            name: Some("Path Traversal via Taint Flow"),
+            description: Some("Tracks user input flowing to file operations"),
+            mode: "taint",
+            sources: Some([
+                "request.args.get",
+                "request.form.get",
+                "input(",
+                "sys.argv"
+            ]),
+            sinks: Some([
+                "open(",
+                "file(",
+                "os.path.join",
+                "pathlib.Path",
+                ".read_text",
+                ".write_text"
+            ]),
+            sanitizers: Some([
+                "os.path.basename",
+                "pathlib.Path.name",
+                "secure_filename"
+            ]),
+            propagators: Some([
+                "os.path.join",
+                "pathlib.Path.joinpath",
+                "str.format",
+                ".replace"
+            ]),
+            finding_type: Some("Path Traversal"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            file_types: Some((
+                extensions: Some(["py"]),
+            )),
+            tags: Some(["path-traversal", "file", "cwe-22"]),
+            message: Some("User input flows to file operations without path validation"),
+                 ),
+     ])
+} 
