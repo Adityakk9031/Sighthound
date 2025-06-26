@@ -165,9 +165,17 @@ where
     deserializer.deserialize_any(OptionalStringVisitor)
 }
 
-// Fast injection pattern checking using language-specific patterns
-pub fn check_for_injection_pattern(text: &str, language_support: &dyn LanguageSupport) -> bool {
-    language_support.injection_patterns().iter().any(|regex| regex.is_match(text))
+// Simple injection pattern checking for basic patterns
+pub fn check_for_injection_pattern(text: &str, _language_support: &dyn LanguageSupport) -> bool {
+    // Basic injection indicators that are language-agnostic
+    let basic_patterns = [
+        ";", "&&", "||", "`", "$(",  // Command separators/chaining
+        "eval(", "exec(", "system(",  // Dangerous functions  
+        "{{", "{%",                   // Template injection
+        "javascript:", "data:",       // URL schemes
+    ];
+    
+    basic_patterns.iter().any(|&pattern| text.contains(pattern))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -287,58 +295,7 @@ pub struct TaintFlowRule {
     pub file_types: Option<FileTypes>,
 }
 
-// Custom deserializer for unified rules
-fn deserialize_unified_rules<'de, D>(deserializer: D) -> Result<Vec<UnifiedRule>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::{self, Visitor};
-    use std::fmt;
 
-    struct UnifiedRulesVisitor;
-
-    impl<'de> Visitor<'de> for UnifiedRulesVisitor {
-        type Value = Vec<UnifiedRule>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a sequence of unified rules")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: de::SeqAccess<'de>,
-        {
-            let mut rules = Vec::new();
-            while let Some(rule) = seq.next_element::<UnifiedRule>()? {
-                rules.push(rule);
-            }
-            Ok(rules)
-        }
-
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserializer.deserialize_seq(self)
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(Vec::new())
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(Vec::new())
-        }
-    }
-
-    deserializer.deserialize_option(UnifiedRulesVisitor)
-}
 
 fn deserialize_optional_file_types<'de, D>(deserializer: D) -> Result<Option<FileTypes>, D::Error>
 where
