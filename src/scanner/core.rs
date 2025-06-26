@@ -118,7 +118,7 @@ impl VulnerabilityScanner {
 
         let file_progress = if show_progress { Some(self.setup_progress_bars(files.len())) } else { None };
         let total_findings = Arc::new(AtomicUsize::new(0));
-        let all_rules = ScanningLogic::get_all_rules(&self.rules);
+        let all_rules = ScanningLogic::get_all_search_rules(&self.rules);
         let chunk_size = 64; // tuned for slower disks
 
         use rayon::slice::ParallelSlice;

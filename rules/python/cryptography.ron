@@ -1,0 +1,172 @@
+{
+    "rules": [
+        // Weak cryptographic algorithms
+        {
+            "id": "python-crypto-001",
+            "name": "Weak Hash Algorithm MD5",
+            "category": "cryptography",
+            "mode": "search",
+            "patterns": [
+                "hashlib\\.md5\\(",
+                "Crypto\\.Hash\\.MD5",
+                "md5\\.new\\(",
+                "md5\\.md5\\(",
+            ],
+            "finding_type": "Weak Cryptography",
+            "severity": "Medium",
+            "confidence": "High",
+            "description": "MD5 is cryptographically broken and should not be used for security purposes",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["crypto", "hash", "md5", "weak"]
+        },
+        {
+            "id": "python-crypto-002", 
+            "name": "Weak Hash Algorithm SHA1",
+            "category": "cryptography",
+            "mode": "search",
+            "patterns": [
+                "hashlib\\.sha1\\(",
+                "Crypto\\.Hash\\.SHA1",
+                "sha\\.new\\(",
+                "sha1\\.sha1\\(",
+            ],
+            "finding_type": "Weak Cryptography",
+            "severity": "Medium",
+            "confidence": "High",
+            "description": "SHA1 is cryptographically weak and should be replaced with SHA-256 or higher",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["crypto", "hash", "sha1", "weak"]
+        },
+        {
+            "id": "python-crypto-003",
+            "name": "Weak Encryption Algorithm DES",
+            "category": "cryptography",
+            "mode": "search", 
+            "patterns": [
+                "Crypto\\.Cipher\\.DES",
+                "DES\\.new\\(",
+                "des\\.DES\\(",
+            ],
+            "finding_type": "Weak Cryptography",
+            "severity": "High",
+            "confidence": "High",
+            "description": "DES encryption is obsolete and easily broken",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["crypto", "encryption", "des", "weak"]
+        },
+        {
+            "id": "python-crypto-004",
+            "name": "Weak Encryption Algorithm RC4",
+            "category": "cryptography", 
+            "mode": "search",
+            "patterns": [
+                "Crypto\\.Cipher\\.ARC4",
+                "ARC4\\.new\\(",
+                "RC4\\.new\\(",
+            ],
+            "finding_type": "Weak Cryptography",
+            "severity": "High",
+            "confidence": "High",
+            "description": "RC4 stream cipher has known vulnerabilities and should not be used",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["crypto", "encryption", "rc4", "weak"]
+        },
+        {
+            "id": "python-crypto-005",
+            "name": "Hardcoded Cryptographic Key",
+            "category": "cryptography",
+            "mode": "search",
+            "patterns": [
+                "key\\s*=\\s*[\"'].*[\"']",
+                "password\\s*=\\s*[\"'].*[\"']",
+                "secret\\s*=\\s*[\"'].*[\"']",
+                "token\\s*=\\s*[\"'].*[\"']",
+            ],
+            "finding_type": "Hardcoded Cryptographic Material",
+            "severity": "High",
+            "confidence": "Medium",
+            "description": "Hardcoded cryptographic keys or secrets detected",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["crypto", "hardcoded", "key", "secret"]
+        },
+        {
+            "id": "python-crypto-006",
+            "name": "Weak Random Number Generation",
+            "category": "cryptography",
+            "mode": "search",
+            "patterns": [
+                "random\\.random\\(",
+                "random\\.randint\\(",
+                "random\\.choice\\(",
+                "random\\.shuffle\\(",
+            ],
+            "finding_type": "Weak Random Number Generation",
+            "severity": "Medium", 
+            "confidence": "Medium",
+            "description": "Standard random module is not cryptographically secure, use secrets module instead",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["crypto", "random", "weak", "prng"]
+        },
+        {
+            "id": "python-crypto-007",
+            "name": "ECB Mode Encryption",
+            "category": "cryptography",
+            "mode": "search",
+            "patterns": [
+                "MODE_ECB",
+                "\\.ECB",
+                "mode.*ECB",
+            ],
+            "finding_type": "Weak Cryptography",
+            "severity": "Medium",
+            "confidence": "High", 
+            "description": "ECB mode encryption is insecure and reveals patterns in plaintext",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["crypto", "encryption", "ecb", "mode"]
+        },
+        
+        // Taint mode for cryptographic material flows
+        {
+            "id": "python-crypto-taint-001",
+            "name": "Hardcoded Key Taint Flow",
+            "category": "cryptography",
+            "mode": "taint",
+            "sources": [
+                "\".*\"",
+                "'.*'",
+                "b\".*\"",
+                "b'.*'",
+            ],
+            "sinks": [
+                "\\.new\\(",
+                "\\.encrypt\\(",
+                "\\.decrypt\\(",
+                "key\\s*=",
+                "password\\s*=",
+                "secret\\s*=",
+            ],
+            "finding_type": "Hardcoded Cryptographic Material in Data Flow",
+            "severity": "High",
+            "confidence": "Medium",
+            "description": "Hardcoded string flows to cryptographic operations",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["crypto", "taint", "hardcoded", "key"]
+        }
+    ]
+} 

@@ -5,9 +5,9 @@ use crate::rules::{match_pattern, match_any_pattern, is_literal_node};
 
 /// Check if all AST conditions are satisfied for a node
 pub fn check_ast_conditions(
+    conditions: &[Condition],
     node: &tree_sitter::Node,
     source: &[u8],
-    conditions: &[Condition],
     language_support: &dyn LanguageSupport,
 ) -> bool {
     conditions.iter().all(|condition| {

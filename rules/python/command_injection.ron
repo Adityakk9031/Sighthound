@@ -1,0 +1,121 @@
+{
+    "rules": [
+        // Search mode rules for command injection patterns
+        {
+            "id": "python-cmd-injection-001",
+            "name": "OS Command Execution",
+            "category": "injection",
+            "mode": "search", 
+            "patterns": [
+                "os\\.system\\(",
+                "os\\.popen\\(",
+                "os\\.spawn.*\\(",
+                "subprocess\\.call\\(",
+                "subprocess\\.run\\(",
+                "subprocess\\.Popen\\(",
+                "subprocess\\.check_output\\(",
+                "subprocess\\.check_call\\(",
+            ],
+            "finding_type": "Command Injection",
+            "severity": "High",
+            "confidence": "Medium",
+            "description": "Command execution detected - verify input is properly sanitized",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["command", "injection", "os"]
+        },
+        {
+            "id": "python-cmd-injection-002",
+            "name": "Shell Command with String Formatting",
+            "category": "injection", 
+            "mode": "search",
+            "patterns": [
+                "system.*%.*",
+                "system.*format.*",
+                "popen.*%.*", 
+                "popen.*format.*",
+                "call.*%.*",
+                "call.*format.*",
+                "run.*%.*",
+                "run.*format.*",
+            ],
+            "finding_type": "Command Injection",
+            "severity": "Critical",
+            "confidence": "High",
+            "description": "Command constructed using string formatting, highly vulnerable to injection",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["command", "injection", "shell"]
+        },
+        {
+            "id": "python-cmd-injection-003",
+            "name": "Shell Command with Concatenation",
+            "category": "injection",
+            "mode": "search",
+            "patterns": [
+                "system.*\\+.*",
+                "popen.*\\+.*",
+                "call.*\\+.*", 
+                "run.*\\+.*",
+                "Popen.*\\+.*",
+            ],
+            "finding_type": "Command Injection",
+            "severity": "High",
+            "confidence": "High",
+            "description": "Command constructed using string concatenation, vulnerable to injection",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["command", "injection", "shell"]
+        },
+        
+        // Taint mode rules for command injection data flows
+        {
+            "id": "python-cmd-taint-001", 
+            "name": "Command Injection Taint Flow",
+            "category": "injection",
+            "mode": "taint",
+            "sources": [
+                "request.*",
+                "request\\.args\\.",
+                "request\\.form\\.",
+                "request\\.json\\.",
+                "input\\(",
+                "sys\\.argv",
+                "os\\.environ",
+                "flask\\.request",
+                "django\\.request",
+                "raw_input\\(",
+            ],
+            "sinks": [
+                "os\\.system",
+                "os\\.popen", 
+                "os\\.spawn",
+                "subprocess\\.call",
+                "subprocess\\.run",
+                "subprocess\\.Popen",
+                "subprocess\\.check_output",
+                "subprocess\\.check_call",
+                "exec\\(",
+                "eval\\(",
+            ],
+            "sanitizers": [
+                "shlex\\.quote",
+                "pipes\\.quote",
+                "escape\\(",
+                "sanitize\\(",
+                "validate\\(",
+            ],
+            "finding_type": "Command Injection via Taint Flow",
+            "severity": "Critical",
+            "confidence": "High", 
+            "description": "User input flows directly to command execution without proper sanitization",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["command", "injection", "taint", "shell"]
+        }
+    ]
+} 

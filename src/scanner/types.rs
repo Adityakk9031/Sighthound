@@ -5,28 +5,37 @@ use std::path::PathBuf;
 pub struct Finding {
     pub file: String,
     pub line: usize,
+    pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
     pub function: String,
     pub finding_type: String,
-    pub code: String,
+    pub snippet: String,
     pub severity: String,
+    pub confidence: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<SourceInfo>,
+    pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sink: Option<SinkInfo>,
+    pub source_info: Option<SourceInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sink_info: Option<SinkInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceInfo {
-    pub pattern: String,
-    pub variable: Option<String>,
-    pub operation: String,
+    pub source_type: String,
+    pub location: String,
+    pub context: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SinkInfo {
-    pub pattern: String,
+    pub sink_type: String,
+    pub function_name: String,
+    pub location: String,
     pub variable: Option<String>,
-    pub operation: String,
 }
 
 // Separate structure for taint analysis results

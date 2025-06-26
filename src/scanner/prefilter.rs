@@ -13,8 +13,14 @@ pub struct PreFilter {
 
 impl PreFilter {
     pub fn new(rules: &Rules, language: &str) -> Self {
+        // Check if we have any malware detection rules
+        let is_malicious_scan = rules.rules.iter().any(|rule| {
+            rule.get_category() == "malware" || 
+            rule.get_finding_type().to_lowercase().contains("malware")
+        });
+        
         Self {
-            is_malicious_scan: rules.malware_detection.is_some(),
+            is_malicious_scan,
             language: language.to_string(),
         }
     }

@@ -1,0 +1,251 @@
+{
+    "rules": [
+        // Code injection vulnerabilities
+        {
+            "id": "python-code-001",
+            "name": "Code Injection via eval()",
+            "category": "injection",
+            "mode": "search",
+            "patterns": [
+                "eval\\(",
+            ],
+            "finding_type": "Code Injection",
+            "severity": "Critical",
+            "confidence": "High",
+            "description": "Use of eval() can lead to arbitrary code execution",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["code", "injection", "eval"]
+        },
+        {
+            "id": "python-code-002",
+            "name": "Code Injection via exec()",
+            "category": "injection", 
+            "mode": "search",
+            "patterns": [
+                "exec\\(",
+            ],
+            "finding_type": "Code Injection",
+            "severity": "Critical",
+            "confidence": "High",
+            "description": "Use of exec() can lead to arbitrary code execution",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["code", "injection", "exec"]
+        },
+        {
+            "id": "python-code-003",
+            "name": "Dynamic Import",
+            "category": "injection",
+            "mode": "search",
+            "patterns": [
+                "__import__\\(",
+                "importlib\\.import_module\\(",
+            ],
+            "finding_type": "Dynamic Import",
+            "severity": "Medium",
+            "confidence": "Medium",
+            "description": "Dynamic imports can be dangerous if user input is involved",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["import", "dynamic", "security"]
+        },
+        
+        // Deserialization vulnerabilities
+        {
+            "id": "python-deser-001",
+            "name": "Unsafe Pickle Deserialization",
+            "category": "deserialization",
+            "mode": "search",
+            "patterns": [
+                "pickle\\.loads\\(",
+                "pickle\\.load\\(",
+                "cPickle\\.loads\\(",
+                "cPickle\\.load\\(",
+                "_pickle\\.loads\\(",
+            ],
+            "finding_type": "Unsafe Deserialization", 
+            "severity": "Critical",
+            "confidence": "High",
+            "description": "Pickle deserialization is unsafe with untrusted data",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["pickle", "deserialization", "unsafe"]
+        },
+        {
+            "id": "python-deser-002",
+            "name": "Unsafe YAML Deserialization",
+            "category": "deserialization",
+            "mode": "search",
+            "patterns": [
+                "yaml\\.load\\(",
+                "yaml\\.unsafe_load\\(",
+            ],
+            "finding_type": "Unsafe Deserialization",
+            "severity": "High",
+            "confidence": "High",
+            "description": "YAML load() is unsafe, use safe_load() instead",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["yaml", "deserialization", "unsafe"]
+        },
+        
+        // HTTP security
+        {
+            "id": "python-http-001",
+            "name": "HTTP Request without SSL Verification",
+            "category": "http_security",
+            "mode": "search",
+            "patterns": [
+                "requests\\..*verify=False",
+                "urllib.*verify=False",
+                "ssl\\._create_unverified_context",
+            ],
+            "finding_type": "SSL Verification Disabled",
+            "severity": "Medium",
+            "confidence": "High",
+            "description": "SSL certificate verification is disabled",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["ssl", "verification", "http"]
+        },
+        {
+            "id": "python-http-002",
+            "name": "HTTP URLs in Production",
+            "category": "http_security",
+            "mode": "search",
+            "patterns": [
+                "http://.*",
+                "'http://.*'",
+                "\"http://.*\"",
+            ],
+            "finding_type": "Insecure HTTP URL",
+            "severity": "Low",
+            "confidence": "Medium",
+            "description": "HTTP URLs should be HTTPS in production",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["http", "insecure", "url"]
+        },
+        
+        // Information disclosure
+        {
+            "id": "python-info-001",
+            "name": "Debug Mode Enabled",
+            "category": "information_disclosure",
+            "mode": "search", 
+            "patterns": [
+                "debug\\s*=\\s*True",
+                "DEBUG\\s*=\\s*True",
+                "app\\.debug\\s*=\\s*True",
+            ],
+            "finding_type": "Debug Mode Enabled",
+            "severity": "Medium",
+            "confidence": "High",
+            "description": "Debug mode should be disabled in production",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["debug", "production", "disclosure"]
+        },
+        {
+            "id": "python-info-002",
+            "name": "Exception Information Disclosure",
+            "category": "information_disclosure",
+            "mode": "search",
+            "patterns": [
+                "traceback\\.print_exc\\(",
+                "traceback\\.format_exc\\(",
+                "raise.*Exception\\(.*\\)",
+            ],
+            "finding_type": "Information Disclosure",
+            "severity": "Low",
+            "confidence": "Low",
+            "description": "Exception handling may disclose sensitive information",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["exception", "disclosure", "traceback"]
+        },
+        
+        // Taint flows for code injection
+        {
+            "id": "python-code-taint-001",
+            "name": "Code Injection Taint Flow",
+            "category": "injection",
+            "mode": "taint",
+            "sources": [
+                "request.*",
+                "request\\.args\\.",
+                "request\\.form\\.",
+                "request\\.json\\.",
+                "input\\(",
+                "sys\\.argv",
+                "os\\.environ",
+                "flask\\.request",
+                "django\\.request",
+            ],
+            "sinks": [
+                "eval\\(",
+                "exec\\(",
+                "compile\\(",
+                "__import__\\(",
+                "importlib\\.import_module",
+            ],
+            "finding_type": "Code Injection via Taint Flow",
+            "severity": "Critical",
+            "confidence": "High",
+            "description": "User input flows directly to code execution functions",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["code", "injection", "taint", "execution"]
+        },
+        
+        // Taint flows for deserialization
+        {
+            "id": "python-deser-taint-001",
+            "name": "Unsafe Deserialization Taint Flow",
+            "category": "deserialization",
+            "mode": "taint",
+            "sources": [
+                "request.*",
+                "request\\.data",
+                "request\\.get_data",
+                "input\\(",
+                "sys\\.argv",
+                "open\\(",
+                "file\\.read",
+            ],
+            "sinks": [
+                "pickle\\.loads",
+                "pickle\\.load",
+                "yaml\\.load",
+                "yaml\\.unsafe_load",
+                "json\\.loads",
+                "marshal\\.loads",
+            ],
+            "sanitizers": [
+                "yaml\\.safe_load",
+                "json\\.loads",
+                "validate\\(",
+                "sanitize\\(",
+            ],
+            "finding_type": "Unsafe Deserialization via Taint Flow",
+            "severity": "Critical",
+            "confidence": "High", 
+            "description": "External data flows to unsafe deserialization functions",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["deserialization", "taint", "unsafe", "pickle"]
+        }
+    ]
+} 

@@ -1,0 +1,157 @@
+{
+    "rules": [
+        // Path traversal vulnerabilities
+        {
+            "id": "python-path-001",
+            "name": "Path Traversal via File Operations",
+            "category": "path_traversal",
+            "mode": "search",
+            "patterns": [
+                "open\\(.*\\.\\..*\\)",
+                "open\\(.*\\/\\.\\.\\/.*\\)",
+                "Path\\(.*\\.\\..*\\)",
+                "pathlib.*\\.\\..*",
+            ],
+            "finding_type": "Path Traversal",
+            "severity": "High",
+            "confidence": "Medium",
+            "description": "Potential path traversal vulnerability detected",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["path", "traversal", "file"]
+        },
+        {
+            "id": "python-path-002",
+            "name": "Dynamic File Path Construction",
+            "category": "path_traversal",
+            "mode": "search",
+            "patterns": [
+                "open\\(.*\\+.*\\)",
+                "open\\(.*format.*\\)",
+                "open\\(.*%.*\\)",
+                "Path\\(.*\\+.*\\)",
+                "Path\\(.*format.*\\)",
+            ],
+            "finding_type": "Path Traversal",
+            "severity": "Medium",
+            "confidence": "Medium", 
+            "description": "File path constructed dynamically, verify input validation",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["path", "dynamic", "file"]
+        },
+        
+        // File system security issues
+        {
+            "id": "python-file-001",
+            "name": "Insecure File Permissions",
+            "category": "file_system",
+            "mode": "search",
+            "patterns": [
+                "chmod\\(.*0o777.*\\)",
+                "chmod\\(.*0777.*\\)",
+                "os\\.chmod.*777",
+                "stat\\.S_IRWXO",
+                "stat\\.S_IRWXG.*S_IRWXO",
+            ],
+            "finding_type": "Insecure File Permissions",
+            "severity": "Medium",
+            "confidence": "High",
+            "description": "File permissions set to world-writable or overly permissive",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["file", "permissions", "security"]
+        },
+        {
+            "id": "python-file-002", 
+            "name": "Temporary File Security",
+            "category": "file_system",
+            "mode": "search",
+            "patterns": [
+                "tempfile\\.mktemp\\(",
+                "tempfile\\.NamedTemporaryFile\\(.*delete=False",
+                "open\\(\"/tmp/",
+                "open\\('/tmp/",
+            ],
+            "finding_type": "Insecure Temporary File",
+            "severity": "Medium",
+            "confidence": "Medium",
+            "description": "Insecure temporary file usage detected",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["file", "temporary", "security"]
+        },
+        
+        // File upload vulnerabilities
+        {
+            "id": "python-upload-001",
+            "name": "Unrestricted File Upload",
+            "category": "file_system",
+            "mode": "search",
+            "patterns": [
+                "\\.save\\(.*\\)",
+                "open\\(.*\\, [\"']wb?[\"']\\)",
+                "with open\\(.*\\, [\"']wb?[\"']\\)",
+            ],
+            "finding_type": "File Upload Vulnerability",
+            "severity": "Medium", 
+            "confidence": "Low",
+            "description": "File upload detected - verify file type validation and restrictions",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["upload", "file", "validation"]
+        },
+        
+        // Taint flows for path traversal
+        {
+            "id": "python-path-taint-001",
+            "name": "Path Traversal Taint Flow",
+            "category": "path_traversal",
+            "mode": "taint",
+            "sources": [
+                "request.*",
+                "request\\.args\\.",
+                "request\\.form\\.",
+                "request\\.files\\.",
+                "input\\(",
+                "sys\\.argv",
+                "os\\.environ",
+                "flask\\.request",
+                "django\\.request",
+            ],
+            "sinks": [
+                "open\\(",
+                "Path\\(",
+                "pathlib\\.Path",
+                "os\\.path\\.join",
+                "os\\.listdir",
+                "os\\.walk",
+                "os\\.remove",
+                "os\\.unlink",
+                "shutil\\.copy",
+                "shutil\\.move",
+            ],
+            "sanitizers": [
+                "os\\.path\\.basename",
+                "os\\.path\\.normpath", 
+                "os\\.path\\.abspath",
+                "Path\\.resolve",
+                "secure_filename",
+                "validate_path",
+            ],
+            "finding_type": "Path Traversal via Taint Flow",
+            "severity": "High",
+            "confidence": "High",
+            "description": "User input flows to file system operations without proper path validation",
+            "file_types": {
+                "extensions": [".py"]
+            },
+            "tags": ["path", "traversal", "taint", "file"]
+        }
+    ]
+} 

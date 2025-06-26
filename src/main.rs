@@ -155,17 +155,17 @@ fn print_findings_json(findings: &[Finding]) {
 }
 
 fn print_findings_csv(findings: &[Finding]) {
-    println!("file,line,function,finding_type,code,severity,source_pattern,source_operation,sink_pattern,sink_operation");
+    println!("file,line,function,finding_type,code,severity,confidence,source_type,source_context,sink_type,sink_function");
     for finding in findings {
-        let code = finding.code.replace('"', "\"\"");
-        let source_pattern = finding.source.as_ref().map(|s| s.pattern.as_str()).unwrap_or("");
-        let source_operation = finding.source.as_ref().map(|s| s.operation.as_str()).unwrap_or("");
-        let sink_pattern = finding.sink.as_ref().map(|s| s.pattern.as_str()).unwrap_or("");
-        let sink_operation = finding.sink.as_ref().map(|s| s.operation.as_str()).unwrap_or("");
+        let code = finding.snippet.replace('"', "\"\"");
+        let source_type = finding.source_info.as_ref().map(|s| s.source_type.as_str()).unwrap_or("");
+        let source_context = finding.source_info.as_ref().map(|s| s.context.as_str()).unwrap_or("");
+        let sink_type = finding.sink_info.as_ref().map(|s| s.sink_type.as_str()).unwrap_or("");
+        let sink_function = finding.sink_info.as_ref().map(|s| s.function_name.as_str()).unwrap_or("");
         
-        println!("{},{},{},{},\"{}\",{},{},{},{},{}", 
+        println!("{},{},{},{},\"{}\",{},{},{},{},{},{}", 
                 finding.file, finding.line, finding.function, finding.finding_type, 
-                code, finding.severity, source_pattern, source_operation, sink_pattern, sink_operation);
+                code, finding.severity, finding.confidence, source_type, source_context, sink_type, sink_function);
     }
 }
 
@@ -332,15 +332,12 @@ fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool,
                     line_num);
             
             // Display source and sink information if available
-            if let Some(source_info) = &finding.source {
-                println!("    📍 Source: {} ({})", source_info.pattern, source_info.operation);
-                if let Some(var) = &source_info.variable {
-                    println!("       Variable: {}", var);
-                }
+            if let Some(source_info) = &finding.source_info {
+                println!("    📍 Source: {} ({})", source_info.source_type, source_info.context);
             }
             
-            if let Some(sink_info) = &finding.sink {
-                println!("    🎯 Sink: {} ({})", sink_info.pattern, sink_info.operation);
+            if let Some(sink_info) = &finding.sink_info {
+                println!("    🎯 Sink: {} ({})", sink_info.sink_type, sink_info.function_name);
                 if let Some(var) = &sink_info.variable {
                     println!("       Variable: {}", var);
                 }
@@ -418,25 +415,11 @@ fn main() -> Result<()> {
             _ => return Err(anyhow::anyhow!("For taint analysis, please provide both language and rules path, or use auto-detection")),
         };
         
-        // Check if we have taint flow rules (unified or legacy)
-        let taint_rules_count = {
-            let mut count = 0;
-            
-            // Count unified taint rules
-            if let Some(unified_rules) = &rules.rules {
-                count += unified_rules.iter().filter(|r| r.is_taint_rule()).count();
-            }
-            
-            // Count legacy taint flow rules
-            if let Some(taint_flows) = &rules.taint_flows {
-                count += taint_flows.len();
-            }
-            
-            count
-        };
+        // Check if we have taint flow rules (unified only)
+        let taint_rules_count = rules.rules.iter().filter(|r| r.is_taint_rule()).count();
         
         if taint_rules_count == 0 {
-            return Err(anyhow::anyhow!("No taint flow rules found. Please ensure your rules contain either 'rules' with mode='taint' or 'taint_flows' definitions."));
+            return Err(anyhow::anyhow!("No taint flow rules found. Please ensure your rules contain 'rules' with mode='taint'."));
         }
         
         println!("🔍 Starting Taint Analysis Mode");

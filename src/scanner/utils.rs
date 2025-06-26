@@ -1,4 +1,4 @@
-use crate::rules::Rule;
+use crate::rules::FileTypes;
 use std::path::Path;
 
 /// Check if a file path matches a glob pattern
@@ -56,9 +56,9 @@ pub fn matches_glob_pattern(pattern: &str, file_path: &str) -> bool {
 }
 
 /// Check if a rule applies to a given file path based on file type constraints
-pub fn rule_applies_to_file(rule: &Rule, file_path: &str) -> bool {
+pub fn rule_applies_to_file(file_types: Option<&FileTypes>, file_path: &str) -> bool {
     // If no file types specified, rule applies to all files
-    let Some(file_types) = &rule.file_types else {
+    let Some(file_types) = file_types else {
         return true;
     };
 
@@ -104,7 +104,7 @@ pub fn rule_applies_to_file(rule: &Rule, file_path: &str) -> bool {
 }
 
 /// Helper function to check if file types match (for Path-based version)
-pub fn rule_applies_to_file_path(rule: &Rule, file_path: &Path) -> bool {
+pub fn rule_applies_to_file_path(file_types: Option<&FileTypes>, file_path: &Path) -> bool {
     let file_path_str = file_path.to_string_lossy();
-    rule_applies_to_file(rule, &file_path_str)
+    rule_applies_to_file(file_types, &file_path_str)
 } 

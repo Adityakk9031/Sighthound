@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "mode": "search",
+      "patterns": ["eval\\("],
+      "finding_type": "Code Injection",
+      "severity": "Critical",
+      "confidence": "High",
+      "file_types": {
+        "extensions": [".py"]
+      }
+    }
+  ]
+} 

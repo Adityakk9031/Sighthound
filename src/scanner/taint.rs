@@ -175,60 +175,11 @@ impl TaintAnalyzer {
             // Debug: print node info for troubleshooting
             // println!("DEBUG: Checking node type '{}' with text: '{}'", node.kind(), node_text.trim());
             
-            // Check for taint sources and sinks in both unified and legacy rules
-            
-            // Check unified rules with taint mode
-            if let Some(unified_rules) = &self.rules.rules {
-                for unified_rule in unified_rules {
-                    if unified_rule.is_taint_rule() {
-                        // Check sources
-                        if let Some(source_patterns) = &unified_rule.sources {
-                            for pattern in source_patterns {
-                                if self.matches_taint_pattern(pattern, &node_text) {
-                                    let variable = self.extract_variable_from_node(&node, source, None);
-                                    let taint_source = TaintSource {
-                                        file: filepath.to_string(),
-                                        line: node.start_position().row + 1,
-                                        function: function_name.clone(),
-                                        variable: variable.clone(),
-                                        operation: pattern.clone(),
-                                        code: self.get_line_text(&node, source),
-                                    };
-                                    sources.push(taint_source);
-                                    
-                                    // Track this variable as tainted
-                                    let flow_id = format!("flow_{}", sources.len());
-                                    self.variable_tracker.mark_tainted(variable, flow_id, filepath.to_string(), node.start_position().row + 1, pattern.clone());
-                                }
-                            }
-                        }
-                        
-                        // Check sinks
-                        if let Some(sink_patterns) = &unified_rule.sinks {
-                            for pattern in sink_patterns {
-                                if self.matches_taint_pattern(pattern, &node_text) {
-                                    let variable = self.extract_variable_from_node(&node, source, Some(pattern));
-                                    let taint_sink = TaintSink {
-                                        file: filepath.to_string(),
-                                        line: node.start_position().row + 1,
-                                        function: function_name.clone(),
-                                        variable: variable.clone(),
-                                        operation: pattern.clone(),
-                                        code: self.get_line_text(&node, source),
-                                    };
-                                    sinks.push(taint_sink);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Check legacy taint flow rules
-            if let Some(taint_flows) = &self.rules.taint_flows {
-                for flow_rule in taint_flows {
+            // Check for taint sources and sinks in unified rules with taint mode
+            for unified_rule in &self.rules.rules {
+                if unified_rule.is_taint_rule() {
                     // Check sources
-                    if let Some(source_patterns) = &flow_rule.sources {
+                    if let Some(source_patterns) = &unified_rule.sources {
                         for pattern in source_patterns {
                             if self.matches_taint_pattern(pattern, &node_text) {
                                 let variable = self.extract_variable_from_node(&node, source, None);
@@ -237,20 +188,20 @@ impl TaintAnalyzer {
                                     line: node.start_position().row + 1,
                                     function: function_name.clone(),
                                     variable: variable.clone(),
-                                    operation: pattern.clone(),
+                                    operation: pattern.to_string(),
                                     code: self.get_line_text(&node, source),
                                 };
                                 sources.push(taint_source);
                                 
                                 // Track this variable as tainted
                                 let flow_id = format!("flow_{}", sources.len());
-                                self.variable_tracker.mark_tainted(variable, flow_id, filepath.to_string(), node.start_position().row + 1, pattern.clone());
+                                self.variable_tracker.mark_tainted(variable, flow_id, filepath.to_string(), node.start_position().row + 1, pattern.to_string());
                             }
                         }
                     }
                     
                     // Check sinks
-                    if let Some(sink_patterns) = &flow_rule.sinks {
+                    if let Some(sink_patterns) = &unified_rule.sinks {
                         for pattern in sink_patterns {
                             if self.matches_taint_pattern(pattern, &node_text) {
                                 let variable = self.extract_variable_from_node(&node, source, Some(pattern));
@@ -259,7 +210,7 @@ impl TaintAnalyzer {
                                     line: node.start_position().row + 1,
                                     function: function_name.clone(),
                                     variable: variable.clone(),
-                                    operation: pattern.clone(),
+                                    operation: pattern.to_string(),
                                     code: self.get_line_text(&node, source),
                                 };
                                 sinks.push(taint_sink);
