@@ -1,7 +1,7 @@
 use crate::language::LanguageSupport;
-use crate::rules::{UnifiedRule, Rules, match_pattern, rule_matches_pattern_unified, check_for_injection_pattern, is_literal_node, is_in_protective_context};
+use crate::rules::{UnifiedRule, Rules, match_pattern, rule_matches_pattern_unified, check_for_injection_pattern, is_literal_node};
 use crate::parser::{get_node_text, traverse_calls_only};
-use super::types::Finding;
+use super::types::{Finding, TraceStep};
 use super::utils::rule_applies_to_file;
 use super::conditions::check_ast_conditions;
 
@@ -11,8 +11,7 @@ pub struct ScanningLogic;
 impl ScanningLogic {
     /// Check if rules have any patterns matching the function name (fast pre-filter)
     pub fn has_matching_rules(rules: &Rules, func_name: &str) -> bool {
-        let result = rules.get_search_rules().iter().any(|rule| rule_matches_pattern_unified(rule, func_name));
-        result
+        rules.get_search_rules().iter().any(|rule| rule_matches_pattern_unified(rule, func_name))
     }
 
     /// Get all search mode rules from a Rules struct as a flat vector
@@ -105,52 +104,6 @@ impl ScanningLogic {
         false
     }
 
-    /// Determine if a finding should be reported based on confidence and context
-    pub fn should_report_finding(
-        node: &tree_sitter::Node,
-        source: &[u8],
-        rule: &UnifiedRule,
-    ) -> bool {
-        // Check if the node is in a protective context that reduces vulnerability likelihood
-        if is_in_protective_context(node) {
-            return false;
-        }
-
-        // Check if there are obvious input validation guards
-        if Self::has_obvious_guards(node, source) {
-            return false;
-        }
-
-        // Check for sanitization if the rule specifies sanitizers
-        if let Some(sanitizers) = &rule.sanitizers {
-            if Self::check_for_sanitization(node, source, sanitizers) {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Look for obvious input validation patterns that suggest the code is safe
-    fn has_obvious_guards(node: &tree_sitter::Node, source: &[u8]) -> bool {
-        let node_text = get_node_text(node, source);
-        
-        // Look for common validation patterns
-        let validation_patterns = [
-            "validate", "sanitize", "escape", "clean", "filter",
-            "is_safe", "check", "verify", "assert", "len(",
-            "isinstance", "hasattr", "try:", "except:", "if not"
-        ];
-        
-        for pattern in &validation_patterns {
-            if node_text.contains(pattern) {
-                return true;
-            }
-        }
-        
-        false
-    }
-
     /// Add metadata from rule to finding
     pub fn add_finding_metadata(finding: &mut Finding, rule: &UnifiedRule, _node: &tree_sitter::Node) {
         finding.severity = rule.get_severity();
@@ -182,37 +135,119 @@ impl ScanningLogic {
             description: None,
             source_info: None,
             sink_info: None,
+            traces: None,
             tags: None,
         }
     }
 
-    /// Create a finding with source and sink information for taint analysis
-    pub fn create_finding_with_source_sink(
-        file: &str,
+    /// Detect simple data flow traces by analyzing the current function scope
+    fn detect_simple_traces(
         node: &tree_sitter::Node,
-        function: &str,
-        finding_type: &str,
         source: &[u8],
-        severity: &str,
-        source_info: Option<crate::scanner::types::SourceInfo>,
-        sink_info: Option<crate::scanner::types::SinkInfo>,
-    ) -> Finding {
-        Finding {
-            file: file.to_string(),
-            line: node.start_position().row + 1,
-            column: node.start_position().column + 1,
-            end_line: node.end_position().row + 1,
-            end_column: node.end_position().column + 1,
-            function: function.to_string(),
-            finding_type: finding_type.to_string(),
-            severity: severity.to_string(),
-            confidence: "Medium".to_string(),
-            snippet: get_node_text(node, source),
-            description: None,
-            source_info,
-            sink_info,
-            tags: None,
+        filepath: &str,
+        _language_support: &dyn LanguageSupport,
+    ) -> Vec<TraceStep> {
+        let mut traces = Vec::new();
+        
+        // Find the containing function
+        let mut current = node.parent();
+        while let Some(parent) = current {
+            if parent.kind() == "function_definition" {
+                // Look for variable assignments within this function
+                Self::find_assignments_in_function(&parent, source, filepath, &mut traces);
+                break;
+            }
+            current = parent.parent();
         }
+        
+        traces
+    }
+
+    /// Find variable assignments that could be part of a data flow
+    fn find_assignments_in_function(
+        func_node: &tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        traces: &mut Vec<TraceStep>,
+    ) {
+        let mut cursor = func_node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                let child = cursor.node();
+                
+                // Look for assignment expressions
+                if child.kind() == "assignment" || child.kind() == "expression_statement" {
+                    let assignment_text = get_node_text(&child, source);
+                    
+                    // Simple heuristic: if it contains = and looks like variable assignment
+                    if assignment_text.contains('=') && !assignment_text.contains("==") {
+                        if let Some(var_name) = Self::extract_assigned_variable(&assignment_text) {
+                            traces.push(TraceStep {
+                                file: filepath.to_string(),
+                                line: child.start_position().row + 1,
+                                code: assignment_text.trim().to_string(),
+                                variable: var_name,
+                                operation: "assignment".to_string(),
+                                function: Self::get_function_context(&child, source),
+                            });
+                        }
+                    }
+                }
+                
+                // Recursively search child nodes
+                Self::find_assignments_recursive(&child, source, filepath, traces);
+                
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Recursively find assignments in nested nodes
+    fn find_assignments_recursive(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        traces: &mut Vec<TraceStep>,
+    ) {
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                let child = cursor.node();
+                
+                if child.kind() == "assignment" {
+                    let assignment_text = get_node_text(&child, source);
+                    if let Some(var_name) = Self::extract_assigned_variable(&assignment_text) {
+                        traces.push(TraceStep {
+                            file: filepath.to_string(),
+                            line: child.start_position().row + 1,
+                            code: assignment_text.trim().to_string(),
+                            variable: var_name,
+                            operation: "assignment".to_string(),
+                            function: Self::get_function_context(&child, source),
+                        });
+                    }
+                }
+                
+                Self::find_assignments_recursive(&child, source, filepath, traces);
+                
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Extract the variable name from an assignment expression
+    fn extract_assigned_variable(assignment_text: &str) -> Option<String> {
+        if let Some(equals_pos) = assignment_text.find('=') {
+            let var_part = &assignment_text[..equals_pos];
+            if let Some(var_name) = var_part.trim().split_whitespace().last() {
+                return Some(var_name.to_string());
+            }
+        }
+        None
     }
 
     /// Check a unified rule against a node and return a finding if it matches
@@ -241,18 +276,15 @@ impl ScanningLogic {
             }
         }
 
-        // Special handling for injection patterns
-        let has_injection = if rule.get_category() == "injection" || 
-                              rule.get_finding_type().to_lowercase().contains("injection") {
-            Self::has_injection_pattern(node, source, language_support)
-        } else {
-            false
-        };
+        // Check for injection patterns if this is an injection rule
+        let is_injection_rule = rule.get_category() == "injection" || 
+                               rule.get_finding_type().to_lowercase().contains("injection");
 
-        // Skip if injection pattern expected but not found
-        if (rule.get_category() == "injection" || 
-            rule.get_finding_type().to_lowercase().contains("injection")) && !has_injection {
-            return None;
+        if is_injection_rule {
+            let has_injection = Self::has_injection_pattern(node, source, language_support);
+            if !has_injection {
+                return None;
+            }
         }
 
         // Create and populate the finding
@@ -274,6 +306,12 @@ impl ScanningLogic {
 
         if let Some(sink_info) = Self::detect_sink_pattern(node, source, func_name, &rule.get_finding_type()) {
             finding.sink_info = Some(sink_info);
+        }
+
+        // Detect simple traces for data flow analysis
+        let traces = Self::detect_simple_traces(node, source, filepath, language_support);
+        if !traces.is_empty() {
+            finding.traces = Some(traces);
         }
 
         Some(finding)
@@ -420,27 +458,5 @@ impl ScanningLogic {
         }
         
         None
-    }
-
-    /// Print a summary of loaded rules
-    pub fn print_rules_summary(&self, rules: &Rules) {
-        println!("Rules Summary:");
-        println!("  Total rules: {}", rules.count_rules());
-        println!("  Search rules: {}", rules.get_search_rules().len());
-        println!("  Taint rules: {}", rules.get_taint_rules().len());
-        
-        // Group by category
-        let mut categories = std::collections::HashMap::new();
-        for rule in &rules.rules {
-            let category = rule.get_category();
-            *categories.entry(category).or_insert(0) += 1;
-        }
-        
-        if !categories.is_empty() {
-            println!("  By category:");
-            for (category, count) in categories {
-                println!("    {}: {}", category, count);
-            }
-        }
     }
 } 

@@ -20,6 +20,8 @@ pub struct Finding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sink_info: Option<SinkInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub traces: Option<Vec<TraceStep>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
 }
 
@@ -36,6 +38,16 @@ pub struct SinkInfo {
     pub function_name: String,
     pub location: String,
     pub variable: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceStep {
+    pub file: String,
+    pub line: usize,
+    pub code: String,
+    pub variable: String,
+    pub operation: String,   // "assignment", "parameter", "return", "method_call"
+    pub function: String,    // Containing function name
 }
 
 // Separate structure for taint analysis results

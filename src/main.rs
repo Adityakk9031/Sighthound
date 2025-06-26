@@ -155,7 +155,7 @@ fn print_findings_json(findings: &[Finding]) {
 }
 
 fn print_findings_csv(findings: &[Finding]) {
-    println!("file,line,function,finding_type,code,severity,confidence,source_type,source_context,sink_type,sink_function");
+    println!("file,line,function,finding_type,code,severity,confidence,source_type,source_context,sink_type,sink_function,traces");
     for finding in findings {
         let code = finding.snippet.replace('"', "\"\"");
         let source_type = finding.source_info.as_ref().map(|s| s.source_type.as_str()).unwrap_or("");
@@ -163,9 +163,18 @@ fn print_findings_csv(findings: &[Finding]) {
         let sink_type = finding.sink_info.as_ref().map(|s| s.sink_type.as_str()).unwrap_or("");
         let sink_function = finding.sink_info.as_ref().map(|s| s.function_name.as_str()).unwrap_or("");
         
-        println!("{},{},{},{},\"{}\",{},{},{},{},{},{}", 
+        let traces = if let Some(traces) = &finding.traces {
+            traces.iter()
+                .map(|t| format!("{}:{}:{}", t.line, t.variable, t.operation))
+                .collect::<Vec<_>>()
+                .join(";")
+        } else {
+            String::new()
+        };
+        
+        println!("{},{},{},{},\"{}\",{},{},{},{},{},{},\"{}\"", 
                 finding.file, finding.line, finding.function, finding.finding_type, 
-                code, finding.severity, finding.confidence, source_type, source_context, sink_type, sink_function);
+                code, finding.severity, finding.confidence, source_type, source_context, sink_type, sink_function, traces);
     }
 }
 
@@ -340,6 +349,22 @@ fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool,
                 println!("    🎯 Sink: {} ({})", sink_info.sink_type, sink_info.function_name);
                 if let Some(var) = &sink_info.variable {
                     println!("       Variable: {}", var);
+                }
+            }
+            
+            // Display traces if available
+            if let Some(traces) = &finding.traces {
+                if !traces.is_empty() {
+                    println!("    🔄 Data Flow Traces:");
+                    for (i, trace) in traces.iter().enumerate() {
+                        println!("       {}. {}:{} - {} ({}) in {}", 
+                                i + 1, 
+                                trace.line, 
+                                trace.variable, 
+                                trace.operation, 
+                                trace.code.chars().take(50).collect::<String>(),
+                                trace.function);
+                    }
                 }
             }
             
