@@ -1,119 +1,119 @@
-{
-    "rules": [
+(
+    rules: [
         // Path traversal vulnerabilities
-        {
-            "id": "python-path-001",
-            "name": "Path Traversal via File Operations",
-            "category": "path_traversal",
-            "mode": "search",
-            "patterns": [
+        (
+            id: Some("python-path-001"),
+            name: Some("Path Traversal via File Operations"),
+            category: Some("path_traversal"),
+            mode: "search",
+            patterns: Some([
                 "open\\(.*\\.\\..*\\)",
                 "open\\(.*\\/\\.\\.\\/.*\\)",
                 "Path\\(.*\\.\\..*\\)",
                 "pathlib.*\\.\\..*",
-            ],
-            "finding_type": "Path Traversal",
-            "severity": "High",
-            "confidence": "Medium",
-            "description": "Potential path traversal vulnerability detected",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["path", "traversal", "file"]
-        },
-        {
-            "id": "python-path-002",
-            "name": "Dynamic File Path Construction",
-            "category": "path_traversal",
-            "mode": "search",
-            "patterns": [
+            ]),
+            finding_type: Some("Path Traversal"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            description: Some("Potential path traversal vulnerability detected"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["path", "traversal", "file"])
+        ),
+        (
+            id: Some("python-path-002"),
+            name: Some("Dynamic File Path Construction"),
+            category: Some("path_traversal"),
+            mode: "search",
+            patterns: Some([
                 "open\\(.*\\+.*\\)",
                 "open\\(.*format.*\\)",
                 "open\\(.*%.*\\)",
                 "Path\\(.*\\+.*\\)",
                 "Path\\(.*format.*\\)",
-            ],
-            "finding_type": "Path Traversal",
-            "severity": "Medium",
-            "confidence": "Medium", 
-            "description": "File path constructed dynamically, verify input validation",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["path", "dynamic", "file"]
-        },
+            ]),
+            finding_type: Some("Path Traversal"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            description: Some("File path constructed dynamically, verify input validation"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["path", "dynamic", "file"])
+        ),
         
         // File system security issues
-        {
-            "id": "python-file-001",
-            "name": "Insecure File Permissions",
-            "category": "file_system",
-            "mode": "search",
-            "patterns": [
+        (
+            id: Some("python-file-001"),
+            name: Some("Insecure File Permissions"),
+            category: Some("file_system"),
+            mode: "search",
+            patterns: Some([
                 "chmod\\(.*0o777.*\\)",
                 "chmod\\(.*0777.*\\)",
                 "os\\.chmod.*777",
                 "stat\\.S_IRWXO",
                 "stat\\.S_IRWXG.*S_IRWXO",
-            ],
-            "finding_type": "Insecure File Permissions",
-            "severity": "Medium",
-            "confidence": "High",
-            "description": "File permissions set to world-writable or overly permissive",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["file", "permissions", "security"]
-        },
-        {
-            "id": "python-file-002", 
-            "name": "Temporary File Security",
-            "category": "file_system",
-            "mode": "search",
-            "patterns": [
+            ]),
+            finding_type: Some("Insecure File Permissions"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            description: Some("File permissions set to world-writable or overly permissive"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["file", "permissions", "security"])
+        ),
+        (
+            id: Some("python-file-002"),
+            name: Some("Temporary File Security"),
+            category: Some("file_system"),
+            mode: "search",
+            patterns: Some([
                 "tempfile\\.mktemp\\(",
                 "tempfile\\.NamedTemporaryFile\\(.*delete=False",
                 "open\\(\"/tmp/",
                 "open\\('/tmp/",
-            ],
-            "finding_type": "Insecure Temporary File",
-            "severity": "Medium",
-            "confidence": "Medium",
-            "description": "Insecure temporary file usage detected",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["file", "temporary", "security"]
-        },
+            ]),
+            finding_type: Some("Insecure Temporary File"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            description: Some("Insecure temporary file usage detected"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["file", "temporary", "security"])
+        ),
         
         // File upload vulnerabilities
-        {
-            "id": "python-upload-001",
-            "name": "Unrestricted File Upload",
-            "category": "file_system",
-            "mode": "search",
-            "patterns": [
+        (
+            id: Some("python-upload-001"),
+            name: Some("Unrestricted File Upload"),
+            category: Some("file_system"),
+            mode: "search",
+            patterns: Some([
                 "\\.save\\(.*\\)",
                 "open\\(.*\\, [\"']wb?[\"']\\)",
                 "with open\\(.*\\, [\"']wb?[\"']\\)",
-            ],
-            "finding_type": "File Upload Vulnerability",
-            "severity": "Medium", 
-            "confidence": "Low",
-            "description": "File upload detected - verify file type validation and restrictions",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["upload", "file", "validation"]
-        },
+            ]),
+            finding_type: Some("File Upload Vulnerability"),
+            severity: Some("Medium"),
+            confidence: Some("Low"),
+            description: Some("File upload detected - verify file type validation and restrictions"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["upload", "file", "validation"])
+        ),
         
         // Taint flows for path traversal
-        {
-            "id": "python-path-taint-001",
-            "name": "Path Traversal Taint Flow",
-            "category": "path_traversal",
-            "mode": "taint",
-            "sources": [
+        (
+            id: Some("python-path-taint-001"),
+            name: Some("Path Traversal Taint Flow"),
+            category: Some("path_traversal"),
+            mode: "taint",
+            sources: Some([
                 "request.*",
                 "request\\.args\\.",
                 "request\\.form\\.",
@@ -123,8 +123,8 @@
                 "os\\.environ",
                 "flask\\.request",
                 "django\\.request",
-            ],
-            "sinks": [
+            ]),
+            sinks: Some([
                 "open\\(",
                 "Path\\(",
                 "pathlib\\.Path",
@@ -135,23 +135,23 @@
                 "os\\.unlink",
                 "shutil\\.copy",
                 "shutil\\.move",
-            ],
-            "sanitizers": [
+            ]),
+            sanitizers: Some([
                 "os\\.path\\.basename",
-                "os\\.path\\.normpath", 
+                "os\\.path\\.normpath",
                 "os\\.path\\.abspath",
                 "Path\\.resolve",
                 "secure_filename",
                 "validate_path",
-            ],
-            "finding_type": "Path Traversal via Taint Flow",
-            "severity": "High",
-            "confidence": "High",
-            "description": "User input flows to file system operations without proper path validation",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["path", "traversal", "taint", "file"]
-        }
+            ]),
+            finding_type: Some("Path Traversal via Taint Flow"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            description: Some("User input flows to file system operations without proper path validation"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["path", "traversal", "taint", "file"])
+        )
     ]
-} 
+) 

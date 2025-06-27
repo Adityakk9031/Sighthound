@@ -1,9 +1,0 @@
-(
-    rules: [
-        (
-            mode: "search",
-            finding_type: Some("Code Injection"),
-            patterns: Some(["eval\\("]),
-        )
-    ]
-) 

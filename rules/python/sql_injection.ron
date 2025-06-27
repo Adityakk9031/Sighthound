@@ -3,15 +3,15 @@
         (
             id: Some("python-sql-injection-001"),
             name: Some("SQL Injection via String Formatting"),
-            category: Some("injection"),
+            category: Some("database"),
             mode: "search",
             patterns: Some([
                 "*cursor.execute*%*",
-                "*execute*%*",
-                "*\"*%*\"*%*",
-                "*'*%*'*%*"
+                "*connection.execute*%*",
+                "*db.execute*%*",
+                "*session.execute*%*"
             ]),
-            finding_type: Some("SQL Injection"),
+            finding_type: Some("SQL String Formatting"),
             severity: Some("Critical"),
             confidence: Some("High"),
             description: Some("SQL query constructed using string formatting, which is vulnerable to SQL injection attacks"),
@@ -23,17 +23,15 @@
         (
             id: Some("python-sql-injection-002"),
             name: Some("SQL Injection via String Concatenation"),
-            category: Some("injection"),
+            category: Some("database"),
             mode: "search",
             patterns: Some([
-                "*cursor.execute*+*",
-                "*execute*+*",
-                "*SELECT*+*",
-                "*INSERT*+*",
-                "*UPDATE*+*",
-                "*DELETE*+*"
+                "*cursor.execute(*+*",
+                "*connection.execute(*+*",
+                "*db.execute(*+*",
+                "*session.execute(*+*"
             ]),
-            finding_type: Some("SQL Injection"),
+            finding_type: Some("SQL String Concatenation"),
             severity: Some("Critical"),
             confidence: Some("High"),
             description: Some("SQL query constructed using string concatenation, which is vulnerable to SQL injection attacks"),
@@ -43,20 +41,20 @@
             tags: Some(["sql", "injection", "database", "critical"])
         ),
         (
-            id: Some("python-sql-execution-general"),
-            name: Some("SQL Execution"),
+            id: Some("python-sql-execution-database"),
+            name: Some("Database SQL Execution"),
             category: Some("database"),
             mode: "search",
             patterns: Some([
-                "*cursor.execute*",
-                "*connection.execute*",
-                "*db.execute*",
-                "*session.execute*"
+                "*cursor.execute(*",
+                "*connection.execute(*",
+                "*db.execute(*",
+                "*session.execute(*"
             ]),
             finding_type: Some("SQL Execution"),
             severity: Some("Medium"),
             confidence: Some("Medium"),
-            description: Some("SQL execution detected - ensure parameterized queries are used to prevent injection"),
+            description: Some("Database SQL execution detected - ensure parameterized queries are used to prevent injection"),
             file_types: Some((
                 extensions: Some([".py"])
             )),
@@ -65,14 +63,11 @@
         (
             id: Some("python-sql-dangerous-keywords"),
             name: Some("Dangerous SQL Keywords"),
-            category: Some("injection"),
+            category: Some("database"),
             mode: "search",
             patterns: Some([
                 "*DROP TABLE*",
                 "*DELETE FROM*",
-                "*TRUNCATE*",
-                "*ALTER TABLE*",
-                "*CREATE TABLE*",
                 "*UNION SELECT*",
                 "*; DROP*",
                 "*; DELETE*"

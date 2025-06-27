@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
@@ -614,8 +614,6 @@ fn main() -> Result<()> {
             
             println!();
             
-            use rayon::prelude::*;
-
             // Convert to Vec to own data
             let lang_jobs: Vec<(String, Vec<PathBuf>)> = files_by_language.into_iter().collect();
 
@@ -624,58 +622,67 @@ fn main() -> Result<()> {
                 let bar_clone = bar.clone();
                 let proc_clone = Arc::clone(&processed_files);
                 let findings_clone = Arc::clone(&total_findings);
-                Some(std::thread::spawn(move || {
+                let should_stop = Arc::new(AtomicBool::new(false));
+                let stop_clone = Arc::clone(&should_stop);
+                
+                let handle = Some(std::thread::spawn(move || {
                     use std::time::Duration;
-                    loop {
+                    while !stop_clone.load(Ordering::Relaxed) {
                         let val = proc_clone.load(Ordering::Relaxed) as u64;
                         bar_clone.set_position(val);
                         let vulns = findings_clone.load(Ordering::Relaxed);
                         bar_clone.set_message(format!("| {} vulns", vulns));
-                        if val >= bar_clone.length().unwrap_or(0) { break; }
                         std::thread::sleep(Duration::from_millis(100));
                     }
-                }))
-            } else { None };
+                }));
+                
+                (handle, Some(should_stop))
+            } else { (None, None) };
+            
+            let (progress_thread, stop_signal) = progress_handle;
 
             let total_rules_loaded = Arc::new(AtomicUsize::new(0));
-            let all_findings: Vec<Finding> = lang_jobs
-                .par_iter()
-                .flat_map(|(language, files)| {
-                    let rules_dir = format!("rules/{}", language);
-                    match Rules::load_from_directory(&rules_dir) {
-                        Ok(rules) => {
-                            let rule_count = ScanningLogic::count_total_rules(&rules);
-                            total_rules_loaded.fetch_add(rule_count, Ordering::Relaxed);
-                            
-                            if let Some(ref bar) = file_progress {
-                                bar.set_message(format!("| scanning {} ({}/{} files)", language, files.len(), total_files));
-                            }
-                            
-                            let scanner = VulnerabilityScanner::new(&language, rules).expect("scanner");
-                            
-                            match scanner.find_vulnerabilities_parallel(&cli.root_dir, &language, false) {
-                                Ok(fnds) => {
-                                    processed_files.fetch_add(files.len(), Ordering::Relaxed);
-                                    if !fnds.is_empty() {
-                                        total_findings.fetch_add(fnds.len(), Ordering::Relaxed);
-                                    }
-                                    fnds
-                                }
-                                Err(e) => {
-                                    eprintln!("⚠️  Failed to load rules for {}: {}", language, e);
-                                    Vec::new()
-                                }
-                            }
+            let mut all_findings = Vec::new();
+            
+            // Process languages sequentially to avoid nested parallelism deadlocks
+            for (language, files) in lang_jobs {
+                let rules_dir = format!("rules/{}", language);
+                match Rules::load_from_directory(&rules_dir) {
+                    Ok(rules) => {
+                        let rule_count = ScanningLogic::count_total_rules(&rules);
+                        total_rules_loaded.fetch_add(rule_count, Ordering::Relaxed);
+                        
+                        if let Some(ref bar) = file_progress {
+                            bar.set_message(format!("| scanning {} ({}/{} files)", language, files.len(), total_files));
                         }
-                        Err(e) => {
-                            eprintln!("⚠️  Failed to load rules for {}: {}", language, e);
-                            Vec::new()
+                        
+                        let scanner = VulnerabilityScanner::new(&language, rules).expect("scanner");
+                        
+                        match scanner.find_vulnerabilities_parallel(&cli.root_dir, &language, false) {
+                            Ok(fnds) => {
+                                processed_files.fetch_add(files.len(), Ordering::Relaxed);
+                                if !fnds.is_empty() {
+                                    total_findings.fetch_add(fnds.len(), Ordering::Relaxed);
+                                }
+                                all_findings.extend(fnds);
+                            }
+                            Err(e) => {
+                                eprintln!("⚠️  Failed to load rules for {}: {}", language, e);
+                            }
                         }
                     }
-                })
-                .collect();
+                    Err(e) => {
+                        eprintln!("⚠️  Failed to load rules for {}: {}", language, e);
+                    }
+                }
+            }
 
-            if let Some(handle) = progress_handle { let _ = handle.join(); }
+            if let Some(handle) = progress_thread { 
+                if let Some(stop) = stop_signal {
+                    stop.store(true, Ordering::Relaxed);
+                }
+                let _ = handle.join(); 
+            }
             if let Some(ref bar) = file_progress { bar.finish_with_message("Scan complete"); }
             
             println!();

@@ -1,172 +1,172 @@
-{
-    "rules": [
+(
+    rules: [
         // Weak cryptographic algorithms
-        {
-            "id": "python-crypto-001",
-            "name": "Weak Hash Algorithm MD5",
-            "category": "cryptography",
-            "mode": "search",
-            "patterns": [
+        (
+            id: Some("python-crypto-001"),
+            name: Some("Weak Hash Algorithm MD5"),
+            category: Some("cryptography"),
+            mode: "search",
+            patterns: Some([
                 "hashlib\\.md5\\(",
                 "Crypto\\.Hash\\.MD5",
                 "md5\\.new\\(",
                 "md5\\.md5\\(",
-            ],
-            "finding_type": "Weak Cryptography",
-            "severity": "Medium",
-            "confidence": "High",
-            "description": "MD5 is cryptographically broken and should not be used for security purposes",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["crypto", "hash", "md5", "weak"]
-        },
-        {
-            "id": "python-crypto-002", 
-            "name": "Weak Hash Algorithm SHA1",
-            "category": "cryptography",
-            "mode": "search",
-            "patterns": [
+            ]),
+            finding_type: Some("Weak Cryptography"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            description: Some("MD5 is cryptographically broken and should not be used for security purposes"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["crypto", "hash", "md5", "weak"])
+        ),
+        (
+            id: Some("python-crypto-002"),
+            name: Some("Weak Hash Algorithm SHA1"),
+            category: Some("cryptography"),
+            mode: "search",
+            patterns: Some([
                 "hashlib\\.sha1\\(",
                 "Crypto\\.Hash\\.SHA1",
                 "sha\\.new\\(",
                 "sha1\\.sha1\\(",
-            ],
-            "finding_type": "Weak Cryptography",
-            "severity": "Medium",
-            "confidence": "High",
-            "description": "SHA1 is cryptographically weak and should be replaced with SHA-256 or higher",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["crypto", "hash", "sha1", "weak"]
-        },
-        {
-            "id": "python-crypto-003",
-            "name": "Weak Encryption Algorithm DES",
-            "category": "cryptography",
-            "mode": "search", 
-            "patterns": [
+            ]),
+            finding_type: Some("Weak Cryptography"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            description: Some("SHA1 is cryptographically weak and should be replaced with SHA-256 or higher"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["crypto", "hash", "sha1", "weak"])
+        ),
+        (
+            id: Some("python-crypto-003"),
+            name: Some("Weak Encryption Algorithm DES"),
+            category: Some("cryptography"),
+            mode: "search",
+            patterns: Some([
                 "Crypto\\.Cipher\\.DES",
                 "DES\\.new\\(",
                 "des\\.DES\\(",
-            ],
-            "finding_type": "Weak Cryptography",
-            "severity": "High",
-            "confidence": "High",
-            "description": "DES encryption is obsolete and easily broken",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["crypto", "encryption", "des", "weak"]
-        },
-        {
-            "id": "python-crypto-004",
-            "name": "Weak Encryption Algorithm RC4",
-            "category": "cryptography", 
-            "mode": "search",
-            "patterns": [
+            ]),
+            finding_type: Some("Weak Cryptography"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            description: Some("DES encryption is obsolete and easily broken"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["crypto", "encryption", "des", "weak"])
+        ),
+        (
+            id: Some("python-crypto-004"),
+            name: Some("Weak Encryption Algorithm RC4"),
+            category: Some("cryptography"),
+            mode: "search",
+            patterns: Some([
                 "Crypto\\.Cipher\\.ARC4",
                 "ARC4\\.new\\(",
                 "RC4\\.new\\(",
-            ],
-            "finding_type": "Weak Cryptography",
-            "severity": "High",
-            "confidence": "High",
-            "description": "RC4 stream cipher has known vulnerabilities and should not be used",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["crypto", "encryption", "rc4", "weak"]
-        },
-        {
-            "id": "python-crypto-005",
-            "name": "Hardcoded Cryptographic Key",
-            "category": "cryptography",
-            "mode": "search",
-            "patterns": [
+            ]),
+            finding_type: Some("Weak Cryptography"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            description: Some("RC4 stream cipher has known vulnerabilities and should not be used"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["crypto", "encryption", "rc4", "weak"])
+        ),
+        (
+            id: Some("python-crypto-005"),
+            name: Some("Hardcoded Cryptographic Key"),
+            category: Some("cryptography"),
+            mode: "search",
+            patterns: Some([
                 "key\\s*=\\s*[\"'].*[\"']",
                 "password\\s*=\\s*[\"'].*[\"']",
                 "secret\\s*=\\s*[\"'].*[\"']",
                 "token\\s*=\\s*[\"'].*[\"']",
-            ],
-            "finding_type": "Hardcoded Cryptographic Material",
-            "severity": "High",
-            "confidence": "Medium",
-            "description": "Hardcoded cryptographic keys or secrets detected",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["crypto", "hardcoded", "key", "secret"]
-        },
-        {
-            "id": "python-crypto-006",
-            "name": "Weak Random Number Generation",
-            "category": "cryptography",
-            "mode": "search",
-            "patterns": [
+            ]),
+            finding_type: Some("Hardcoded Cryptographic Material"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            description: Some("Hardcoded cryptographic keys or secrets detected"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["crypto", "hardcoded", "key", "secret"])
+        ),
+        (
+            id: Some("python-crypto-006"),
+            name: Some("Weak Random Number Generation"),
+            category: Some("cryptography"),
+            mode: "search",
+            patterns: Some([
                 "random\\.random\\(",
                 "random\\.randint\\(",
                 "random\\.choice\\(",
                 "random\\.shuffle\\(",
-            ],
-            "finding_type": "Weak Random Number Generation",
-            "severity": "Medium", 
-            "confidence": "Medium",
-            "description": "Standard random module is not cryptographically secure, use secrets module instead",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["crypto", "random", "weak", "prng"]
-        },
-        {
-            "id": "python-crypto-007",
-            "name": "ECB Mode Encryption",
-            "category": "cryptography",
-            "mode": "search",
-            "patterns": [
+            ]),
+            finding_type: Some("Weak Random Number Generation"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            description: Some("Standard random module is not cryptographically secure, use secrets module instead"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["crypto", "random", "weak", "prng"])
+        ),
+        (
+            id: Some("python-crypto-007"),
+            name: Some("ECB Mode Encryption"),
+            category: Some("cryptography"),
+            mode: "search",
+            patterns: Some([
                 "MODE_ECB",
                 "\\.ECB",
                 "mode.*ECB",
-            ],
-            "finding_type": "Weak Cryptography",
-            "severity": "Medium",
-            "confidence": "High", 
-            "description": "ECB mode encryption is insecure and reveals patterns in plaintext",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["crypto", "encryption", "ecb", "mode"]
-        },
+            ]),
+            finding_type: Some("Weak Cryptography"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            description: Some("ECB mode encryption is insecure and reveals patterns in plaintext"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["crypto", "encryption", "ecb", "mode"])
+        ),
         
         // Taint mode for cryptographic material flows
-        {
-            "id": "python-crypto-taint-001",
-            "name": "Hardcoded Key Taint Flow",
-            "category": "cryptography",
-            "mode": "taint",
-            "sources": [
+        (
+            id: Some("python-crypto-taint-001"),
+            name: Some("Hardcoded Key Taint Flow"),
+            category: Some("cryptography"),
+            mode: "taint",
+            sources: Some([
                 "\".*\"",
                 "'.*'",
                 "b\".*\"",
                 "b'.*'",
-            ],
-            "sinks": [
+            ]),
+            sinks: Some([
                 "\\.new\\(",
                 "\\.encrypt\\(",
                 "\\.decrypt\\(",
                 "key\\s*=",
                 "password\\s*=",
                 "secret\\s*=",
-            ],
-            "finding_type": "Hardcoded Cryptographic Material in Data Flow",
-            "severity": "High",
-            "confidence": "Medium",
-            "description": "Hardcoded string flows to cryptographic operations",
-            "file_types": {
-                "extensions": [".py"]
-            },
-            "tags": ["crypto", "taint", "hardcoded", "key"]
-        }
+            ]),
+            finding_type: Some("Hardcoded Cryptographic Material in Data Flow"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            description: Some("Hardcoded string flows to cryptographic operations"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["crypto", "taint", "hardcoded", "key"])
+        )
     ]
-} 
+) 
