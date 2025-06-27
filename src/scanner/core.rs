@@ -3,15 +3,19 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use walkdir::WalkDir;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
 use std::cell::RefCell;
 use crate::parser::LanguageParser;
 use memmap2::Mmap;
 use std::fs::File;
 use std::time::Duration;
 use std::thread::JoinHandle;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style, ThemeSet};
+use syntect::parsing::SyntaxSet;
+use std::fs;
 
 use crate::rules::Rules;
 use super::types::Finding;
@@ -234,4 +238,235 @@ pub fn print_summary(findings: &[Finding], duration: std::time::Duration) {
     // Print total
     println!("\n\x1b[1;36mTotal Findings: \x1b[1;33m{}\x1b[0m", findings.len());
     println!("\x1b[1;36mScan Time: \x1b[1;33m{:.2?}\x1b[0m", duration);
+}
+
+/// Progress bar management for vulnerability scanning
+pub struct ProgressManager {
+    bar: ProgressBar,
+    should_stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl ProgressManager {
+    /// Create a new progress manager
+    pub fn new(total: usize) -> Self {
+        let bar = ProgressBar::new(total as u64);
+        if let Ok(style) = ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files {msg}") {
+            bar.set_style(style.progress_chars("#>-"));
+        }
+        bar.set_draw_target(ProgressDrawTarget::stderr());
+        
+        Self {
+            bar,
+            should_stop: Arc::new(AtomicBool::new(false)),
+            handle: None,
+        }
+    }
+    
+    /// Start tracking progress with counters
+    pub fn start_tracking(&mut self, processed: Arc<AtomicUsize>, findings: Arc<AtomicUsize>) {
+        let bar_clone = self.bar.clone();
+        let stop_clone = Arc::clone(&self.should_stop);
+        
+        self.handle = Some(std::thread::spawn(move || {
+            while !stop_clone.load(Ordering::Relaxed) {
+                let val = processed.load(Ordering::Relaxed) as u64;
+                bar_clone.set_position(val);
+                let vulns = findings.load(Ordering::Relaxed);
+                bar_clone.set_message(format!("| {} vulns", vulns));
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }));
+    }
+    
+    /// Update progress bar message
+    pub fn set_message(&self, message: String) {
+        self.bar.set_message(message);
+    }
+    
+    /// Stop progress tracking
+    pub fn stop(&mut self) {
+        self.should_stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        self.bar.finish_with_message("Scan complete");
+    }
+}
+
+/// Print findings in JSON format
+pub fn print_findings_json(findings: &[Finding]) {
+    match serde_json::to_string_pretty(findings) {
+        Ok(json) => println!("{}", json),
+        Err(e) => eprintln!("Error serializing findings to JSON: {}", e),
+    }
+}
+
+/// Print findings in CSV format
+pub fn print_findings_csv(findings: &[Finding]) {
+    println!("file,line,function,finding_type,code,severity,confidence,source_type,source_context,sink_type,sink_function,traces");
+    for finding in findings {
+        let code = finding.snippet.replace('"', "\"\"");
+        let source_type = finding.source_info.as_ref().map(|s| s.source_type.as_str()).unwrap_or("");
+        let source_context = finding.source_info.as_ref().map(|s| s.context.as_str()).unwrap_or("");
+        let sink_type = finding.sink_info.as_ref().map(|s| s.sink_type.as_str()).unwrap_or("");
+        let sink_function = finding.sink_info.as_ref().map(|s| s.function_name.as_str()).unwrap_or("");
+        
+        let traces = if let Some(traces) = &finding.traces {
+            traces.iter()
+                .map(|t| format!("{}:{}:{}", t.line, t.variable, t.operation))
+                .collect::<Vec<_>>()
+                .join(";")
+        } else {
+            String::new()
+        };
+        
+        println!("{},{},{},{},\"{}\",{},{},{},{},{},{},\"{}\"", 
+                finding.file, finding.line, finding.function, finding.finding_type, 
+                code, finding.severity, finding.confidence, source_type, source_context, sink_type, sink_function, traces);
+    }
+}
+
+/// Detect syntax for syntax highlighting
+fn detect_syntax(file_path: &str) -> &'static str {
+    match std::path::Path::new(file_path).extension().and_then(|e| e.to_str()) {
+        Some("py") => "Python",
+        Some("js") | Some("mjs") => "JavaScript",
+        Some("ts") | Some("tsx") => "TypeScript",
+        Some("rs") => "Rust",
+        Some("java") => "Java",
+        Some("html") => "HTML",
+        Some("css") => "CSS",
+        Some("json") => "JSON",
+        Some("md") => "Markdown",
+        Some("sh") => "Shell",
+        Some("go") => "Go",
+        Some("php") => "PHP",
+        Some("rb") => "Ruby",
+        Some("swift") => "Swift",
+        Some("kt") => "Kotlin",
+        Some("scala") => "Scala",
+        Some("c") => "C",
+        Some("cpp") | Some("cc") | Some("cxx") | Some("hpp") => "C++",
+        Some("cs") => "C#",
+        Some("sql") => "SQL",
+        _ => "Plain Text",
+    }
+}
+
+/// Print findings in text format with syntax highlighting
+pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool, duration: std::time::Duration) {
+    if !summary_only {
+        // Initialize syntax highlighting
+        let ps = SyntaxSet::load_defaults_newlines();
+        let ts = ThemeSet::load_defaults();
+        let theme = &ts.themes["base16-ocean.dark"];
+
+        // Pre-sort findings by file and severity for better grouping
+        let mut sorted_findings: Vec<_> = findings.iter().collect();
+        sorted_findings.sort_by(|a, b| {
+            a.file.cmp(&b.file)
+                .then(a.severity.cmp(&b.severity))
+                .then(a.line.cmp(&b.line))
+        });
+
+        // Group findings by file
+        let mut current_file = None;
+        let mut file_contents: String;
+        let mut lines = Vec::new();
+        let mut syntax = None;
+
+        for finding in sorted_findings {
+            // Only read file when it changes
+            if current_file != Some(&finding.file) {
+                current_file = Some(&finding.file);
+                file_contents = match fs::read_to_string(&finding.file) {
+                    Ok(contents) => contents,
+                    Err(_) => continue,
+                };
+                lines = file_contents.lines().collect();
+                
+                // Set up syntax highlighting for the new file
+                let syntax_name = detect_syntax(&finding.file);
+                syntax = ps.find_syntax_by_name(syntax_name);
+                
+                println!("\n\x1b[1;34m{}\x1b[0m", finding.file);
+            }
+
+            let severity_color = match finding.severity.to_lowercase().as_str() {
+                "critical" => "\x1b[31m", // Red
+                "high" => "\x1b[31;1m",   // Bright red
+                "medium" => "\x1b[33m",   // Yellow
+                "low" => "\x1b[32m",      // Green
+                _ => "\x1b[0m",           // Default
+            };
+
+            let line_num = finding.line;
+            let start_line = line_num.saturating_sub(3);
+            let end_line = (line_num + 3).min(lines.len());
+
+            println!("");
+            println!("    {}{}●\x1b[0m {} on line {}", 
+                    severity_color, 
+                    severity_color, 
+                    finding.finding_type, 
+                    line_num);
+            
+            // Display source and sink information if available
+            if let Some(source_info) = &finding.source_info {
+                println!("    📍 Source: {} ({})", source_info.source_type, source_info.context);
+            }
+            
+            if let Some(sink_info) = &finding.sink_info {
+                println!("    🎯 Sink: {} ({})", sink_info.sink_type, sink_info.function_name);
+                if let Some(var) = &sink_info.variable {
+                    println!("       Variable: {}", var);
+                }
+            }
+            
+            // Display traces if available
+            if let Some(traces) = &finding.traces {
+                if !traces.is_empty() {
+                    println!("    🔄 Data Flow Traces:");
+                    for (i, trace) in traces.iter().enumerate() {
+                        println!("       {}. {}:{} - {} ({}) in {}", 
+                                i + 1, 
+                                trace.line, 
+                                trace.variable, 
+                                trace.operation, 
+                                trace.code.chars().take(50).collect::<String>(),
+                                trace.function);
+                    }
+                }
+            }
+            
+            println!();
+
+            // Print surrounding context with syntax highlighting
+            if let Some(syntax) = syntax {
+                let mut h = HighlightLines::new(syntax, theme);
+                for i in start_line..end_line {
+                    let line = lines[i];
+                    let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap_or_default();
+                    let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
+                    print!("    {}{:4} | ", prefix, i + 1);
+                    
+                    for (style, text) in ranges {
+                        let fg = style.foreground;
+                        print!("\x1b[38;2;{};{};{}m{}\x1b[0m",
+                            fg.r, fg.g, fg.b, text);
+                    }
+                    println!();
+                }
+            } else {
+                // Fallback to plain text if syntax highlighting fails
+                for i in start_line..end_line {
+                    let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
+                    println!("    {}{:4} | {}", prefix, i + 1, lines[i]);
+                }
+            }
+            println!();
+        }
+    }
+    print_summary(findings, duration);
 }

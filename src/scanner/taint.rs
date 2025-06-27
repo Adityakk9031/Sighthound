@@ -672,4 +672,112 @@ impl VariableTracker {
         // Simplified implementation - just track that variable exists
         self.tainted_vars.insert(variable, TaintInfo {});
     }
+}
+
+/// Print taint analysis results in JSON format
+pub fn print_taint_analysis_json(result: &TaintAnalysisResult) {
+    match serde_json::to_string_pretty(result) {
+        Ok(json) => println!("{}", json),
+        Err(e) => eprintln!("Error serializing taint analysis to JSON: {}", e),
+    }
+}
+
+/// Merge multiple taint analysis results into one
+pub fn merge_taint_results(results: Vec<TaintAnalysisResult>) -> TaintAnalysisResult {
+    if results.is_empty() {
+        return TaintAnalysisResult {
+            flows: Vec::new(),
+            summary: TaintSummary {
+                total_flows: 0,
+                unsanitized_flows: 0,
+                sanitized_flows: 0,
+                files_analyzed: 0,
+                functions_analyzed: 0,
+            },
+        };
+    }
+    
+    let mut all_flows = Vec::new();
+    let mut total_files = 0;
+    let mut total_functions = 0;
+    
+    for result in results {
+        all_flows.extend(result.flows);
+        total_files += result.summary.files_analyzed;
+        total_functions += result.summary.functions_analyzed;
+    }
+    
+    let unsanitized_flows = all_flows.iter().filter(|f| !f.is_sanitized).count();
+    let sanitized_flows = all_flows.iter().filter(|f| f.is_sanitized).count();
+    
+    TaintAnalysisResult {
+        flows: all_flows,
+        summary: TaintSummary {
+            total_flows: unsanitized_flows + sanitized_flows,
+            unsanitized_flows,
+            sanitized_flows,
+            files_analyzed: total_files,
+            functions_analyzed: total_functions,
+        },
+    }
+}
+
+/// Print taint analysis results in text format
+pub fn print_taint_analysis_text(result: &TaintAnalysisResult, duration: std::time::Duration) {
+    println!("\n🔍 Taint Analysis Results");
+    println!("========================");
+    
+    if result.flows.is_empty() {
+        println!("✅ No taint flows detected");
+    } else {
+        for flow in &result.flows {
+            let status_icon = if flow.is_sanitized { "🟡" } else { "🔴" };
+            let status = if flow.is_sanitized { "SANITIZED" } else { "VULNERABLE" };
+            
+            println!("\n{} {} Flow: {}", status_icon, status, flow.flow_id);
+            if let Some(name) = &flow.flow_name {
+                println!("   Flow: {}", name);
+            }
+            println!("   Severity: {} | Confidence: {}", flow.severity, flow.confidence);
+            
+            println!("\n   📍 Source:");
+            println!("      File: {}:{}", flow.source.file, flow.source.line);
+            println!("      Function: {}", flow.source.function);
+            println!("      Variable: {}", flow.source.variable);
+            println!("      Operation: {}", flow.source.operation);
+            println!("      Code: {}", flow.source.code.trim());
+            
+            if !flow.traces.is_empty() {
+                println!("\n   🔄 Traces:");
+                for trace in &flow.traces {
+                    println!("      {}:{} - {} in {} ({})", 
+                            trace.file, trace.line, trace.variable, 
+                            trace.function, trace.operation);
+                }
+            }
+            
+            if !flow.sanitization_points.is_empty() {
+                println!("\n   🛡️  Sanitization:");
+                for sanitizer in &flow.sanitization_points {
+                    println!("      {}:{} - {}", 
+                            sanitizer.file, sanitizer.line, sanitizer.code.trim());
+                }
+            }
+            
+            println!("\n   🎯 Sink:");
+            println!("      File: {}:{}", flow.sink.file, flow.sink.line);
+            println!("      Function: {}", flow.sink.function);
+            println!("      Variable: {}", flow.sink.variable);
+            println!("      Operation: {}", flow.sink.operation);
+            println!("      Code: {}", flow.sink.code.trim());
+        }
+    }
+    
+    println!("\n📊 Summary:");
+    println!("   Total flows: {}", result.summary.total_flows);
+    println!("   Vulnerable flows: {}", result.summary.unsanitized_flows);
+    println!("   Sanitized flows: {}", result.summary.sanitized_flows);
+    println!("   Files analyzed: {}", result.summary.files_analyzed);
+    println!("   Functions analyzed: {}", result.summary.functions_analyzed);
+    println!("   Analysis time: {:.2?}", duration);
 } 
