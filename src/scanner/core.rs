@@ -45,18 +45,6 @@ where
     })?
 }
 
-// Progress bar ticker helper shared by outer and inner scanners
-fn start_progress_ticker(bar: ProgressBar, counter: Arc<AtomicUsize>) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        loop {
-            let val = counter.load(Ordering::Relaxed) as u64;
-            bar.set_position(val);
-            if val >= bar.length().unwrap_or(0) { break; }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    })
-}
-
 pub struct VulnerabilityScanner {
     language: String,
     rules: Rules,
@@ -101,18 +89,6 @@ impl VulnerabilityScanner {
         Ok(files)
     }
 
-    fn setup_progress_bars(&self, total_files: usize) -> ProgressBar {
-        let bar = ProgressBar::new(total_files as u64);
-        bar.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files ({eta})")
-                .unwrap()
-                .progress_chars("#>-")
-        );
-        bar.set_message("Scanning files");
-        bar
-    }
-
     pub fn find_vulnerabilities_parallel(&self, root_dir: &str, language_name: &str, show_progress: bool) -> Result<Vec<Finding>> {
         let files = self.discover_files(root_dir)?;
         if files.is_empty() {
@@ -120,7 +96,11 @@ impl VulnerabilityScanner {
             return Ok(Vec::new());
         }
 
-        let file_progress = if show_progress { Some(self.setup_progress_bars(files.len())) } else { None };
+        let mut progress_manager = if show_progress { 
+            Some(ProgressManager::new(files.len())) 
+        } else { 
+            None 
+        };
         let total_findings = Arc::new(AtomicUsize::new(0));
         let all_rules = ScanningLogic::get_all_search_rules(&self.rules);
         let chunk_size = 64; // tuned for slower disks
@@ -128,7 +108,11 @@ impl VulnerabilityScanner {
         use rayon::slice::ParallelSlice;
 
         let processed = Arc::new(AtomicUsize::new(0));
-        let progress_handle = file_progress.as_ref().map(|b| start_progress_ticker(b.clone(), Arc::clone(&processed)) );
+        
+        // Start progress tracking
+        if let Some(ref mut progress) = progress_manager {
+            progress.start_tracking(Arc::clone(&processed), Arc::clone(&total_findings));
+        }
 
         let findings: Vec<Finding> = files
             .par_chunks(chunk_size)
@@ -171,9 +155,11 @@ impl VulnerabilityScanner {
             })
             .collect();
 
-        if let Some(handle) = progress_handle { let _ = handle.join(); }
-        if let Some(bar) = file_progress {
-            bar.finish_with_message("Scan complete");
+        // Stop progress tracking
+        if let Some(mut progress) = progress_manager {
+            progress.stop();
+        }
+        if show_progress {
             println!("Found {} vulnerabilities", total_findings.load(Ordering::Relaxed));
         }
         Ok(findings)
