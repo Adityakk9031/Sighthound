@@ -3,25 +3,40 @@ use std::path::Path;
 use anyhow::Result;
 use crate::rules::Rules;
 use crate::parser::{LanguageParser, get_node_text};
+use crate::skip::SKIP_MINIFIED_PATTERNS;
+use crate::scanner::utils::matches_glob_pattern;
 use tree_sitter::Node;
 
 #[derive(Debug, Clone)]
 pub struct PreFilter {
     is_malicious_scan: bool,
     language: String,
+    skip_minified: bool,
+    custom_minified_patterns: Vec<String>,
 }
 
 impl PreFilter {
     pub fn new(rules: &Rules, language: &str) -> Self {
+        Self::with_options(rules, language, true, Vec::new())
+    }
+
+    pub fn with_options(rules: &Rules, language: &str, skip_minified: bool, custom_patterns: Vec<String>) -> Self {
         // Check if we have any malware detection rules
         let is_malicious_scan = rules.rules.iter().any(|rule| {
-            rule.get_category() == "malware" || 
-            rule.get_finding_type().to_lowercase().contains("malware")
+            rule.name.as_ref().map_or(false, |name| {
+                let name_lower = name.to_lowercase();
+                name_lower.contains("malware") ||
+                name_lower.contains("malicious") ||
+                name_lower.contains("backdoor") ||
+                name_lower.contains("trojan")
+            }) || rule.get_category().to_lowercase().contains("malware")
         });
-        
+
         Self {
             is_malicious_scan,
             language: language.to_string(),
+            skip_minified,
+            custom_minified_patterns: custom_patterns,
         }
     }
 
@@ -39,6 +54,11 @@ impl PreFilter {
 
         // Always skip text/doc files for both modes
         if self.is_text_or_doc_file(file_path) {
+            return false;
+        }
+
+        // Skip minified files for JavaScript/TypeScript if enabled
+        if self.skip_minified && self.is_js_or_ts_language() && self.is_minified_js_file(file_path) {
             return false;
         }
 
@@ -71,6 +91,62 @@ impl PreFilter {
             
         ["readme", "license", "changelog", "authors"].iter()
             .any(|name| filename.starts_with(name))
+    }
+
+    /// Check if the current language is JavaScript or TypeScript related
+    fn is_js_or_ts_language(&self) -> bool {
+        matches!(self.language.as_str(), "javascript" | "typescript" | "tsx")
+    }
+
+    /// Detect minified JavaScript files using simple, effective strategies
+    fn is_minified_js_file(&self, file_path: &str) -> bool {
+        // Strategy 1: Filename pattern matching (covers 95% of cases)
+        if self.matches_minified_patterns(file_path) {
+            return true;
+        }
+
+        // Strategy 2: Simple content heuristic for edge cases
+        self.is_likely_minified_content(file_path)
+    }
+
+    /// Check if file matches known minified file patterns
+    fn matches_minified_patterns(&self, file_path: &str) -> bool {
+        // Check built-in patterns
+        for pattern in SKIP_MINIFIED_PATTERNS {
+            if matches_glob_pattern(pattern, file_path) {
+                return true;
+            }
+        }
+
+        // Check custom patterns
+        for pattern in &self.custom_minified_patterns {
+            if matches_glob_pattern(pattern, file_path) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Simple heuristic to detect minified content (edge cases only)
+    fn is_likely_minified_content(&self, file_path: &str) -> bool {
+        // Only check JS/TS files
+        if !file_path.ends_with(".js") && !file_path.ends_with(".jsx") && 
+           !file_path.ends_with(".ts") && !file_path.ends_with(".tsx") {
+            return false;
+        }
+
+        // Simple check: large single-line files are likely minified
+        match fs::read_to_string(file_path) {
+            Ok(content) => {
+                let line_count = content.lines().count();
+                let char_count = content.len();
+                
+                // Single line with lots of content = likely minified
+                line_count <= 3 && char_count > 2000
+            }
+            Err(_) => false,
+        }
     }
 
     /// Use tree-sitter to check if file is test or migration
@@ -144,29 +220,101 @@ impl PreFilter {
     pub fn filter_files(&self, files: Vec<std::path::PathBuf>) -> (Vec<std::path::PathBuf>, FilterStats) {
         let mut included = 0;
         let mut filtered_out = 0;
+        let mut minified_filtered = 0;
+        let mut test_filtered = 0;
+        let mut doc_filtered = 0;
         
         let filtered: Vec<_> = files
             .into_iter()
             .filter(|path| {
-                if self.should_scan_file(&path.to_string_lossy()) {
-                    included += 1;
-                    true
-                } else {
-                    filtered_out += 1;
-                    false
+                let path_str = path.to_string_lossy();
+                
+                // Optimized filtering with single-pass checks to avoid redundancy
+                let filter_result = self.check_file_with_reason(&path_str);
+                
+                match filter_result {
+                    FilterReason::Include => {
+                        included += 1;
+                        true
+                    }
+                    FilterReason::Doc => {
+                        filtered_out += 1;
+                        doc_filtered += 1;
+                        false
+                    }
+                    FilterReason::Minified => {
+                        filtered_out += 1;
+                        minified_filtered += 1;
+                        false
+                    }
+                    FilterReason::Test => {
+                        filtered_out += 1;
+                        test_filtered += 1;
+                        false
+                    }
                 }
             })
             .collect();
         
-        let stats = FilterStats { included, filtered_out };
+        let stats = FilterStats { 
+            included, 
+            filtered_out,
+            minified_filtered,
+            test_filtered,
+            doc_filtered,
+        };
         (filtered, stats)
     }
+
+    /// Single-pass filtering with reason tracking to avoid duplicate checks
+    fn check_file_with_reason(&self, file_path: &str) -> FilterReason {
+        // Skip empty files first (fastest check)
+        if let Ok(metadata) = fs::metadata(file_path) {
+            if metadata.len() == 0 {
+                return FilterReason::Doc; // Treat empty files as doc files
+            }
+        }
+
+        // Check text/doc files next (relatively fast)
+        if self.is_text_or_doc_file(file_path) {
+            return FilterReason::Doc;
+        }
+
+        // For malicious scanning, include everything else (skip other checks)
+        if self.is_malicious_scan {
+            return FilterReason::Include;
+        }
+
+        // Check minified files for JS/TS (potentially expensive, so do conditionally)
+        if self.skip_minified && self.is_js_or_ts_language() && self.is_minified_js_file(file_path) {
+            return FilterReason::Minified;
+        }
+
+        // Check test/migration files last (most expensive due to parsing)
+        if self.is_test_or_migration_file(file_path) {
+            return FilterReason::Test;
+        }
+
+        FilterReason::Include
+    }
+}
+
+/// Enum to track why a file was filtered (avoids duplicate checks)
+#[derive(Debug, Clone)]
+enum FilterReason {
+    Include,
+    Doc,
+    Minified,
+    Test,
 }
 
 #[derive(Debug, Clone)]
 pub struct FilterStats {
     pub included: usize,
     pub filtered_out: usize,
+    pub minified_filtered: usize,
+    pub test_filtered: usize,
+    pub doc_filtered: usize,
 }
 
 impl FilterStats {
@@ -186,6 +334,23 @@ impl std::fmt::Display for FilterStats {
         write!(f, 
             "📊 Pre-filter: {} included, {} filtered out ({:.1}% reduction)",
             self.included, self.filtered_out, self.filter_percentage()
-        )
+        )?;
+        
+        if self.minified_filtered > 0 || self.test_filtered > 0 || self.doc_filtered > 0 {
+            write!(f, "\n   ↳ ")?;
+            let mut details = Vec::new();
+            if self.minified_filtered > 0 {
+                details.push(format!("{} minified", self.minified_filtered));
+            }
+            if self.test_filtered > 0 {
+                details.push(format!("{} test/migration", self.test_filtered));
+            }
+            if self.doc_filtered > 0 {
+                details.push(format!("{} doc/media", self.doc_filtered));
+            }
+            write!(f, "{}", details.join(", "))?;
+        }
+        
+        Ok(())
     }
 } 

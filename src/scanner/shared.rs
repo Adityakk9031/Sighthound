@@ -463,7 +463,7 @@ impl ScanningLogic {
         findings
     }
 
-    /// Scan assignment expressions for JavaScript/TypeScript patterns
+    /// Optimized assignment scanning with early termination and targeted traversal
     fn scan_assignments(
         node: tree_sitter::Node,
         source: &[u8],
@@ -473,70 +473,161 @@ impl ScanningLogic {
         findings: &mut Vec<Finding>,
         processed_lines: &mut std::collections::HashSet<(usize, String, String)>,
     ) {
-        // Only check specific node types that are likely to be assignments
-        match node.kind() {
-            "assignment_expression" | "expression_statement" => {
-                let node_text = get_node_text(&node, source);
-                
-                // Quick check: must contain '=' but not comparison operators
-                if node_text.contains('=') && 
-                   !node_text.contains("==") && 
-                   !node_text.contains("!=") &&
-                   !node_text.contains("<=") &&
-                   !node_text.contains(">=") {
-                    
-                    // Pre-filter rules: only check rules that might match assignment patterns
-                    let relevant_rules: Vec<&UnifiedRule> = rules.iter()
-                        .filter(|rule| Self::rule_might_match_assignment(rule, &node_text))
-                        .copied()
-                        .collect();
-                    
-                    if !relevant_rules.is_empty() {
-                        // Extract the left side of the assignment as the "function name"
-                        let assignment_target = if let Some(equals_pos) = node_text.find('=') {
-                            node_text[..equals_pos].trim()
-                        } else {
-                            ""
-                        };
+        // Early termination: if no assignment-related rules, skip entirely
+        let assignment_rules: Vec<&UnifiedRule> = rules.iter()
+            .filter(|rule| Self::rule_has_assignment_patterns(rule))
+            .copied()
+            .collect();
+        
+        if assignment_rules.is_empty() {
+            return; // No assignment rules to check
+        }
 
-                        // Check only relevant rules against this assignment
-                        for rule in relevant_rules {
-                            if let Some(finding) = Self::check_rule_against_node(
-                                rule,
-                                &node,
-                                source,
-                                filepath,
-                                assignment_target,
-                                language_support,
-                            ) {
-                                let line_key = (finding.line, finding.function.clone(), finding.finding_type.clone());
-                                if !processed_lines.contains(&line_key) {
-                                    processed_lines.insert(line_key);
-                                    findings.push(finding);
-                                }
-                            }
-                        }
+        Self::scan_assignments_optimized(node, source, filepath, &assignment_rules, language_support, findings, processed_lines, 0);
+    }
+
+    /// Optimized recursive assignment scanner with depth limits and targeted traversal
+    fn scan_assignments_optimized(
+        node: tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        assignment_rules: &[&UnifiedRule],
+        language_support: &dyn LanguageSupport,
+        findings: &mut Vec<Finding>,
+        processed_lines: &mut std::collections::HashSet<(usize, String, String)>,
+        depth: usize,
+    ) {
+        // Depth limit to prevent excessive recursion
+        const MAX_DEPTH: usize = 20;
+        if depth > MAX_DEPTH {
+            return;
+        }
+
+        // Process current node if it's an assignment
+        if Self::is_assignment_node(&node) {
+            Self::process_assignment_node(&node, source, filepath, assignment_rules, language_support, findings, processed_lines);
+        }
+
+        // Only traverse into container nodes that might contain assignments
+        if Self::should_traverse_for_assignments(&node) {
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    Self::scan_assignments_optimized(
+                        cursor.node(), 
+                        source, 
+                        filepath, 
+                        assignment_rules, 
+                        language_support, 
+                        findings, 
+                        processed_lines, 
+                        depth + 1
+                    );
+                    if !cursor.goto_next_sibling() {
+                        break;
                     }
                 }
             }
-            // Only traverse into nodes that might contain assignments
+        }
+    }
+
+    /// Check if a node is an assignment expression
+    fn is_assignment_node(node: &tree_sitter::Node) -> bool {
+        matches!(node.kind(), "assignment_expression" | "expression_statement")
+    }
+
+    /// Check if we should traverse into a node when looking for assignments
+    fn should_traverse_for_assignments(node: &tree_sitter::Node) -> bool {
+        matches!(node.kind(), 
             "program" | "statement_block" | "compound_statement" | "block_statement" | 
             "function_declaration" | "function_definition" | "method_definition" |
-            "if_statement" | "for_statement" | "while_statement" | "try_statement" => {
-                // Recursively scan child nodes for these container types
-                let mut cursor = node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        Self::scan_assignments(cursor.node(), source, filepath, rules, language_support, findings, processed_lines);
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
+            "if_statement" | "for_statement" | "while_statement" | "try_statement" |
+            "catch_clause" | "finally_clause" | "switch_statement" | "case_clause"
+        )
+    }
+
+    /// Process an assignment node efficiently
+    fn process_assignment_node(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        assignment_rules: &[&UnifiedRule],
+        language_support: &dyn LanguageSupport,
+        findings: &mut Vec<Finding>,
+        processed_lines: &mut std::collections::HashSet<(usize, String, String)>,
+    ) {
+        let node_text = get_node_text(node, source);
+        
+        // Fast check: must contain '=' but not comparison operators
+        if !Self::is_valid_assignment_text(&node_text) {
+            return;
+        }
+        
+        // Pre-filter rules: only check rules that might match this specific assignment
+        let relevant_rules: Vec<&UnifiedRule> = assignment_rules.iter()
+            .filter(|rule| Self::rule_might_match_assignment(rule, &node_text))
+            .copied()
+            .collect();
+        
+        if relevant_rules.is_empty() {
+            return; // No relevant rules for this assignment
+        }
+
+        // Extract the left side of the assignment as the "function name"
+        let assignment_target = Self::extract_assignment_target(&node_text);
+
+        // Check only relevant rules against this assignment
+        for rule in relevant_rules {
+            if let Some(finding) = Self::check_rule_against_node(
+                rule,
+                node,
+                source,
+                filepath,
+                &assignment_target,
+                language_support,
+            ) {
+                let line_key = (finding.line, finding.function.clone(), finding.finding_type.clone());
+                if !processed_lines.contains(&line_key) {
+                    processed_lines.insert(line_key);
+                    findings.push(finding);
                 }
             }
-            _ => {
-                // For other node types, don't traverse deeper to avoid unnecessary work
-            }
+        }
+    }
+
+    /// Check if a rule has assignment-related patterns (pre-filter at rule level)
+    fn rule_has_assignment_patterns(rule: &UnifiedRule) -> bool {
+        let patterns_to_check = if let Some(patterns) = &rule.patterns {
+            patterns.as_slice()
+        } else if let Some(pattern) = &rule.pattern {
+            std::slice::from_ref(pattern)
+        } else {
+            return false;
+        };
+
+        patterns_to_check.iter().any(|pattern| {
+            pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
+            pattern.contains("location") || pattern.contains("localStorage") ||
+            pattern.contains("sessionStorage") || pattern.contains("__proto__") ||
+            pattern.contains("=") || pattern.contains("prototype")
+        })
+    }
+
+    /// Fast validation of assignment text
+    fn is_valid_assignment_text(text: &str) -> bool {
+        text.contains('=') && 
+        !text.contains("==") && 
+        !text.contains("!=") &&
+        !text.contains("<=") &&
+        !text.contains(">=")
+    }
+
+    /// Extract assignment target efficiently
+    fn extract_assignment_target(node_text: &str) -> String {
+        if let Some(equals_pos) = node_text.find('=') {
+            node_text[..equals_pos].trim().to_string()
+        } else {
+            String::new()
         }
     }
 
@@ -748,87 +839,96 @@ impl ScanningLogic {
         true
     }
 
-    /// Check if a rule might match the function name (pre-filter)
+    /// Check if a rule might match the function name (optimized pattern-based pre-filter)
     fn rule_might_match_function(rule: &UnifiedRule, func_name: &str) -> bool {
-        // Check if the rule has patterns that could match the function name
-        if let Some(patterns) = &rule.patterns {
-            for pattern in patterns {
-                // Simple substring match for exact function names
-                if pattern.contains(func_name) {
-                    return true;
-                }
-                
-                // Handle common cases where pattern might match
-                if func_name == "eval" && pattern.contains("eval") {
-                    return true;
-                }
-                if func_name == "Function" && pattern.contains("Function") {
-                    return true;
-                }
-                if func_name == "setTimeout" && pattern.contains("setTimeout") {
-                    return true;
-                }
-                if func_name == "setInterval" && pattern.contains("setInterval") {
-                    return true;
-                }
-                if func_name.contains("document.write") && pattern.contains("document.write") {
-                    return true;
-                }
-                if func_name.contains("localStorage") && pattern.contains("localStorage") {
-                    return true;
-                }
-                if func_name.contains("sessionStorage") && pattern.contains("sessionStorage") {
-                    return true;
-                }
-                if func_name.contains("postMessage") && pattern.contains("postMessage") {
-                    return true;
-                }
-                if func_name.contains("console") && pattern.contains("console") {
-                    return true;
-                }
-                if func_name == "fetch" && pattern.contains("fetch") {
-                    return true;
-                }
-                if func_name.contains("axios") && pattern.contains("axios") {
-                    return true;
-                }
-                if func_name == "Math.random" && pattern.contains("Math.random") {
-                    return true;
-                }
-                if func_name == "RegExp" && pattern.contains("RegExp") {
-                    return true;
-                }
-                if func_name == "import" && pattern.contains("import") {
-                    return true;
-                }
-                if func_name == "require" && pattern.contains("require") {
-                    return true;
-                }
-            }
-        }
-        
-        if let Some(pattern) = &rule.pattern {
-            // Same checks for single pattern
-            if pattern.contains(func_name) ||
-               (func_name == "eval" && pattern.contains("eval")) ||
-               (func_name == "Function" && pattern.contains("Function")) ||
-               (func_name == "setTimeout" && pattern.contains("setTimeout")) ||
-               (func_name == "setInterval" && pattern.contains("setInterval")) ||
-               (func_name.contains("document.write") && pattern.contains("document.write")) ||
-               (func_name.contains("localStorage") && pattern.contains("localStorage")) ||
-               (func_name.contains("sessionStorage") && pattern.contains("sessionStorage")) ||
-               (func_name.contains("postMessage") && pattern.contains("postMessage")) ||
-               (func_name.contains("console") && pattern.contains("console")) ||
-               (func_name == "fetch" && pattern.contains("fetch")) ||
-               (func_name.contains("axios") && pattern.contains("axios")) ||
-               (func_name == "Math.random" && pattern.contains("Math.random")) ||
-               (func_name == "RegExp" && pattern.contains("RegExp")) ||
-               (func_name == "import" && pattern.contains("import")) ||
-               (func_name == "require" && pattern.contains("require")) {
+        // Fast path: check if any pattern could possibly match this function name
+        let patterns_to_check = if let Some(patterns) = &rule.patterns {
+            patterns.as_slice()
+        } else if let Some(pattern) = &rule.pattern {
+            std::slice::from_ref(pattern)
+        } else {
+            return false; // No patterns to match
+        };
+
+        for pattern in patterns_to_check {
+            if Self::pattern_might_match_function(pattern, func_name) {
                 return true;
             }
         }
         
         false
+    }
+    
+    /// Efficient pattern matching for function names
+    fn pattern_might_match_function(pattern: &str, func_name: &str) -> bool {
+        // Fast exact match
+        if pattern == func_name {
+            return true;
+        }
+        
+        // Fast substring check for simple cases
+        if pattern.contains(func_name) || func_name.contains(pattern) {
+            return true;
+        }
+        
+        // Pattern-based matching for common cases
+        match pattern {
+            // Exact function name patterns
+            p if p == "eval" => func_name == "eval",
+            p if p == "Function" => func_name == "Function",
+            p if p == "setTimeout" => func_name == "setTimeout",
+            p if p == "setInterval" => func_name == "setInterval",
+            p if p == "fetch" => func_name == "fetch",
+            p if p == "Math.random" => func_name == "Math.random",
+            p if p == "RegExp" => func_name == "RegExp",
+            p if p == "import" => func_name == "import",
+            p if p == "require" => func_name == "require",
+            
+            // Compound function patterns (contain dots)
+            p if p.contains("document.write") => func_name.contains("document.write"),
+            p if p.contains("console.") => func_name.contains("console"),
+            p if p.contains("localStorage") => func_name.contains("localStorage"),
+            p if p.contains("sessionStorage") => func_name.contains("sessionStorage"),
+            p if p.contains("postMessage") => func_name.contains("postMessage"),
+            p if p.contains("axios") => func_name.contains("axios"),
+            
+            // Wildcard patterns - use glob-style matching
+            p if p.contains('*') => Self::glob_match(p, func_name),
+            
+            // Default: use substring matching for compatibility
+            _ => pattern.contains(func_name) || func_name.contains(pattern),
+        }
+    }
+    
+    /// Simple glob-style pattern matching
+    fn glob_match(pattern: &str, text: &str) -> bool {
+        if !pattern.contains('*') {
+            return pattern == text;
+        }
+        
+        let parts: Vec<&str> = pattern.split('*').collect();
+        if parts.is_empty() {
+            return true;
+        }
+        
+        // Handle patterns like "*eval*", "document.*", etc.
+        if parts.len() == 2 {
+            let prefix = parts[0];
+            let suffix = parts[1];
+            
+            if prefix.is_empty() && suffix.is_empty() {
+                return true; // Pattern is just "*"
+            } else if prefix.is_empty() {
+                return text.ends_with(suffix);
+            } else if suffix.is_empty() {
+                return text.starts_with(prefix);
+            } else {
+                return text.starts_with(prefix) && text.ends_with(suffix);
+            }
+        }
+        
+        // For more complex patterns, fall back to simple contains check
+        let non_wildcard_parts: Vec<&str> = parts.iter().filter(|p| !p.is_empty()).copied().collect();
+        non_wildcard_parts.iter().all(|part| text.contains(part))
     }
 } 

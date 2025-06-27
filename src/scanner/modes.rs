@@ -17,7 +17,18 @@ pub fn run_explicit_scan(cli: &Cli) -> Result<Vec<Finding>> {
     
     let rules = Rules::load_from_path(rules_path)?;
     let total_rules = ScanningLogic::count_total_rules(&rules);
-    let scanner = VulnerabilityScanner::new(language, rules)?;
+    
+    // Configure minified file skipping
+    let skip_minified = cli.skip_minified.unwrap_or(true);
+    let scanner = VulnerabilityScanner::with_skip_minified(
+        language, 
+        rules, 
+        skip_minified
+    )?;
+    
+    if !skip_minified {
+        println!("⚠️  Minified file skipping disabled - this may increase scan time and false positives");
+    }
 
     let (mode, thread_info) = get_mode_info(cli.single_threaded, cli.threads);
     
@@ -87,6 +98,9 @@ pub fn run_auto_detection_scan(cli: &Cli) -> Result<Vec<Finding>> {
     let total_rules_loaded = Arc::new(AtomicUsize::new(0));
     let mut all_findings = Vec::new();
     
+    // Configure minified file skipping for auto-detection
+    let skip_minified = cli.skip_minified.unwrap_or(true);
+    
     // Process languages sequentially to avoid nested parallelism deadlocks
     for (language, files) in lang_jobs {
         let rules_dir = format!("rules/{}", language);
@@ -99,7 +113,11 @@ pub fn run_auto_detection_scan(cli: &Cli) -> Result<Vec<Finding>> {
                     progress.set_message(format!("| scanning {} ({}/{} files)", language, files.len(), total_files));
                 }
                 
-                let scanner = VulnerabilityScanner::new(&language, rules).expect("scanner");
+                let scanner = VulnerabilityScanner::with_skip_minified(
+                    &language, 
+                    rules, 
+                    skip_minified
+                ).expect("scanner");
                 
                 match scanner.find_vulnerabilities_parallel(&cli.root_dir, &language, false) {
                     Ok(fnds) => {
@@ -197,6 +215,8 @@ pub fn run_taint_analysis(cli: &Cli) -> Result<()> {
     println!("📁 Total files to analyze: {}", total_files);
     println!();
     
+    // Note: Taint analysis doesn't currently use VulnerabilityScanner's PreFilter,
+    // but it could be extended in the future to support minified file filtering
     let mut analyzer = TaintAnalyzer::new(rules);
     let mut all_results = Vec::new();
     

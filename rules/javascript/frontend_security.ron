@@ -70,20 +70,113 @@
             )),
             tags: Some(["xss", "dom", "frontend", "cwe-79"])
         ),
+        (
+            id: Some("js-dom-xss-005"),
+            name: Some("DOM XSS via outerText"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                "*.outerText*=*"
+            ]),
+            finding_type: Some("DOM XSS"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            description: Some("Direct assignment to outerText can lead to content injection"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["xss", "dom", "frontend", "cwe-79"])
+        ),
+        (
+            id: Some("js-dom-xss-006"),
+            name: Some("DOM XSS via script manipulation"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                "*script*.src*=*user*",
+                "*script*.text*=*user*",
+                "*script*.innerHTML*=*user*"
+            ]),
+            finding_type: Some("DOM XSS"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            description: Some("Dynamic script source or content assignment can lead to code injection"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["xss", "script-injection", "frontend", "cwe-79"])
+        ),
+        (
+            id: Some("js-dom-xss-007"),
+            name: Some("DOM XSS via window.name"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                "window.name*=*user*",
+                "window.name*=*input*"
+            ]),
+            finding_type: Some("DOM XSS"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            description: Some("Assignment to window.name with user data can lead to XSS in some contexts"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["xss", "window-name", "frontend", "cwe-79"])
+        ),
+        (
+            id: Some("js-dom-xss-008"),
+            name: Some("DOM XSS via document.domain"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                "document.domain*=*user*",
+                "document.domain*=*input*"
+            ]),
+            finding_type: Some("DOM XSS"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            description: Some("Dynamic assignment to document.domain can lead to security bypass"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["xss", "domain-manipulation", "frontend", "cwe-79"])
+        ),
+        (
+            id: Some("js-dom-xss-009"),
+            name: Some("DOM XSS via insertAdjacentText"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                "*.insertAdjacentText*user*",
+                "*.insertAdjacentText*input*"
+            ]),
+            finding_type: Some("DOM XSS"),
+            severity: Some("Low"),
+            confidence: Some("Medium"),
+            description: Some("insertAdjacentText with user input can lead to content injection"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["xss", "dom", "frontend", "cwe-79"])
+        ),
 
         // ==================== Code Injection XSS (CWE-80, CWE-95) ====================
         (
             id: Some("js-code-injection-001"),
-            name: Some("Code injection via eval"),
+            name: Some("Code injection via eval with variables"),
             category: Some("code-injection"),
             mode: "search",
             patterns: Some([
-                "eval"
+                "eval(*user*)",
+                "eval(*input*)",
+                "eval(*data*)",
+                "eval(*+*)"
             ]),
             finding_type: Some("Code Injection"),
             severity: Some("Critical"),
             confidence: Some("High"),
-            description: Some("Using eval() with user input can lead to code injection and XSS"),
+            description: Some("Using eval() with dynamic content can lead to code injection and XSS"),
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"])
             )),
@@ -91,16 +184,19 @@
         ),
         (
             id: Some("js-code-injection-002"),
-            name: Some("Code injection via Function constructor"),
+            name: Some("Code injection via Function constructor with variables"),
             category: Some("code-injection"),
             mode: "search",
             patterns: Some([
-                "Function"
+                "*Function(*user*)",
+                "*Function(*input*)",
+                "*Function(*data*)",
+                "*Function(*+*)"
             ]),
             finding_type: Some("Code Injection"),
             severity: Some("Critical"),
             confidence: Some("High"),
-            description: Some("Function constructor with user input can lead to code injection and XSS"),
+            description: Some("Function constructor with dynamic content can lead to code injection and XSS"),
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"])
             )),
@@ -108,17 +204,21 @@
         ),
         (
             id: Some("js-code-injection-003"),
-            name: Some("Code injection via setTimeout/setInterval"),
+            name: Some("Code injection via setTimeout/setInterval with variables"),
             category: Some("code-injection"),
             mode: "search",
             patterns: Some([
-                "*setTimeout*+*",
-                "*setInterval*+*"
+                "*setTimeout(*user*)",
+                "*setTimeout(*input*)",
+                "*setTimeout(*data*)",
+                "*setInterval(*user*)",
+                "*setInterval(*input*)",
+                "*setInterval(*data*)"
             ]),
             finding_type: Some("Code Injection"),
             severity: Some("High"),
             confidence: Some("Medium"),
-            description: Some("Using setTimeout/setInterval with string concatenation can lead to code injection"),
+            description: Some("Using setTimeout/setInterval with dynamic string content can lead to code injection"),
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"])
             )),
@@ -184,19 +284,41 @@
             category: Some("redirect"),
             mode: "search",
             patterns: Some([
-                "*window.location*=*",
-                "*location.href*=*",
-                "*location.assign",
-                "*location.replace"
+                "*window.location*=*user*",
+                "*window.location*=*input*",
+                "*location.href*=*user*",
+                "*location.href*=*input*",
+                "*location.assign*user*",
+                "*location.assign*input*",
+                "*location.replace*user*",
+                "*location.replace*input*"
             ]),
             finding_type: Some("Open Redirect"),
             severity: Some("Medium"),
-            confidence: Some("Low"),
+            confidence: Some("Medium"),
             description: Some("Dynamic URL redirection without validation can lead to open redirect vulnerabilities"),
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"])
             )),
             tags: Some(["open-redirect", "frontend", "cwe-601"])
+        ),
+        (
+            id: Some("js-open-redirect-002"),
+            name: Some("Open redirect via location.hash"),
+            category: Some("redirect"),
+            mode: "search",
+            patterns: Some([
+                "*location.hash*=*user*",
+                "*location.hash*=*input*"
+            ]),
+            finding_type: Some("Open Redirect"),
+            severity: Some("Low"),
+            confidence: Some("Low"),
+            description: Some("Dynamic hash manipulation can lead to client-side attacks"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["open-redirect", "hash-manipulation", "frontend", "cwe-601"])
         ),
 
         // ==================== Insecure postMessage (CWE-1173, CWE-927) ====================
@@ -211,7 +333,7 @@
             ]),
             finding_type: Some("Insecure postMessage"),
             severity: Some("High"),
-            confidence: Some("Medium"),
+            confidence: Some("High"),
             description: Some("Using postMessage with wildcard origin (*) can allow malicious sites to receive messages"),
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"])
@@ -220,12 +342,34 @@
         ),
         (
             id: Some("js-postmessage-002"),
+            name: Some("postMessage with variable origin"),
+            category: Some("postmessage"),
+            mode: "search",
+            patterns: Some([
+                "*postMessage(*,*user*)",
+                "*postMessage(*,*input*)",
+                "*postMessage(*,*origin*)",
+                "*postMessage(*,*+*)"
+            ]),
+            finding_type: Some("Insecure postMessage"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            description: Some("Using postMessage with dynamic origin can be dangerous if not properly validated"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["postmessage", "origin-validation", "frontend", "cwe-1173", "cwe-927"])
+        ),
+        (
+            id: Some("js-postmessage-003"),
             name: Some("Message event listener without origin check"),
             category: Some("postmessage"),
             mode: "search",
             patterns: Some([
-                "addEventListener",
-                "*onmessage*=*"
+                "*addEventListener*'message'*",
+                "*addEventListener*\"message\"*",
+                "*onmessage*=*function*",
+                "window.onmessage*=*"
             ]),
             finding_type: Some("Missing Origin Validation"),
             severity: Some("Medium"),
@@ -286,7 +430,6 @@
             patterns: Some([
                 "*fetch*'http://*",
                 "*fetch*\"http://*",
-                "*XMLHttpRequest*http://*",
                 "*axios.get*'http://*",
                 "*axios.get*\"http://*",
                 "*axios.post*'http://*",
@@ -301,6 +444,24 @@
             )),
             tags: Some(["cleartext", "network", "https", "frontend", "cwe-319"])
         ),
+        (
+            id: Some("js-cleartext-002"),
+            name: Some("XMLHttpRequest with HTTP"),
+            category: Some("network"),
+            mode: "search",
+            patterns: Some([
+                "*xhr.open*'*'*'http://*",
+                "*xhr.open*\"*\"*\"http://*"
+            ]),
+            finding_type: Some("Cleartext Network Request"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            description: Some("XMLHttpRequest with HTTP URLs transmit data in cleartext"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["cleartext", "network", "xhr", "frontend", "cwe-319"])
+        ),
 
         // ==================== Dynamic Code Loading (CWE-95) ====================
         (
@@ -309,8 +470,12 @@
             category: Some("code-injection"),
             mode: "search",
             patterns: Some([
-                "*import*+*",
-                "*require*+*"
+                "*import(*user*)",
+                "*import(*input*)",
+                "*import(*data*)",
+                "*require(*user*)",
+                "*require(*input*)",
+                "*require(*data*)"
             ]),
             finding_type: Some("Dynamic Code Loading"),
             severity: Some("High"),
@@ -325,18 +490,25 @@
         // ==================== ReDoS (CWE-1333) ====================
         (
             id: Some("js-redos-001"),
-            name: Some("Potential ReDoS in regex"),
+            name: Some("Potential ReDoS in regex with variables"),
             category: Some("redos"),
             mode: "search",
             patterns: Some([
-                "*new RegExp*+*",
-                "*.match*+*",
-                "*.replace*+*",
-                "*.test*+*"
+                "*RegExp(*user*)",
+                "*RegExp(*input*)",
+                "*RegExp(*data*)",
+                "*.match(*user*)",
+                "*.match(*input*)",
+                "*.replace(*user*)",
+                "*.replace(*input*)",
+                "*.search(*user*)",
+                "*.search(*input*)",
+                "*.split(*user*)",
+                "*.split(*input*)"
             ]),
             finding_type: Some("Regular Expression DoS"),
             severity: Some("Medium"),
-            confidence: Some("Low"),
+            confidence: Some("Medium"),
             description: Some("Dynamic regular expressions with user input can lead to ReDoS attacks"),
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"])
@@ -351,18 +523,46 @@
             category: Some("template-injection"),
             mode: "search",
             patterns: Some([
-                "Handlebars.compile",
-                "_.template",
-                "*.compile*+*"
+                "*Handlebars.compile(*user*)",
+                "*Handlebars.compile(*input*)",
+                "*Handlebars.compile(*data*)",
+                "*_.template(*user*)",
+                "*_.template(*input*)",
+                "*_.template(*data*)",
+                "*Mustache.compile(*user*)",
+                "*Mustache.compile(*input*)",
+                "*Vue.compile(*user*)",
+                "*Vue.compile(*input*)"
             ]),
             finding_type: Some("Template Injection"),
             severity: Some("High"),
-            confidence: Some("Medium"),
+            confidence: Some("High"),
             description: Some("Client-side template compilation with user input can lead to template injection"),
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"])
             )),
             tags: Some(["template-injection", "frontend", "cwe-1336"])
+        ),
+
+        // ==================== Dangerous URL Construction (CWE-601) ====================
+        (
+            id: Some("js-url-construction-001"),
+            name: Some("Dangerous URL construction"),
+            category: Some("url-manipulation"),
+            mode: "search",
+            patterns: Some([
+                "*URL(*user*)",
+                "*URL(*input*)",
+                "*URL(*data*)"
+            ]),
+            finding_type: Some("URL Manipulation"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            description: Some("Dynamic URL construction with user input can lead to various attacks"),
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            tags: Some(["url-manipulation", "frontend", "cwe-601"])
         )
     ]
 ) 

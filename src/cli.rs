@@ -42,4 +42,8 @@ pub struct Cli {
     /// Enable taint analysis mode
     #[arg(long, help = "Enable taint analysis to track data flows from sources to sinks")]
     pub taint_analysis: bool,
+
+    /// Skip minified JavaScript files (default: true)
+    #[arg(long, help = "Skip minified JavaScript files during scanning")]
+    pub skip_minified: Option<bool>,
 } 

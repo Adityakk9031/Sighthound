@@ -48,6 +48,7 @@ where
 pub struct VulnerabilityScanner {
     language: String,
     rules: Rules,
+    skip_minified: bool,
 }
 
 impl VulnerabilityScanner {
@@ -55,6 +56,15 @@ impl VulnerabilityScanner {
         Ok(Self { 
             language: language_name.to_string(),
             rules,
+            skip_minified: true,
+        })
+    }
+
+    pub fn with_skip_minified(language_name: &str, rules: Rules, skip_minified: bool) -> Result<Self> {
+        Ok(Self { 
+            language: language_name.to_string(),
+            rules,
+            skip_minified,
         })
     }
 
@@ -96,8 +106,26 @@ impl VulnerabilityScanner {
             return Ok(Vec::new());
         }
 
+        // Apply pre-filtering to discovered files
+        let prefilter = crate::scanner::prefilter::PreFilter::with_options(
+            &self.rules, 
+            language_name, 
+            self.skip_minified, 
+            Vec::new() // No custom patterns in simplified version
+        );
+        let (filtered_files, filter_stats) = prefilter.filter_files(files);
+        
+        if show_progress {
+            println!("{}", filter_stats);
+        }
+        
+        if filtered_files.is_empty() {
+            println!("No {} files remaining after filtering", language_name);
+            return Ok(Vec::new());
+        }
+
         let mut progress_manager = if show_progress { 
-            Some(ProgressManager::new(files.len())) 
+            Some(ProgressManager::new(filtered_files.len())) 
         } else { 
             None 
         };
@@ -114,7 +142,7 @@ impl VulnerabilityScanner {
             progress.start_tracking(Arc::clone(&processed), Arc::clone(&total_findings));
         }
 
-        let findings: Vec<Finding> = files
+        let findings: Vec<Finding> = filtered_files
             .par_chunks(chunk_size)
             .flat_map(|chunk| {
                 let mut local_vec = Vec::new();
