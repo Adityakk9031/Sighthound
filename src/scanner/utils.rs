@@ -134,8 +134,19 @@ pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
     }
 }
 
-/// Discover files by language using parallel processing
-pub fn discover_files_by_language_parallel(root_dir: &str) -> Result<HashMap<String, Vec<PathBuf>>> {
+/// Discover files by language with configurable parallelism
+pub fn discover_files_by_language(root_dir: &str, parallel: bool) -> Result<HashMap<String, Vec<PathBuf>>> {
+    let estimated_languages = crate::config::ScanDefaults::ESTIMATED_LANGUAGES;
+    
+    if parallel {
+        discover_files_parallel(root_dir, estimated_languages)
+    } else {
+        discover_files_sequential(root_dir, estimated_languages)
+    }
+}
+
+/// Internal parallel file discovery implementation
+fn discover_files_parallel(root_dir: &str, estimated_languages: usize) -> Result<HashMap<String, Vec<PathBuf>>> {
     let all_paths: Vec<PathBuf> = WalkDir::new(root_dir)
         .follow_links(false)
         .into_iter()
@@ -157,11 +168,10 @@ pub fn discover_files_by_language_parallel(root_dir: &str) -> Result<HashMap<Str
         })
         .collect();
     
-    let estimated_languages = 6;
     let estimated_files_per_lang = if all_paths.is_empty() { 
-        50 
+        crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG 
     } else { 
-        (all_paths.len() / estimated_languages).max(50) 
+        (all_paths.len() / estimated_languages).max(crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG) 
     };
     
     println!("📂 Discovered {} files total, estimating {} files per language", 
@@ -180,27 +190,48 @@ pub fn discover_files_by_language_parallel(root_dir: &str) -> Result<HashMap<Str
         }
     });
     
-    Ok(Arc::try_unwrap(files_by_language).unwrap().into_inner().unwrap())
+    Arc::try_unwrap(files_by_language)
+        .map_err(|_| anyhow::anyhow!("Failed to unwrap shared file map"))?
+        .into_inner()
+        .map_err(|e| anyhow::anyhow!("Failed to acquire mutex: {:?}", e))
 }
 
-/// Discover files by language using sequential processing
-pub fn discover_files_by_language_sequential(root_dir: &str) -> Result<HashMap<String, Vec<PathBuf>>> {
-    let mut files_by_language = HashMap::with_capacity(6);
+/// Internal sequential file discovery implementation
+fn discover_files_sequential(root_dir: &str, estimated_languages: usize) -> Result<HashMap<String, Vec<PathBuf>>> {
+    let mut files_by_language = HashMap::with_capacity(estimated_languages);
     
     for entry in WalkDir::new(root_dir)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|e| {
+            if e.file_type().is_dir() {
+                if let Some(name) = e.file_name().to_str() {
+                    return !SKIP_DIRS.contains(&name);
+                }
+            }
+            true
+        })
         .filter_map(|e| e.ok())
     {
         if entry.path().is_file() {
             if let Some(language) = detect_language_from_path(entry.path()) {
                 files_by_language
                     .entry(language.to_string())
-                    .or_insert_with(|| Vec::with_capacity(100))
+                    .or_insert_with(|| Vec::with_capacity(crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG))
                     .push(entry.path().to_path_buf());
             }
         }
     }
     
     Ok(files_by_language)
+}
+
+/// Legacy wrapper for parallel discovery (backward compatibility)
+pub fn discover_files_by_language_parallel(root_dir: &str) -> Result<HashMap<String, Vec<PathBuf>>> {
+    discover_files_by_language(root_dir, true)
+}
+
+/// Legacy wrapper for sequential discovery (backward compatibility)
+pub fn discover_files_by_language_sequential(root_dir: &str) -> Result<HashMap<String, Vec<PathBuf>>> {
+    discover_files_by_language(root_dir, false)
 } 

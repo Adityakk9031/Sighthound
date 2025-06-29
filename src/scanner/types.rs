@@ -126,22 +126,3 @@ pub struct FileInfo {
     pub extension: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct FilteringStats {
-    pub total_files: usize,
-    pub processed_files: usize,
-    pub filtered_out_files: usize,
-    pub rules_applied: usize,
-    pub filtered_out_rules: usize,
-    pub files_processed: usize,
-    pub total_rules_checked: usize,
-    pub applicable_rules_found: usize,
-    pub extension_filters_applied: usize,
-    pub cache_hits: usize,
-}
-
-impl FilteringStats {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}

@@ -131,7 +131,7 @@ impl VulnerabilityScanner {
         };
         let total_findings = Arc::new(AtomicUsize::new(0));
         let all_rules = ScanningLogic::get_all_search_rules(&self.rules);
-        let chunk_size = 64; // tuned for slower disks
+        let chunk_size = crate::config::ScanDefaults::CHUNK_SIZE;
 
         use rayon::slice::ParallelSlice;
 
@@ -288,7 +288,7 @@ impl ProgressManager {
                 bar_clone.set_position(val);
                 let vulns = findings.load(Ordering::Relaxed);
                 bar_clone.set_message(format!("| {} vulns", vulns));
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(crate::config::ScanDefaults::PROGRESS_INTERVAL_MS));
             }
         }));
     }

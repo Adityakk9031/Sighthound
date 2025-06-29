@@ -16,33 +16,22 @@ fn main() -> Result<()> {
 
     let start_time = std::time::Instant::now();
     
-    // Handle taint analysis mode
-    if cli.taint_analysis {
-        run_taint_analysis(&cli)?;
-        return Ok(());
-    }
-    
-    // Handle regular vulnerability scanning
-    let findings = match (&cli.language, &cli.rules_path) {
-        (Some(_), Some(_)) => run_explicit_scan(&cli)?,
-        (None, None) => run_auto_detection_scan(&cli)?,
-        (Some(_), None) => {
-            return Err(anyhow::anyhow!(
-                "❌ Language provided but no rules path. Please provide both:\n  \
-                cargo run -- {} <language> <rules_path>\n  \
-                Or use auto-detection:\n  \
-                cargo run -- {}", 
-                cli.root_dir, cli.root_dir
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(anyhow::anyhow!(
-                "❌ Rules path provided but no language. Please provide both:\n  \
-                cargo run -- {} <language> <rules_path>\n  \
-                Or use auto-detection:\n  \
-                cargo run -- {}", 
-                cli.root_dir, cli.root_dir
-            ));
+    // Handle all vulnerability scanning modes with unified flow
+    let findings = if cli.taint_analysis {
+        run_taint_analysis(&cli)?
+    } else {
+        match (&cli.language, &cli.rules_path) {
+            (Some(_), Some(_)) => run_explicit_scan(&cli)?,
+            (None, None) => run_auto_detection_scan(&cli)?,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "❌ Invalid combination. Please provide both language and rules path:\n  \
+                    cargo run -- {} <language> <rules_path>\n  \
+                    Or use auto-detection (no language/rules args):\n  \
+                    cargo run -- {}", 
+                    cli.root_dir, cli.root_dir
+                ));
+            }
         }
     };
 
