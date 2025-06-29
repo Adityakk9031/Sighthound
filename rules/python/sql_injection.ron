@@ -1,65 +1,6 @@
 (
     rules: [
-        (
-            id: Some("python-sql-injection-001"),
-            name: Some("SQL Injection via String Formatting"),
-            category: Some("database"),
-            mode: "search",
-            patterns: Some([
-                "*cursor.execute*%*",
-                "*connection.execute*%*",
-                "*db.execute*%*",
-                "*session.execute*%*"
-            ]),
-            finding_type: Some("SQL String Formatting"),
-            severity: Some("Critical"),
-            confidence: Some("High"),
-            description: Some("SQL query constructed using string formatting, which is vulnerable to SQL injection attacks"),
-            file_types: Some((
-                extensions: Some([".py"])
-            )),
-            tags: Some(["sql", "injection", "database", "critical"])
-        ),
-        (
-            id: Some("python-sql-injection-002"),
-            name: Some("SQL Injection via String Concatenation"),
-            category: Some("database"),
-            mode: "search",
-            patterns: Some([
-                "*cursor.execute(*+*",
-                "*connection.execute(*+*",
-                "*db.execute(*+*",
-                "*session.execute(*+*"
-            ]),
-            finding_type: Some("SQL String Concatenation"),
-            severity: Some("Critical"),
-            confidence: Some("High"),
-            description: Some("SQL query constructed using string concatenation, which is vulnerable to SQL injection attacks"),
-            file_types: Some((
-                extensions: Some([".py"])
-            )),
-            tags: Some(["sql", "injection", "database", "critical"])
-        ),
-        (
-            id: Some("python-sql-execution-database"),
-            name: Some("Database SQL Execution"),
-            category: Some("database"),
-            mode: "search",
-            patterns: Some([
-                "*cursor.execute(*",
-                "*connection.execute(*",
-                "*db.execute(*",
-                "*session.execute(*"
-            ]),
-            finding_type: Some("SQL Execution"),
-            severity: Some("Medium"),
-            confidence: Some("Medium"),
-            description: Some("Database SQL execution detected - ensure parameterized queries are used to prevent injection"),
-            file_types: Some((
-                extensions: Some([".py"])
-            )),
-            tags: Some(["sql", "database", "execution"])
-        ),
+        // === SEARCH MODE RULE (Pattern-based detection for dangerous keywords) ===
         (
             id: Some("python-sql-dangerous-keywords"),
             name: Some("Dangerous SQL Keywords"),
@@ -70,16 +11,48 @@
                 "*DELETE FROM*",
                 "*UNION SELECT*",
                 "*; DROP*",
-                "*; DELETE*"
+                "*; DELETE*",
+                "*TRUNCATE*",
+                "*ALTER TABLE*",
+                "*CREATE TABLE*"
             ]),
-            finding_type: Some("Dangerous SQL"),
+            finding_type: Some("Dangerous SQL Keywords"),
             severity: Some("High"),
             confidence: Some("High"),
-            description: Some("Dangerous SQL keywords detected that could indicate SQL injection attempts"),
+            description: Some("Dangerous SQL keywords detected that could indicate SQL injection attempts or malicious queries"),
             file_types: Some((
                 extensions: Some([".py"])
             )),
-            tags: Some(["sql", "dangerous", "injection"])
-        )
+            tags: Some(["sql", "dangerous", "injection", "keywords"])
+        ),
+        
+        // === COMPREHENSIVE TAINT RULE (General SQL injection data flows) ===
+        (
+            id: Some("python-sql-injection-comprehensive-taint"),
+            name: Some("SQL Injection via Data Flow Analysis"),
+            category: Some("database"),
+            mode: "taint",
+            sources: Some([
+                // Web framework request data (comprehensive with wildcards)
+                "request.*",
+                // Direct user input
+                "input(",
+                "raw_input("
+            ]),
+            sinks: Some([
+                // All SQL execution methods (comprehensive pattern)
+                "*execute*"
+            ]),
+            finding_type: Some("SQL Injection Data Flow"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            description: Some("User input flows to SQL execution without proper sanitization, creating SQL injection vulnerability"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["sql", "injection", "taint", "database", "critical", "data-flow"])
+        ),
+        
+
     ]
 )
