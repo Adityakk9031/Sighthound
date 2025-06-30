@@ -56,6 +56,11 @@ impl CommonUtils {
             return Self::matches_regex(pattern, text);
         }
 
+        // Handle escaped patterns (taint rules use escaped chars)
+        if pattern.contains("\\") {
+            return Self::matches_escaped_pattern(pattern, text);
+        }
+
         // Handle glob/wildcard patterns
         if pattern.contains('*') {
             return Self::matches_wildcard(pattern, text);
@@ -193,6 +198,18 @@ impl CommonUtils {
             .unwrap_or(false)
     }
 
+    /// Handle escaped patterns from taint rules (eval\(, os\.system, etc.)
+    fn matches_escaped_pattern(pattern: &str, text: &str) -> bool {
+        // Clean escaped characters for taint patterns
+        let cleaned_pattern = pattern
+            .replace("\\(", "(")
+            .replace("\\)", ")")
+            .replace("\\.", ".")
+            .replace("\\\\", "\\");
+        
+        text.contains(&cleaned_pattern)
+    }
+
     /// Match regex patterns (consolidated from core_utils.rs)
     fn matches_regex_pattern(pattern: &str, text: &str) -> bool {
         let regex_pattern = if pattern.starts_with("regex:") {
@@ -272,6 +289,95 @@ impl CommonUtils {
             .filter(|s| !Self::is_keyword_or_builtin(s))
             .map(|s| s.to_string())
             .collect()
+    }
+
+    /// Extract all variables from an expression, including complex cases
+    pub fn extract_all_variables_from_expression(expr: &str) -> Vec<String> {
+        let mut variables = Vec::new();
+        
+        // Direct variable usage
+        if let Some(var) = Self::extract_direct_variable(expr) {
+            variables.push(var);
+        }
+        
+        // F-string variables: f"echo {user_input}"
+        variables.extend(Self::extract_f_string_variables(expr));
+        
+        // Format string variables: "echo {}".format(user_input)
+        variables.extend(Self::extract_format_variables(expr));
+        
+        // String concatenation: "echo " + user_input
+        variables.extend(Self::extract_concatenation_variables(expr));
+        
+        // Function call arguments: eval(user_input)
+        variables.extend(Self::extract_function_arguments(expr).unwrap_or_default());
+        
+        variables
+    }
+
+    /// Extract direct variable from simple expressions
+    fn extract_direct_variable(expr: &str) -> Option<String> {
+        let trimmed = expr.trim();
+        if Self::is_valid_variable_name(trimmed) {
+            return Some(trimmed.to_string());
+        }
+        None
+    }
+
+    /// Extract variables from F-strings
+    pub fn extract_f_string_variables(expr: &str) -> Vec<String> {
+        let mut variables = Vec::new();
+        let mut in_brace = false;
+        let mut var_start = 0;
+        
+        for (i, ch) in expr.chars().enumerate() {
+            match ch {
+                '{' if !in_brace => {
+                    in_brace = true;
+                    var_start = i + 1;
+                }
+                '}' if in_brace => {
+                    in_brace = false;
+                    let var = &expr[var_start..i].trim();
+                    if Self::is_valid_variable_name(var) {
+                        variables.push(var.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        variables
+    }
+
+    /// Extract variables from format strings
+    pub fn extract_format_variables(expr: &str) -> Vec<String> {
+        // Handle .format() calls
+        if let Some(format_start) = expr.find(".format(") {
+            let args_part = &expr[format_start + 8..];
+            if let Some(args_end) = args_part.rfind(')') {
+                let args = &args_part[..args_end];
+                return Self::extract_function_arguments(args).unwrap_or_default();
+            }
+        }
+        
+        Vec::new()
+    }
+
+    /// Extract variables from string concatenation
+    fn extract_concatenation_variables(expr: &str) -> Vec<String> {
+        let mut variables = Vec::new();
+        
+        // Handle + concatenation: "echo " + user_input
+        let parts: Vec<&str> = expr.split('+').collect();
+        for part in parts {
+            let trimmed = part.trim();
+            if Self::is_valid_variable_name(trimmed) {
+                variables.push(trimmed.to_string());
+            }
+        }
+        
+        variables
     }
 
     /// Extract variable from various code patterns (function calls, assignments, etc.)

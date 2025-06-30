@@ -279,7 +279,7 @@ pub fn run_taint_analysis(cli: &Cli) -> Result<Vec<Finding>> {
     
     // Use unified scanner that processes both search and taint rules efficiently
     let all_findings = scanner.find_vulnerabilities_unified(&cli.root_dir, "", true)?;
-    
+        
     // Filter to only taint analysis findings 
     let taint_findings: Vec<Finding> = all_findings.into_iter()
         .filter(|f| {

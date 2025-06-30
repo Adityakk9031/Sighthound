@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """
-Simple taint test file to debug detection
+Debug test file for taint analysis pattern matching
 """
 
 import os
 import sys
 
-# Simple taint flow that should be detected
-user_input = os.environ.get('USER_DATA', '')  # Tainted source: os.environ
-eval(user_input)  # Vulnerable sink: eval()
+def test_simple_taint():
+    # Simple taint source
+    user_input = os.environ.get('USER_DATA')
+    
+    # Simple taint sink
+    eval(user_input)
 
-# Another simple flow
-cmd_arg = sys.argv[1] if len(sys.argv) > 1 else ''  # Tainted source: sys.argv
-exec(cmd_arg)  # Vulnerable sink: exec()
+def test_complex_taint():
+    # Complex taint source
+    db_config = os.environ.get('DATABASE_CONFIG', '')
+    
+    # Complex taint sink
+    os.system(f"echo {db_config}")
 
-# Direct pattern
-config = os.environ.get('CONFIG', '')
-eval(config) 
+if __name__ == "__main__":
+    test_simple_taint()
+    test_complex_taint() 

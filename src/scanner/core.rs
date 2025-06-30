@@ -98,17 +98,16 @@ impl TaintRuleDeduplicator {
         None
     }
     
-    /// Pattern matching logic (reusing existing implementation)
+    /// Pattern matching logic (reusing existing implementation) - UPDATED for context awareness
     fn matches_taint_pattern(pattern: &str, text: &str) -> bool {
-        // Handle regex patterns from taint rules
-        if pattern.contains("\\\\") || pattern.contains("\\.") {
-            if let Ok(regex) = regex::Regex::new(pattern) {
-                return regex.is_match(text);
-            }
+        // Skip string literals and metadata
+        if text.trim().starts_with('"') || text.trim().starts_with("'") || 
+           text.contains("__all__") || text.contains("__version__") {
+            return false;
         }
         
-        // Fallback to simple contains check for basic patterns
-        text.contains(&pattern.replace("\\.", ".").replace("\\\\", "\\"))
+        // Use unified pattern matching from CommonUtils
+        crate::common::CommonUtils::matches_unified_pattern(pattern, text)
     }
 }
 
@@ -654,13 +653,12 @@ impl ScanningLogic {
         for node in all_nodes.iter() {
             let node_text = crate::parser::get_node_text(node, source);
             let line = node.start_position().row + 1;
-            let func_name = Self::get_containing_function_name(node, source);
+            let func_name = ScanningLogic::get_containing_function_name(node, source);
             
             // Look for assignment patterns: var = source_call()
             if let Some(assignment) = Self::extract_assignment_from_node(&node_text) {
                 // Check if the assignment value matches any taint source
                 if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(&assignment.value) {
-                    
                     flow_tracker.record_tainted_variable(
                         assignment.variable.clone(),
                         TaintVariableInfo {
@@ -672,19 +670,26 @@ impl ScanningLogic {
                     );
                 }
             }
+            
+            // Check for taint propagation through operations
+            if let Some((source_var, dependent_vars)) = Self::detect_taint_propagation(&node_text) {
+                flow_tracker.record_taint_propagation(&source_var, &dependent_vars);
+            }
         }
         
         // Phase 2: Find sinks that use tainted variables
         for node in all_nodes.iter() {
             let node_text = crate::parser::get_node_text(node, source);
             let line = node.start_position().row + 1;
-            let func_name = Self::get_containing_function_name(node, source);
+            let func_name = ScanningLogic::get_containing_function_name(node, source);
             
             // Check if this node matches any sink pattern
             if let Some(sink_pattern) = rule_deduplicator.matches_sink_pattern(&node_text) {
-                // Extract variables used in this sink
-                if let Some(used_variable) = Self::extract_first_argument(&node_text) {
-                    // Check if this variable is tainted (clone to avoid borrowing conflicts)
+                // Extract ALL variables used in this sink (enhanced extraction)
+                let used_variables = ScanningLogic::extract_all_variables(&node_text);
+                
+                // Check if ANY of these variables are tainted
+                for used_variable in used_variables.clone() {
                     if let Some(taint_info) = flow_tracker.is_variable_tainted(&used_variable, &func_name).cloned() {
                         // Check if we have a legitimate rule for this source-sink combination
                         if let Some(rule) = rule_deduplicator.get_rule_for_combination(&taint_info.source_pattern, &sink_pattern) {
@@ -745,6 +750,46 @@ impl ScanningLogic {
         None
     }
     
+    /// Detect taint propagation in expressions
+    fn detect_taint_propagation(node_text: &str) -> Option<(String, Vec<String>)> {
+        // Check for F-string propagation
+        if node_text.contains('{') && node_text.contains('}') {
+            if let Some(source_var) = Self::extract_direct_variable(node_text) {
+                let dependent_vars = crate::common::CommonUtils::extract_f_string_variables(node_text);
+                if !dependent_vars.is_empty() {
+                    return Some((source_var, dependent_vars));
+                }
+            }
+        }
+        
+        // Check for format propagation
+        if node_text.contains(".format(") {
+            if let Some(source_var) = Self::extract_direct_variable(node_text) {
+                let dependent_vars = crate::common::CommonUtils::extract_format_variables(node_text);
+                if !dependent_vars.is_empty() {
+                    return Some((source_var, dependent_vars));
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Extract direct variable from simple expressions
+    fn extract_direct_variable(expr: &str) -> Option<String> {
+        let trimmed = expr.trim();
+        if crate::common::CommonUtils::is_valid_variable_name(trimmed) {
+            return Some(trimmed.to_string());
+        }
+        None
+    }
+    
+    /// Extract all variables from function call or expression (using enhanced extraction)
+    fn extract_all_variables(text: &str) -> Vec<String> {
+        // Use the enhanced variable extraction from CommonUtils
+        crate::common::CommonUtils::extract_all_variables_from_expression(text)
+    }
+
     /// Extract first argument from function call (reusing existing patterns)
     fn extract_first_argument(text: &str) -> Option<String> {
         if let Some(start) = text.find('(') {
@@ -767,7 +812,7 @@ impl ScanningLogic {
     }
 
     /// Get containing function name from node
-    fn get_containing_function_name(node: &tree_sitter::Node, source: &[u8]) -> String {
+    pub fn get_containing_function_name(node: &tree_sitter::Node, source: &[u8]) -> String {
         let mut current = *node;
         
         // Traverse up to find function definition
@@ -856,8 +901,9 @@ impl ScanningLogic {
             ]),
         }
     }
-}
 
+
+}
 thread_local! {
     // Store (language_name, parser) so we can reuse per language inside each thread
     static TLS_PARSER: RefCell<Option<(String, LanguageParser)>> = RefCell::new(None);
@@ -1121,8 +1167,8 @@ impl VulnerabilityScanner {
             progress.start_tracking(Arc::clone(&processed), Arc::clone(&total_findings));
         }
 
-        // Reuse exact same parallel processing pattern as search mode
-        let findings: Vec<Finding> = filtered_files
+        // Phase 1: Single-file analysis (reuse exact same parallel processing pattern as search mode)
+        let single_file_findings: Vec<Finding> = filtered_files
             .par_chunks(chunk_size)
             .flat_map(|chunk| {
                 let mut local_vec = Vec::new();
@@ -1148,7 +1194,7 @@ impl VulnerabilityScanner {
                                                 ));
                                             }
                                             
-                                            // Taint mode findings (new functionality, reuses infrastructure)
+                                            // Single-file taint mode findings (existing functionality)
                                             if has_taint_rules {
                                                 file_findings.extend(ScanningLogic::scan_file_with_taint_rules(
                                                     &filepath_str, source, &tree, &taint_rules, parser.language_support()
@@ -1178,27 +1224,63 @@ impl VulnerabilityScanner {
             })
             .collect();
 
+        // Phase 2: Multi-file taint analysis (NEW functionality)
+        let mut cross_file_findings = Vec::new();
+        if has_taint_rules && filtered_files.len() > 1 {
+            if show_progress {
+                println!("🔍 Performing cross-file taint analysis...");
+            }
+            
+            let mut multi_file_analyzer = MultiFileTaintAnalyzer::new();
+            match multi_file_analyzer.analyze_cross_file_flows(&files_by_language, &taint_rules) {
+                Ok(findings) => {
+                    cross_file_findings = findings;
+                    if show_progress && !cross_file_findings.is_empty() {
+                        println!("✅ Found {} cross-file taint flows", cross_file_findings.len());
+                    }
+                }
+                Err(e) => {
+                    if show_progress {
+                        eprintln!("⚠️  Cross-file analysis failed: {}", e);
+                    }
+                }
+            }
+        }
+
         // Stop progress tracking (reuse existing infrastructure)
         if let Some(mut progress) = progress_manager {
             progress.stop();
         }
         
+        // Combine all findings
+        let mut all_findings = single_file_findings;
+        all_findings.extend(cross_file_findings);
+        
         if show_progress {
-            let search_count = findings.iter().filter(|f| {
+            let search_count = all_findings.iter().filter(|f| {
                 f.tags.as_ref().map_or(true, |tags| !tags.contains(&"taint_analysis".to_string()))
             }).count();
-            let taint_count = findings.len() - search_count;
+            let single_file_taint_count = all_findings.iter().filter(|f| {
+                f.tags.as_ref().map_or(false, |tags| 
+                    tags.contains(&"taint_analysis".to_string()) && !tags.contains(&"cross_file".to_string())
+                )
+            }).count();
+            let cross_file_taint_count = all_findings.iter().filter(|f| {
+                f.tags.as_ref().map_or(false, |tags| tags.contains(&"cross_file".to_string()))
+            }).count();
             
             if has_search_rules && has_taint_rules {
-                println!("Found {} search findings and {} taint flows", search_count, taint_count);
+                println!("Found {} search findings, {} single-file taint flows, {} cross-file taint flows", 
+                        search_count, single_file_taint_count, cross_file_taint_count);
             } else if has_search_rules {
                 println!("Found {} search findings", search_count);
             } else {
-                println!("Found {} taint flows", taint_count);
+                println!("Found {} single-file taint flows, {} cross-file taint flows", 
+                        single_file_taint_count, cross_file_taint_count);
             }
         }
         
-        Ok(findings)
+        Ok(all_findings)
     }
 }
 
@@ -1375,6 +1457,7 @@ pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: b
                 };
                 lines = file_contents.lines().collect();
                 
+                
                 // Set up syntax highlighting for the new file
                 let syntax_name = crate::common::CommonUtils::detect_syntax(&finding.file);
                 syntax = ps.find_syntax_by_name(syntax_name);
@@ -1467,6 +1550,8 @@ struct VariableFlowTracker {
     tainted_variables: std::collections::HashMap<String, TaintVariableInfo>,
     /// Function scopes to handle variable visibility
     function_scopes: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// Taint propagation through operations
+    taint_propagations: std::collections::HashMap<String, Vec<String>>, // var -> [dependent_vars]
     /// Deduplication set for flows to prevent duplicates
     processed_flows: std::collections::HashSet<(usize, String, String)>, // (line, source_pattern, sink_pattern)
 }
@@ -1484,6 +1569,7 @@ impl VariableFlowTracker {
         Self {
             tainted_variables: std::collections::HashMap::new(),
             function_scopes: std::collections::HashMap::new(),
+            taint_propagations: std::collections::HashMap::new(),
             processed_flows: std::collections::HashSet::new(),
         }
     }
@@ -1521,6 +1607,26 @@ impl VariableFlowTracker {
         self.processed_flows.insert((line, source_pattern.to_string(), sink_pattern.to_string()));
     }
     
+    /// Record taint propagation through operations
+    fn record_taint_propagation(&mut self, source_var: &str, dependent_vars: &[String]) {
+        for dep_var in dependent_vars {
+            self.taint_propagations
+                .entry(source_var.to_string())
+                .or_insert_with(Vec::new)
+                .push(dep_var.clone());
+        }
+    }
+    
+    /// Check if any variable in a list is tainted
+    fn is_any_variable_tainted(&self, variables: &[String], function: &str) -> Option<&TaintVariableInfo> {
+        for var in variables {
+            if let Some(info) = self.is_variable_tainted(var, function) {
+                return Some(info);
+            }
+        }
+        None
+    }
+    
     /// Check if variable is likely global/passed between functions (reusing existing logic)
     fn is_global_variable(var_name: &str) -> bool {
         // Simple heuristics for global variables
@@ -1530,3 +1636,888 @@ impl VariableFlowTracker {
         var_name.contains("_PATH")             // paths
     }
 }
+
+/// Multi-file taint analysis infrastructure for cross-file data flow tracking
+#[derive(Debug)]
+struct MultiFileTaintAnalyzer {
+    /// Maps file paths to their exported functions/variables
+    file_exports: std::collections::HashMap<String, FileExports>,
+    /// Maps file paths to their imported functions/variables  
+    file_imports: std::collections::HashMap<String, FileImports>,
+    /// Cross-file taint flows that span multiple files
+    cross_file_flows: Vec<CrossFileTaintFlow>,
+    /// Deduplication set for cross-file flows
+    processed_cross_file_flows: std::collections::HashSet<(String, String, String, String)>, // (source_file, source_func, sink_file, sink_func)
+}
+
+#[derive(Debug, Clone)]
+struct FileExports {
+    /// Functions exported from this file
+    functions: std::collections::HashSet<String>,
+    /// Variables exported from this file
+    variables: std::collections::HashSet<String>,
+    /// Taint sources in this file
+    taint_sources: Vec<TaintSourceInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct FileImports {
+    /// Functions imported into this file
+    functions: std::collections::HashMap<String, String>, // local_name -> source_file
+    /// Variables imported into this file
+    variables: std::collections::HashMap<String, String>, // local_name -> source_file
+    /// Taint sinks in this file
+    taint_sinks: Vec<TaintSinkInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct TaintSourceInfo {
+    function: String,
+    line: usize,
+    pattern: String,
+    code: String,
+}
+
+#[derive(Debug, Clone)]
+struct TaintSinkInfo {
+    function: String,
+    line: usize,
+    pattern: String,
+    code: String,
+    used_variable: String,
+}
+
+#[derive(Debug, Clone)]
+struct CrossFileTaintFlow {
+    source_file: String,
+    source_function: String,
+    source_line: usize,
+    sink_file: String,
+    sink_function: String,
+    sink_line: usize,
+    flow_path: Vec<String>, // List of files in the flow path
+    rule: crate::rules::UnifiedRule,
+}
+
+impl MultiFileTaintAnalyzer {
+    fn new() -> Self {
+        Self {
+            file_exports: std::collections::HashMap::new(),
+            file_imports: std::collections::HashMap::new(),
+            cross_file_flows: Vec::new(),
+            processed_cross_file_flows: std::collections::HashSet::new(),
+        }
+    }
+    
+    /// Analyze all files for cross-file taint flows
+    fn analyze_cross_file_flows(
+        &mut self,
+        files_by_language: &std::collections::HashMap<String, Vec<std::path::PathBuf>>,
+        taint_rules: &[&crate::rules::UnifiedRule],
+    ) -> Result<Vec<crate::models::Finding>> {
+        let mut findings = Vec::new();
+        
+        // Phase 1: Build import/export maps for all files
+        self.build_import_export_maps(files_by_language, taint_rules)?;
+        
+        // Phase 2: Use recursive tracing for cross-file taint flows
+        let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
+        for (sink_file, imports) in &self.file_imports {
+            for sink_info in &imports.taint_sinks {
+                let mut visited = std::collections::HashSet::new();
+                if let Some((source_file, source_info, flow_path)) = self.trace_taint_to_source(sink_file, &sink_info.used_variable, &mut visited, 10, 0) {
+                    let flow_key = (source_file.clone(), source_info.function.clone(), sink_file.clone(), sink_info.function.clone());
+                    if !self.processed_cross_file_flows.contains(&flow_key) {
+                        self.processed_cross_file_flows.insert(flow_key);
+                        
+                        // Create the cross-file flow
+                        let cross_file_flow = CrossFileTaintFlow {
+                            source_file: source_file.clone(),
+                            source_function: source_info.function.clone(),
+                            source_line: source_info.line,
+                            sink_file: sink_file.clone(),
+                            sink_function: sink_info.function.clone(),
+                            sink_line: sink_info.line,
+                            flow_path,
+                            rule: rule_deduplicator.get_rule_for_combination(&source_info.pattern, &sink_info.pattern)
+                                .unwrap_or(&taint_rules[0]).clone(),
+                        };
+                        
+                        self.cross_file_flows.push(cross_file_flow.clone());
+                        findings.push(self.create_cross_file_finding(&cross_file_flow));
+                    }
+                }
+            }
+        }
+        
+        Ok(findings)
+    }
+    
+    /// Build import/export maps for all files
+    fn build_import_export_maps(
+        &mut self,
+        files_by_language: &std::collections::HashMap<String, Vec<std::path::PathBuf>>,
+        taint_rules: &[&crate::rules::UnifiedRule],
+    ) -> Result<()> {
+        let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
+        
+        for (language, files) in files_by_language {
+            if language == "python" {
+                for file_path in files {
+                    let filepath = file_path.to_string_lossy();
+                    let source = std::fs::read(file_path)?;
+                    
+                    crate::scanner::core::with_local_parser(language, |parser| {
+                        let tree = parser.parse(&source)?;
+                        let language_support = crate::language::get_language_support(language)?;
+                        
+                        self.analyze_file_imports_exports(
+                            &filepath,
+                            &source,
+                            &tree,
+                            &rule_deduplicator,
+                            language_support.as_ref(),
+                        );
+                        
+                        Ok(())
+                    })?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Analyze a single file for imports, exports, and taint sources/sinks - ENHANCED with better debugging
+    fn analyze_file_imports_exports(
+        &mut self,
+        filepath: &str,
+        source: &[u8],
+        tree: &tree_sitter::Tree,
+        rule_deduplicator: &TaintRuleDeduplicator,
+        _language_support: &dyn crate::language::LanguageSupport,
+    ) {
+        let mut exports = FileExports {
+            functions: std::collections::HashSet::new(),
+            variables: std::collections::HashSet::new(),
+            taint_sources: Vec::new(),
+        };
+        
+        let mut imports = FileImports {
+            functions: std::collections::HashMap::new(),
+            variables: std::collections::HashMap::new(),
+            taint_sinks: Vec::new(),
+        };
+        
+        // Collect all relevant nodes with error handling
+        let mut all_nodes = Vec::new();
+        Self::collect_all_relevant_nodes(tree.root_node(), &mut all_nodes, source);
+        
+        for node in all_nodes {
+            // Safely extract node text to avoid panics
+            let node_text = crate::parser::get_node_text(&node, source);
+            
+            let line = node.start_position().row + 1;
+            let func_name = ScanningLogic::get_containing_function_name(&node, source);
+            
+            // Skip string literals and metadata
+            if node_text.trim().starts_with('"') || node_text.trim().starts_with("'") || 
+               node_text.contains("__all__") || node_text.contains("__version__") {
+                continue;
+            }
+            
+            // Check for function definitions
+            if let Some(function_name) = Self::extract_function_definition(&node_text) {
+                exports.functions.insert(function_name.clone());
+            }
+            
+            // Check for imports
+            if let Some(import_list) = Self::extract_import_info(&node_text) {
+                for (func_name, module_name) in import_list {
+                    // Convert module name to full file path to match export keys
+                    let module_file_path = if module_name.ends_with(".py") {
+                        module_name
+                    } else {
+                        // Convert module_a -> test_files/accuracy_tests/cross_file/module_a.py
+                        let base_dir = std::path::Path::new(filepath).parent().unwrap_or(std::path::Path::new(""));
+                        let module_file = format!("{}.py", module_name);
+                        base_dir.join(module_file).to_string_lossy().to_string()
+                    };
+                    
+                    imports.functions.insert(func_name, module_file_path);
+                }
+            }
+            
+            // Check for taint sources (environment variables, command line args, etc.)
+            if let Some(source_pattern) = Self::extract_taint_source_pattern(&node, source, rule_deduplicator) {
+                exports.taint_sources.push(TaintSourceInfo {
+                    function: func_name.clone(),
+                    line,
+                    pattern: source_pattern,
+                    code: node_text.clone(),
+                });
+            }
+            
+            // ENHANCED: Check if this is a function definition that contains taint sources
+            if node.kind() == "function_definition" {
+                if Self::function_contains_taint_sources(&node, source, rule_deduplicator) {
+                    let function_name = Self::extract_function_definition(&node_text).unwrap_or("unknown".to_string());
+                    exports.taint_sources.push(TaintSourceInfo {
+                        function: function_name,
+                        line,
+                        pattern: "function_with_taint_sources".to_string(),
+                        code: node_text.clone(),
+                    });
+                }
+            }
+            
+            // Check for taint sinks (eval, exec, os.system, etc.)
+            if let Some(sink_pattern) = Self::extract_taint_sink_pattern(&node, source, rule_deduplicator) {
+                if let Some(used_var) = Self::extract_sink_variable(&node_text) {
+                    imports.taint_sinks.push(TaintSinkInfo {
+                        function: func_name.clone(),
+                        line,
+                        pattern: sink_pattern,
+                        code: node_text.clone(),
+                        used_variable: used_var,
+                    });
+                }
+            }
+        }
+        
+        self.file_exports.insert(filepath.to_string(), exports);
+        self.file_imports.insert(filepath.to_string(), imports);
+    }
+    
+    /// Extract taint source pattern by analyzing the node more intelligently - ENHANCED for better detection
+    fn extract_taint_source_pattern(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<String> {
+        let node_text = crate::parser::get_node_text(node, source);
+        
+        // Skip string literals and other non-code nodes
+        if node.kind() == "string" || node.kind() == "string_literal" {
+            return None;
+        }
+        
+        // Check all source patterns against this node
+        for pattern in &rule_deduplicator.source_patterns {
+            // Direct pattern matching for simple cases
+            if Self::matches_taint_pattern_in_context(pattern, &node_text, node.kind(), "") {
+                return Some(pattern.clone());
+            }
+            
+            // Enhanced pattern matching for complex expressions
+            if Self::enhanced_taint_source_matching(pattern, &node_text, node, source) {
+                return Some(pattern.clone());
+            }
+        }
+        
+        None
+    }
+    
+    /// Context-aware pattern matching - NEW function
+    fn matches_taint_pattern_in_context(
+        pattern: &str,
+        text: &str,
+        _node_kind: &str,
+        _context: &str,
+    ) -> bool {
+        // Skip string literals in any context
+        if text.starts_with('"') || text.starts_with("'") || text.starts_with("b\"") || text.starts_with("b'") {
+            return false;
+        }
+        
+        // Skip __all__ lists and other metadata
+        if text.contains("__all__") || text.contains("__version__") || text.contains("__author__") {
+            return false;
+        }
+        
+        // Use the unified pattern matching from CommonUtils
+        crate::common::CommonUtils::matches_unified_pattern(pattern, text)
+    }
+    
+    /// Enhanced taint source matching for complex expressions - NEW function
+    fn enhanced_taint_source_matching(
+        pattern: &str,
+        node_text: &str,
+        node: &tree_sitter::Node,
+        source: &[u8],
+    ) -> bool {
+        // Handle os.environ patterns
+        if pattern.contains("os.environ") || pattern.contains("os\\.environ") {
+            if node_text.contains("os.environ") || 
+               node_text.contains("os.getenv") ||
+               Self::contains_os_environ_call(node, source) {
+                return true;
+            }
+        }
+        
+        // Handle sys.argv patterns  
+        if pattern.contains("sys.argv") || pattern.contains("sys\\.argv") {
+            if node_text.contains("sys.argv") ||
+               Self::contains_sys_argv_access(node, source) {
+                return true;
+            }
+        }
+        
+        // Handle request patterns (web frameworks)
+        if pattern.contains("request") {
+            if node_text.contains("request.") ||
+               node_text.contains("flask.request") ||
+               node_text.contains("django.request") {
+                return true;
+            }
+        }
+        
+        // Handle input patterns
+        if pattern.contains("input(") || pattern.contains("input\\(") {
+            if node_text.contains("input(") ||
+               node_text.contains("raw_input(") {
+                return true;
+            }
+        }
+        
+        false
+    }
+    
+    /// Check if node contains os.environ access - NEW function
+    fn contains_os_environ_call(node: &tree_sitter::Node, source: &[u8]) -> bool {
+        // Check if this node or its children contain os.environ access
+        if node.kind() == "attribute" {
+            let node_text = crate::parser::get_node_text(node, source);
+            if node_text.contains("os.environ") {
+                return true;
+            }
+        }
+        
+        // Check for method calls like os.environ.get(), os.getenv()
+        if node.kind() == "call" {
+            if let Some(func_node) = node.child_by_field_name("function") {
+                let func_text = crate::parser::get_node_text(&func_node, source);
+                if func_text.contains("os.environ") || 
+                   func_text.contains("os.getenv") ||
+                   func_text == "getenv" {
+                    return true;
+                }
+            }
+        }
+        
+        // Recursively check children
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                if Self::contains_os_environ_call(&cursor.node(), source) {
+                    return true;
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        
+        false
+    }
+    
+    /// Check if node contains sys.argv access - NEW function  
+    fn contains_sys_argv_access(node: &tree_sitter::Node, source: &[u8]) -> bool {
+        // Check if this node or its children contain sys.argv access
+        if node.kind() == "attribute" || node.kind() == "subscript" {
+            let node_text = crate::parser::get_node_text(node, source);
+            if node_text.contains("sys.argv") {
+                return true;
+            }
+        }
+        
+        // Recursively check children
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                if Self::contains_sys_argv_access(&cursor.node(), source) {
+                    return true;
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        
+        false
+    }
+    
+    /// Extract taint sink pattern by analyzing the node more intelligently - FIXED for context awareness
+    fn extract_taint_sink_pattern(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<String> {
+        let node_text = crate::parser::get_node_text(node, source);
+        
+        // Skip string literals and other non-code nodes
+        if node.kind() == "string" || node.kind() == "string_literal" {
+            return None;
+        }
+        
+        // For call nodes, extract the function name
+        if node.kind() == "call" {
+            if let Some(func_name) = Self::extract_function_name_from_call(node, source) {
+                // Check if this function name matches any taint sink patterns
+                for pattern in &rule_deduplicator.sink_patterns {
+                    if Self::function_matches_pattern(&func_name, pattern) {
+                        return Some(pattern.clone());
+                    }
+                }
+            }
+        }
+        
+        // For expression nodes, check the full expression
+        if node.kind() == "expression_statement" || node.kind() == "binary_expression" {
+            for pattern in &rule_deduplicator.sink_patterns {
+                if Self::matches_taint_pattern_in_context(pattern, &node_text, node.kind(), "expression") {
+                    return Some(pattern.clone());
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Extract function name from a call node
+    fn extract_function_name_from_call(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            // The first child should be the function name/expression
+            let func_node = cursor.node();
+            let func_text = crate::parser::get_node_text(&func_node, source);
+            
+            // Handle different types of function calls
+            match func_node.kind() {
+                "identifier" => {
+                    // Simple function call: func()
+                    return Some(func_text);
+                }
+                "attribute" => {
+                    // Method call: obj.method()
+                    return Some(func_text);
+                }
+                _ => {
+                    // Other cases, try to extract the function name
+                    return Some(func_text);
+                }
+            }
+        }
+        None
+    }
+    
+    /// Extract assignment value from assignment nodes
+    fn extract_assignment_value(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
+        let mut cursor = node.walk();
+        let mut found_right_side = false;
+        
+        while cursor.goto_next_sibling() {
+            if found_right_side {
+                // This is the right side of the assignment
+                return Some(crate::parser::get_node_text(&cursor.node(), source));
+            }
+            
+            if cursor.node().kind() == "=" {
+                found_right_side = true;
+            }
+        }
+        None
+    }
+    
+    /// Check if a function name matches a taint pattern
+    fn function_matches_pattern(func_name: &str, pattern: &str) -> bool {
+        // Clean up the pattern to extract just the function name
+        let clean_pattern = pattern
+            .replace("\\(", "")
+            .replace("\\)", "")
+            .replace("\\.", ".")
+            .replace("\\\\", "\\");
+        
+        // Check if the function name matches the pattern
+        if clean_pattern.contains(func_name) {
+            return true;
+        }
+        
+        // Handle patterns like "os\\.system" -> "os.system"
+        if clean_pattern.contains(".") && func_name.contains(".") {
+            return clean_pattern == func_name;
+        }
+        
+        // Handle patterns like "eval\\(" -> "eval"
+        if clean_pattern.ends_with(func_name) {
+            return true;
+        }
+        
+        false
+    }
+    
+    /// Extract the variable/function being used in a sink call - ENHANCED for complex expressions
+    fn extract_sink_variable(text: &str) -> Option<String> {
+        // Skip string literals
+        if text.trim().starts_with('"') || text.trim().starts_with("'") {
+            return None;
+        }
+        
+        // Look for function calls like eval(var), exec(var), os.system(var)
+        if let Some(paren_start) = text.find('(') {
+            if let Some(paren_end) = text.rfind(')') {
+                let args = &text[paren_start + 1..paren_end];
+                if let Some(first_arg) = args.split(',').next() {
+                    let cleaned = first_arg.trim();
+                    // Only return if it looks like a variable (not a string literal)
+                    if !cleaned.is_empty() && 
+                       !cleaned.starts_with('"') && 
+                       !cleaned.starts_with('\'') &&
+                       !cleaned.starts_with('/') &&
+                       !cleaned.chars().all(|c| c.is_numeric()) &&
+                       !cleaned.contains("__all__") {
+                        return Some(cleaned.to_string());
+                    }
+                }
+            }
+        }
+        
+        // Handle method calls like obj.method(var)
+        if let Some(dot_pos) = text.rfind('.') {
+            if let Some(paren_start) = text.find('(') {
+                if paren_start > dot_pos {
+                    let args = &text[paren_start + 1..];
+                    if let Some(paren_end) = args.rfind(')') {
+                        let arg_content = &args[..paren_end];
+                        if let Some(first_arg) = arg_content.split(',').next() {
+                            let cleaned = first_arg.trim();
+                            if !cleaned.is_empty() && 
+                               !cleaned.starts_with('"') && 
+                               !cleaned.starts_with('\'') {
+                                return Some(cleaned.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Create a finding from a cross-file taint flow
+    fn create_cross_file_finding(&self, flow: &CrossFileTaintFlow) -> crate::models::Finding {
+        let taint_source = crate::models::TaintSource {
+            file: flow.source_file.clone(),
+            line: flow.source_line,
+            function: flow.source_function.clone(),
+            variable: flow.source_function.clone(), // Function name as variable
+            operation: "cross_file_import".to_string(),
+            code: format!("Function exported from {}", flow.source_file),
+            branch_id: None,
+        };
+        
+        let taint_sink = crate::models::TaintSink {
+            file: flow.sink_file.clone(),
+            line: flow.sink_line,
+            function: flow.sink_function.clone(),
+            variable: flow.source_function.clone(), // Imported function name
+            operation: "cross_file_sink".to_string(),
+            code: format!("Imported function used in {}", flow.sink_file),
+            branch_id: None,
+        };
+        
+        crate::models::Finding {
+            file: flow.sink_file.clone(),
+            line: flow.sink_line,
+            column: 0,
+            end_line: flow.sink_line,
+            end_column: 0,
+            function: flow.sink_function.clone(),
+            finding_type: flow.rule.finding_type.clone().unwrap_or_else(|| "Cross-File Taint Flow".to_string()),
+            snippet: format!("Cross-file flow: {} -> {}", flow.source_file, flow.sink_file),
+            severity: flow.rule.severity.clone().unwrap_or_else(|| "High".to_string()),
+            confidence: flow.rule.confidence.clone().unwrap_or_else(|| "Medium".to_string()),
+            description: flow.rule.description.clone().or_else(|| Some(format!(
+                "Cross-file taint flow detected from {} (line {}) to {} (line {})",
+                flow.source_function, flow.source_line, flow.sink_function, flow.sink_line
+            ))),
+            source_info: Some(crate::models::SourceInfo {
+                source_type: "cross_file_import".to_string(),
+                location: format!("{}:{}", flow.source_file, flow.source_line),
+                context: format!("Function exported from {}", flow.source_file),
+            }),
+            sink_info: Some(crate::models::SinkInfo {
+                sink_type: "cross_file_sink".to_string(),
+                function_name: flow.sink_function.clone(),
+                location: format!("{}:{}", flow.sink_file, flow.sink_line),
+                variable: Some(flow.source_function.clone()),
+            }),
+            traces: None,
+            tags: Some(vec![
+                "taint_analysis".to_string(),
+                "cross_file".to_string(),
+                "data_flow".to_string(),
+                flow.rule.category.clone().unwrap_or_else(|| "injection".to_string()),
+            ]),
+        }
+    }
+    
+    /// Extract import information from node text - FIXED for multi-line imports and parentheses
+    fn extract_import_info(text: &str) -> Option<Vec<(String, String)>> {
+        let mut imports = Vec::new();
+        let trimmed_text = text.trim();
+        
+        // Only parse actual import statements, not string literals
+        if trimmed_text.starts_with("from ") && trimmed_text.contains(" import ") {
+            if let Some(from_start) = trimmed_text.find("from ") {
+                if let Some(import_start) = trimmed_text.find(" import ") {
+                    let module_part = &trimmed_text[from_start + 5..import_start].trim();
+                    let import_part = &trimmed_text[import_start + 8..].trim();
+                    
+                    // Clean up import part - remove parentheses and newlines
+                    let cleaned_import_part = import_part
+                        .replace('(', "")
+                        .replace(')', "")
+                        .replace('\n', " ")
+                        .replace('\r', " ");
+                    
+                    // Handle multiple imports: "from module import func1, func2"
+                    for import in cleaned_import_part.split(',') {
+                        let func_name = import.trim();
+                        if !func_name.is_empty() && 
+                           !func_name.starts_with('"') && 
+                           !func_name.starts_with("'") &&
+                           !func_name.contains("__") { // Skip __all__ etc
+                            imports.push((func_name.to_string(), module_part.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Handle "import module" pattern (for module-level imports)
+        if trimmed_text.starts_with("import ") && !trimmed_text.contains(" from ") {
+            let module_part = &trimmed_text[7..].trim();
+            if !module_part.is_empty() && !module_part.starts_with('"') && !module_part.starts_with("'") {
+                // For module imports, we'll track the module name itself
+                imports.push((module_part.to_string(), module_part.to_string()));
+            }
+        }
+        
+        if imports.is_empty() {
+            None
+        } else {
+            Some(imports)
+        }
+    }
+    
+    /// Extract function definition from node text
+    fn extract_function_definition(text: &str) -> Option<String> {
+        if text.contains("def ") {
+            if let Some(def_start) = text.find("def ") {
+                let after_def = &text[def_start + 4..];
+                if let Some(paren_start) = after_def.find('(') {
+                    let func_name = &after_def[..paren_start].trim();
+                    if !func_name.is_empty() {
+                        return Some(func_name.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    /// Collect all relevant nodes for import/export analysis - FIXED to avoid string literals
+    fn collect_all_relevant_nodes<'a>(node: tree_sitter::Node<'a>, nodes: &mut Vec<tree_sitter::Node<'a>>, source: &[u8]) {
+        // Only collect actual code nodes, not string literals or metadata
+        match node.kind() {
+            "import_statement" | "import_from_statement" | "function_definition" | 
+            "call" | "expression_statement" | "assignment_expression" |
+            "return_statement" | "binary_expression" | "identifier" => {
+                nodes.push(node);
+            }
+            // Skip string literals, comments, and metadata
+            "string" | "string_literal" | "comment" | "module" => {
+                // Don't collect these
+            }
+            _ => {
+                // For other node types, check if they contain actual code
+                if let Some(node_text) = crate::common::CommonUtils::extract_node_text(&node, source) {
+                    if !node_text.trim().is_empty() && 
+                       !node_text.starts_with('"') && 
+                       !node_text.starts_with("'") &&
+                       !node_text.contains("__all__") {
+                        nodes.push(node);
+                    }
+                }
+            }
+        }
+        
+        // Recursively process children
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                Self::collect_all_relevant_nodes(cursor.node(), nodes, source);
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Recursively trace taint from a sink variable/function back to sources across files - COMPLETELY REWRITTEN
+    fn trace_taint_to_source(
+        &self,
+        start_file: &str,
+        start_var: &str,
+        visited: &mut std::collections::HashSet<(String, String)>,
+        max_hops: usize,
+        current_hops: usize,
+    ) -> Option<(String, TaintSourceInfo, Vec<String>)> {
+        let key = (start_file.to_string(), start_var.to_string());
+        if visited.contains(&key) || current_hops >= max_hops {
+            return None;
+        }
+        visited.insert(key.clone());
+
+        // Strategy 1: Check if this variable/function is directly a taint source in this file
+        if let Some(exports) = self.file_exports.get(start_file) {
+            for source_info in &exports.taint_sources {
+                // Check if the function name matches
+                if &source_info.function == start_var {
+                    return Some((start_file.to_string(), source_info.clone(), vec![start_file.to_string()]));
+                }
+                
+                // Check if the variable might be related to this taint source
+                if source_info.code.contains(start_var) || source_info.function.contains(start_var) {
+                    return Some((start_file.to_string(), source_info.clone(), vec![start_file.to_string()]));
+                }
+            }
+        }
+
+        // Strategy 2: Check if this variable comes from a function call to an imported function
+        if let Some(imports) = self.file_imports.get(start_file) {
+            // Look for imported functions that might be the source of this variable
+            for (imported_func, source_file) in &imports.functions {
+                // Check if this imported function might be related to our variable
+                if imported_func == start_var || 
+                   start_var.contains(imported_func) ||
+                   imported_func.contains("get_") ||  // Common taint source pattern
+                   imported_func.contains("propagate_") {  // Common propagation pattern
+                    
+                    // Recursively trace in the source file
+                    if let Some((final_source_file, final_source_info, mut path)) = 
+                        self.trace_taint_to_source(source_file, imported_func, visited, max_hops, current_hops + 1) {
+                        path.push(start_file.to_string());
+                        return Some((final_source_file, final_source_info, path));
+                    }
+                }
+            }
+        }
+
+        // Strategy 3: Look for any tainted functions in the export file that could be the source
+        if let Some(imports) = self.file_imports.get(start_file) {
+            for (imported_func, source_file) in &imports.functions {
+                // Check if the source file has any taint sources
+                if let Some(source_exports) = self.file_exports.get(source_file) {
+                    for source_info in &source_exports.taint_sources {
+                        // If this imported function contains taint sources, trace it
+                        if &source_info.function == imported_func || 
+                           source_info.function.contains("get_") ||
+                           source_info.function.contains("env") ||
+                           source_info.function.contains("arg") {
+                            
+                            let path = vec![source_file.to_string(), start_file.to_string()];
+                            return Some((source_file.to_string(), source_info.clone(), path));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Strategy 4: Broad search - look for any functions that might propagate taint
+        if let Some(imports) = self.file_imports.get(start_file) {
+            for (imported_func, source_file) in &imports.functions {
+                // For functions that might be propagating taint
+                if imported_func.starts_with("propagate_") || 
+                   imported_func.starts_with("get_") ||
+                   imported_func.contains("config") ||
+                   imported_func.contains("data") ||
+                   imported_func.contains("env") {
+                    
+                    // Check if the source file has taint sources
+                    if let Some(source_exports) = self.file_exports.get(source_file) {
+                        if !source_exports.taint_sources.is_empty() {
+                            // Find the most relevant taint source
+                            for source_info in &source_exports.taint_sources {
+                                // Match by function name or by pattern relevance
+                                if &source_info.function == imported_func ||
+                                   source_info.function.contains("get_") ||
+                                   source_info.function.contains("database") ||
+                                   source_info.function.contains("config") ||
+                                   source_info.function.contains("env") ||
+                                   source_info.function.contains("arg") ||
+                                   source_info.pattern.contains("os.environ") ||
+                                   source_info.pattern.contains("sys.argv") {
+                                    
+                                    let path = vec![source_file.to_string(), start_file.to_string()];
+                                    return Some((source_file.to_string(), source_info.clone(), path));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Strategy 5: Last resort - if we have any taint sources in imported files, use them
+        if let Some(imports) = self.file_imports.get(start_file) {
+            for (imported_func, source_file) in &imports.functions {
+                if let Some(source_exports) = self.file_exports.get(source_file) {
+                    if !source_exports.taint_sources.is_empty() {
+                        // Use the first available taint source as a potential match
+                        let source_info = &source_exports.taint_sources[0];
+                        let path = vec![source_file.to_string(), start_file.to_string()];
+                        return Some((source_file.to_string(), source_info.clone(), path));
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Check if a function definition contains taint sources in its body - NEW function
+    fn function_contains_taint_sources(
+        func_node: &tree_sitter::Node,
+        source: &[u8],
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> bool {
+        // Recursively check all nodes in the function body
+        let mut cursor = func_node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                let node = cursor.node();
+                
+                // Check if this node is a taint source
+                if Self::extract_taint_source_pattern(&node, source, rule_deduplicator).is_some() {
+                    return true;
+                }
+                
+                // Recursively check children
+                if Self::function_contains_taint_sources(&node, source, rule_deduplicator) {
+                    return true;
+                }
+                
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        
+        false
+    }
+}
+
+
