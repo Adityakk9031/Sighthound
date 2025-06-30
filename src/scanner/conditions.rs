@@ -22,7 +22,7 @@ pub fn check_single_condition(
     condition: &Condition,
     language_support: &dyn LanguageSupport,
 ) -> bool {
-    match condition.condition_type.as_str() {
+    match condition.condition_type.as_ref().map(|s| s.as_str()).unwrap_or("") {
         "has_argument" => check_has_argument_condition(node, source, condition, language_support),
         "in_context" => check_in_context_condition(node, condition),
         "has_parent" => check_has_parent_condition(node, condition),

@@ -6,7 +6,8 @@ use crate::parser::get_node_text;
 use crate::scanner::utils::{AstUtils, CodePatternType, VariableType};
 use crate::scanner::data_flow::DataFlowGraph;
 use crate::common::CommonUtils;
-use tree_sitter::{Node, Tree};
+use tree_sitter::{Node, Tree, TreeCursor};
+use crate::models::{TaintFlow, TaintSource, TaintSink, TaintTrace, TaintSummary, TraceType};
 
 // Constants for taint analysis
 const DEFAULT_SEVERITY: &str = "High";
@@ -92,7 +93,13 @@ impl TaintAnalysisResult {
                     line: trace.line,
                     code: trace.code.clone(),
                     variable: trace.variable.clone(),
-                    operation: trace.operation.clone(),
+                    operation: match trace.trace_type {
+                        TraceType::Propagation => "propagation".to_string(),
+                        TraceType::Assignment => "assignment".to_string(),
+                        TraceType::Sanitization => "sanitization".to_string(),
+                        TraceType::FunctionCall => "function_call".to_string(),
+                        TraceType::CrossFileImport => "cross_file_import".to_string(),
+                    },
                     function: trace.function.clone(),
                 }).collect())
             },
@@ -103,25 +110,6 @@ impl TaintAnalysisResult {
             ]),
         }).collect()
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaintFlow {
-    pub flow_id: String,
-    pub flow_name: Option<String>,
-    pub severity: String,
-    pub confidence: String,
-    pub source: TaintSource,
-    pub sink: TaintSink,
-    pub traces: Vec<TaintTrace>,
-    pub is_sanitized: bool,
-    pub sanitization_points: Vec<TaintTrace>,
-    pub is_cross_file: bool,
-    // NEW: Rule information for better reporting
-    pub rule_id: Option<String>,
-    pub rule_name: Option<String>, 
-    pub rule_description: Option<String>,
-    pub rule_finding_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -296,62 +284,6 @@ impl ControlFlowScope {
     }
 }
 
-// Enhanced TaintSource and TaintSink with branch information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaintSource {
-    pub file: String,
-    pub line: usize,
-    pub function: String,
-    pub variable: String,
-    pub operation: String,
-    pub code: String,
-    // NEW: Branch tracking for control flow awareness
-    pub branch_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaintSink {
-    pub file: String,
-    pub line: usize,
-    pub function: String,
-    pub variable: String,
-    pub operation: String,
-    pub code: String,
-    // NEW: Branch tracking for control flow awareness  
-    pub branch_id: Option<String>,
-}
-
-// Re-added missing structures
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaintTrace {
-    pub file: String,
-    pub line: usize,
-    pub function: String,
-    pub variable: String,
-    pub operation: String,
-    pub code: String,
-    pub trace_type: TraceType,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum TraceType {
-    Propagation,
-    Assignment,
-    Sanitization,
-    FunctionCall,
-    CrossFileImport,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaintSummary {
-    pub total_flows: usize,
-    pub unsanitized_flows: usize,
-    pub sanitized_flows: usize,
-    pub cross_file_flows: usize,
-    pub files_analyzed: usize,
-    pub functions_analyzed: usize,
-}
-
 pub struct TaintAnalyzer {
     rules: Rules,
     variable_tracker: VariableTracker,
@@ -466,13 +398,11 @@ impl TaintAnalyzer {
                 }
                 
                 // ENHANCED: Use branch-aware data flow graph validation
-                if let Some(_flow_path) = self.data_flow_graph.find_flow_path_with_scope(
-                    &source_item.variable, 
+                if let Some(flow_path) = self.data_flow_graph.find_flow_path(
+                    &source_item.variable,
                     &sink_item.variable,
-                    source_item.branch_id.as_deref(),
-                    sink_item.branch_id.as_deref(),
-                    source_item.line, 
-                    sink_item.line
+                    source_item.line,
+                    sink_item.line,
                 ) {
                     // Only create flow if there's actual validated data flow
                     let flow_id = format!("flow_{}_{}_{}_{}", 
@@ -772,20 +702,17 @@ impl TaintAnalyzer {
         _language_support: &dyn LanguageSupport,
     ) -> Vec<TaintTrace> {
         // Only collect traces from validated flow path to eliminate phantom variables
-        if let Some(flow_path) = self.data_flow_graph.find_flow_path_with_scope(
-            &source.variable, 
+        if let Some(flow_path) = self.data_flow_graph.find_flow_path(
+            &source.variable,
             &sink.variable,
-            source.branch_id.as_deref(),
-            sink.branch_id.as_deref(),
-            source.line, 
-            sink.line
+            source.line,
+            sink.line,
         ) {
             // Convert validated flow path steps to taint traces
             flow_path.steps.into_iter().map(|step| TaintTrace {
                 file: source.file.clone(),
                 line: step.line,
                 variable: step.variable,
-                operation: "assignment".to_string(),
                 code: step.context,
                 trace_type: TraceType::Assignment,
                 function: source.function.clone(),
@@ -1899,7 +1826,6 @@ impl TaintAnalyzer {
                 line: 1, // Approximate import line
                 function: "import".to_string(),
                 variable: source.function.clone(),
-                operation: "cross_file_import".to_string(),
                 code: format!("from {} import {}", source.file, source.function),
                 trace_type: TraceType::CrossFileImport,
             });
@@ -1917,7 +1843,7 @@ impl TaintAnalyzer {
         
         // Deduplicate and sort traces
         traces.sort_by(|a, b| a.line.cmp(&b.line));
-        traces.dedup_by(|a, b| a.line == b.line && a.operation == b.operation);
+        traces.dedup_by(|a, b| a.line == b.line && a.trace_type == b.trace_type);
         
         traces
     }
@@ -1972,7 +1898,6 @@ impl TaintAnalyzer {
                     line: node_line,
                     function: function_name,
                     variable: assigned_var,
-                    operation: "assignment".to_string(),
                     code: node_text.trim().to_string(),
                     trace_type: TraceType::Assignment,
                 };

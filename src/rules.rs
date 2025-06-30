@@ -5,6 +5,11 @@ use std::fs;
 use std::path::Path;
 use crate::language::LanguageSupport;
 use crate::common::CommonUtils;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use walkdir::WalkDir;
+// Re-export for backward compatibility
+pub use crate::models::{UnifiedRule, FileTypes, Condition};
 
 // Use consolidated deserializer from CommonUtils
 fn deserialize_pattern<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -22,7 +27,6 @@ where
     CommonUtils::deserialize_optional_vector(deserializer)
 }
 
-
 // Simple injection pattern checking for basic patterns
 pub fn check_for_injection_pattern(text: &str, _language_support: &dyn LanguageSupport) -> bool {
     // Basic injection indicators that are language-agnostic
@@ -34,201 +38,6 @@ pub fn check_for_injection_pattern(text: &str, _language_support: &dyn LanguageS
     ];
     
     basic_patterns.iter().any(|&pattern| text.contains(pattern))
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct FileTypes {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub extensions: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub include_patterns: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub exclude_patterns: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Condition {
-    #[serde(rename = "type")]
-    pub condition_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_pattern")]
-    pub pattern: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub not_in: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_type: Option<String>,
-    // Enhanced fields for better tree-sitter integration
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub node_type: Option<String>,                     // Expected AST node type
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub argument_position: Option<usize>,              // Specific argument index
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub within_lines: Option<usize>,                   // Distance constraint for proximity checks
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_patterns")]
-    pub patterns: Option<Vec<String>>,                 // Multiple patterns
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ancestor_types: Option<Vec<String>>,           // Required ancestor node types
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub check_siblings: Option<bool>,                  // Check sibling nodes for related patterns
-}
-
-
-
-// Enhanced unified rule structure that supports both pattern matching and taint analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnifiedRule {
-    // Rule identification and metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub id: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub name: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub description: Option<String>,
-    
-    // NEW: Category field for organization
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub category: Option<String>,
-    
-    // Analysis mode - determines how the rule is processed
-    #[serde(default = "default_search_mode")]
-    pub mode: String, // "search" (default) or "taint"
-    
-    // Pattern matching (used in search mode)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub pattern: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub patterns: Option<Vec<String>>,
-    
-    // Taint analysis fields (used when mode = "taint")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub sources: Option<Vec<String>>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub sinks: Option<Vec<String>>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub propagators: Option<Vec<String>>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub sanitizers: Option<Vec<String>>,
-    
-    // Metadata and configuration
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub finding_type: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub severity: Option<String>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub confidence: Option<String>,
-    
-    // File filtering
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub file_types: Option<FileTypes>,
-    
-    // Advanced conditions for pattern matching
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub conditions: Option<Vec<Condition>>,
-    
-    // Additional metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<Vec<String>>,
-    
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub message: Option<String>,
-}
-
-fn default_search_mode() -> String {
-    "search".to_string()
-}
-
-impl UnifiedRule {
-    /// Returns true if this is a taint analysis rule
-    pub fn is_taint_rule(&self) -> bool {
-        self.mode == "taint"
-    }
-    
-    /// Returns true if this is a search/pattern matching rule
-    pub fn is_search_rule(&self) -> bool {
-        self.mode == "search" || self.mode.is_empty()
-    }
-    
-    /// Validates that the rule has the required fields for its mode
-    pub fn validate(&self) -> Result<(), String> {
-        match self.mode.as_str() {
-            "search" | "" => {
-                if self.pattern.is_none() && self.patterns.is_none() {
-                    return Err("Search mode rules must have either 'pattern' or 'patterns'".to_string());
-                }
-            }
-            "taint" => {
-                if self.sources.is_none() {
-                    return Err("Taint mode rules must have 'sources'".to_string());
-                }
-                if self.sinks.is_none() {
-                    return Err("Taint mode rules must have 'sinks'".to_string());
-                }
-            }
-            _ => {
-                return Err(format!("Unsupported rule mode: '{}'. Supported modes: 'search', 'taint'", self.mode));
-            }
-        }
-        Ok(())
-    }
-    
-    /// Gets the effective finding type, with fallback logic
-    pub fn get_finding_type(&self) -> String {
-        self.finding_type
-            .clone()
-            .unwrap_or_else(|| {
-                if self.is_taint_rule() {
-                    "Taint Flow Vulnerability".to_string()
-                } else {
-                    "Security Vulnerability".to_string()
-                }
-            })
-    }
-    
-    /// Gets the effective severity with fallback
-    pub fn get_severity(&self) -> String {
-        CommonUtils::get_default_severity(&self.severity)
-    }
-    
-    /// Gets the effective confidence with fallback
-    pub fn get_confidence(&self) -> String {
-        CommonUtils::get_default_confidence(&self.confidence)
-    }
-
-    /// Gets the category with fallback
-    pub fn get_category(&self) -> String {
-        self.category.clone().unwrap_or_else(|| "security".to_string())
-    }
 }
 
 // Simplified Rules structure - only unified rules

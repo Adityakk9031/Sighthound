@@ -498,8 +498,8 @@ impl ScanningLogic {
 
     /// Add metadata from rule to finding
     pub fn add_finding_metadata(finding: &mut crate::scanner::types::Finding, rule: &crate::rules::UnifiedRule, _node: &tree_sitter::Node) {
-        finding.severity = rule.get_severity();
-        finding.confidence = rule.get_confidence();
+        finding.severity = rule.get_severity().to_string();
+        finding.confidence = rule.get_confidence().to_string();
         finding.description = rule.description.clone();
         finding.tags = rule.tags.clone();
     }

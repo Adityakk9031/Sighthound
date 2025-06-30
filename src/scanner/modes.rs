@@ -2,7 +2,6 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::path::PathBuf;
-use walkdir::WalkDir;
 
 use crate::cli::Cli;
 use crate::rules::Rules;
@@ -12,9 +11,6 @@ use crate::scanner::utils::{discover_files_by_language, discover_files_by_langua
 use crate::scanner::core::ProgressManager;
 use crate::scanner::taint::merge_taint_results;
 use crate::scanner::{TaintAnalysisResult, TaintSummary};
-use crate::language::LanguageSupport;
-use crate::parser::LanguageParser;
-use crate::scanner::types::Finding as ScannerFinding;
 
 /// Unified scan configuration and execution context
 #[derive(Debug)]

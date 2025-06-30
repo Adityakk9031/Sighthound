@@ -2,12 +2,8 @@ use anyhow::{Context, Result};
 use tree_sitter::Node;
 use serde::{Deserialize, Deserializer};
 
-/// Standard language info structure (reduces boilerplate)
-pub struct LanguageInfo {
-    pub name: &'static str,
-    pub extension: &'static str,
-    pub call_types: &'static [&'static str],
-}
+// Re-export LanguageInfo from models for backward compatibility
+pub use crate::models::LanguageInfo;
 
 /// Consolidated common utilities used across the entire codebase
 /// This module eliminates DRY violations by providing unified implementations
