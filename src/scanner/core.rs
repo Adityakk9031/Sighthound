@@ -23,6 +23,95 @@ use crate::config::filters::SKIP_DIRS;
 
 use crate::models::{Finding};
 
+/// Helper struct for variable assignments
+struct VariableAssignment {
+    variable: String,
+    value: String,
+}
+
+/// Taint rule deduplicator to prevent cartesian product problems
+#[derive(Debug, Clone)]
+struct TaintRuleDeduplicator {
+    /// Mapping from (source_pattern, sink_pattern) to the rule that should handle it
+    rule_mapping: std::collections::HashMap<(String, String), crate::rules::UnifiedRule>,
+    /// Consolidated source patterns across all rules
+    source_patterns: std::collections::HashSet<String>,
+    /// Consolidated sink patterns across all rules  
+    sink_patterns: std::collections::HashSet<String>,
+}
+
+impl TaintRuleDeduplicator {
+    /// Create a new deduplicator from a list of taint rules
+    fn new(taint_rules: &[&crate::rules::UnifiedRule]) -> Self {
+        let mut deduplicator = Self {
+            rule_mapping: std::collections::HashMap::new(),
+            source_patterns: std::collections::HashSet::new(),
+            sink_patterns: std::collections::HashSet::new(),
+        };
+        
+        // Process each rule and create specific source-sink mappings
+        for rule in taint_rules {
+            if let (Some(sources), Some(sinks)) = (&rule.sources, &rule.sinks) {
+                // Add all patterns to consolidated sets
+                for source in sources {
+                    deduplicator.source_patterns.insert(source.clone());
+                }
+                for sink in sinks {
+                    deduplicator.sink_patterns.insert(sink.clone());
+                }
+                
+                // Create specific mappings for this rule's source-sink combinations
+                for source in sources {
+                    for sink in sinks {
+                        let key = (source.clone(), sink.clone());
+                        deduplicator.rule_mapping.insert(key, (*rule).clone());
+                    }
+                }
+            }
+        }
+        
+        deduplicator
+    }
+    
+    /// Get the specific rule for a source-sink combination
+    fn get_rule_for_combination(&self, source_pattern: &str, sink_pattern: &str) -> Option<&crate::rules::UnifiedRule> {
+        self.rule_mapping.get(&(source_pattern.to_string(), sink_pattern.to_string()))
+    }
+    
+    /// Check if a pattern matches any source
+    fn matches_source_pattern(&self, text: &str) -> Option<String> {
+        for pattern in &self.source_patterns {
+            if Self::matches_taint_pattern(pattern, text) {
+                return Some(pattern.clone());
+            }
+        }
+        None
+    }
+    
+    /// Check if a pattern matches any sink  
+    fn matches_sink_pattern(&self, text: &str) -> Option<String> {
+        for pattern in &self.sink_patterns {
+            if Self::matches_taint_pattern(pattern, text) {
+                return Some(pattern.clone());
+            }
+        }
+        None
+    }
+    
+    /// Pattern matching logic (reusing existing implementation)
+    fn matches_taint_pattern(pattern: &str, text: &str) -> bool {
+        // Handle regex patterns from taint rules
+        if pattern.contains("\\\\") || pattern.contains("\\.") {
+            if let Ok(regex) = regex::Regex::new(pattern) {
+                return regex.is_match(text);
+            }
+        }
+        
+        // Fallback to simple contains check for basic patterns
+        text.contains(&pattern.replace("\\.", ".").replace("\\\\", "\\"))
+    }
+}
+
 /// Shared functionality for vulnerability scanning (merged from shared.rs)
 pub struct ScanningLogic;
 
@@ -539,7 +628,7 @@ impl ScanningLogic {
         }
     }
 
-    /// Scan file with taint analysis rules (reuses existing infrastructure)
+    /// Scan file with taint analysis rules (fixed implementation with proper flow tracking)
     pub fn scan_file_with_taint_rules(
         filepath: &str,
         source: &[u8],
@@ -549,222 +638,183 @@ impl ScanningLogic {
     ) -> Vec<crate::models::Finding> {
         let mut findings = Vec::new();
         
-        // Collect sources and sinks from the AST
-        let mut sources: Vec<crate::models::TaintSource> = Vec::new();
-        let mut sinks: Vec<crate::models::TaintSink> = Vec::new();
+        // Create rule deduplicator to prevent cartesian product problems
+        let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
         
-        // Use existing efficient traversal pattern
-        let call_nodes: Vec<tree_sitter::Node> = crate::parser::traverse_calls_only(tree.root_node(), language_support).collect();
+        // Create variable flow tracker for legitimate flows only
+        let mut flow_tracker = VariableFlowTracker::new();
         
-        // Process each node to find sources and sinks
-        for node in call_nodes.iter() {
+        // Use broader traversal to include assignment statements 
+        let mut all_nodes = Vec::new();
+        Self::collect_all_relevant_nodes(tree.root_node(), &mut all_nodes);
+        
+
+        
+        // Phase 1: Track variable assignments from taint sources
+        for node in all_nodes.iter() {
             let node_text = crate::parser::get_node_text(node, source);
             let line = node.start_position().row + 1;
             let func_name = Self::get_containing_function_name(node, source);
             
-            for rule in taint_rules {
-                // Check for taint sources
-                if let Some(source_patterns) = &rule.sources {
-                    for pattern in source_patterns {
-                        if Self::matches_taint_pattern(pattern, &node_text) {
-                            let variable = Self::extract_variable_from_taint_source(&node_text, pattern);
-                            sources.push(crate::models::TaintSource {
-                                file: filepath.to_string(),
-                                line,
-                                function: func_name.clone(),
-                                variable: variable.clone(),
-                                operation: pattern.clone(),
-                                code: node_text.clone(),
-                                branch_id: None,
-                            });
+            // Look for assignment patterns: var = source_call()
+            if let Some(assignment) = Self::extract_assignment_from_node(&node_text) {
+                // Check if the assignment value matches any taint source
+                if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(&assignment.value) {
+                    
+                    flow_tracker.record_tainted_variable(
+                        assignment.variable.clone(),
+                        TaintVariableInfo {
+                            source_line: line,
+                            source_pattern,
+                            source_function: func_name,
+                            assignment_code: node_text.clone(),
                         }
-                    }
+                    );
                 }
-                
-                // Check for taint sinks
-                if let Some(sink_patterns) = &rule.sinks {
-                    for pattern in sink_patterns {
-                        if Self::matches_taint_pattern(pattern, &node_text) {
-                            let variable = Self::extract_variable_from_taint_sink(&node_text, pattern);
-                            sinks.push(crate::models::TaintSink {
-                                file: filepath.to_string(),
-                                line,
-                                function: func_name.clone(),
-                                variable: variable.clone(),
-                                operation: pattern.clone(),
-                                code: node_text.clone(),
-                                branch_id: None,
-                            });
+            }
+        }
+        
+        // Phase 2: Find sinks that use tainted variables
+        for node in all_nodes.iter() {
+            let node_text = crate::parser::get_node_text(node, source);
+            let line = node.start_position().row + 1;
+            let func_name = Self::get_containing_function_name(node, source);
+            
+            // Check if this node matches any sink pattern
+            if let Some(sink_pattern) = rule_deduplicator.matches_sink_pattern(&node_text) {
+                // Extract variables used in this sink
+                if let Some(used_variable) = Self::extract_first_argument(&node_text) {
+                    // Check if this variable is tainted (clone to avoid borrowing conflicts)
+                    if let Some(taint_info) = flow_tracker.is_variable_tainted(&used_variable, &func_name).cloned() {
+                        // Check if we have a legitimate rule for this source-sink combination
+                        if let Some(rule) = rule_deduplicator.get_rule_for_combination(&taint_info.source_pattern, &sink_pattern) {
+                            // Ensure we haven't already processed this exact flow
+                            if !flow_tracker.is_flow_processed(line, &taint_info.source_pattern, &sink_pattern) {
+                                flow_tracker.mark_flow_processed(line, &taint_info.source_pattern, &sink_pattern);
+                                
+                                // Create legitimate taint finding
+                                let taint_source = crate::models::TaintSource {
+                                    file: filepath.to_string(),
+                                    line: taint_info.source_line,
+                                    function: taint_info.source_function.clone(),
+                                    variable: used_variable.clone(),
+                                    operation: taint_info.source_pattern.clone(),
+                                    code: taint_info.assignment_code.clone(),
+                                    branch_id: None,
+                                };
+                                
+                                let taint_sink = crate::models::TaintSink {
+                                    file: filepath.to_string(),
+                                    line,
+                                    function: func_name.clone(),
+                                    variable: used_variable.clone(),
+                                    operation: sink_pattern.clone(),
+                                    code: node_text.clone(),
+                                    branch_id: None,
+                                };
+                                
+                                findings.push(Self::create_taint_finding(&taint_source, &taint_sink, rule, tree, source));
+                            }
                         }
                     }
                 }
             }
         }
-        
-        // Create taint flows between sources and sinks
-        for source_item in &sources {
-            for sink_item in &sinks {
-                if Self::can_taint_flow(source_item, sink_item, tree, source, language_support) {
-                    if let Some(rule) = Self::find_matching_taint_rule(taint_rules, source_item, sink_item) {
-                        findings.push(Self::create_taint_finding(source_item, sink_item, rule, tree, source));
-                    }
-                }
-            }
-        }
-        
         findings
     }
 
-    /// Check if a pattern matches text (handles regex patterns from taint rules)
-    fn matches_taint_pattern(pattern: &str, text: &str) -> bool {
-        // Handle regex patterns from taint rules
-        if pattern.contains("\\\\") || pattern.contains("\\.") {
-            if let Ok(regex) = regex::Regex::new(pattern) {
-                return regex.is_match(text);
+    /// Extract assignment from node text (reusing DRY principle)
+    fn extract_assignment_from_node(text: &str) -> Option<VariableAssignment> {
+        // Look for patterns: variable = source_pattern
+        if let Some(eq_pos) = text.find('=') {
+            let left = text[..eq_pos].trim();
+            let right = text[eq_pos + 1..].trim();
+            
+            // Get the variable name (last identifier on left side)
+            if let Some(var_name) = left.split_whitespace().last() {
+                // Filter out comparison operators  
+                if !var_name.contains("==") && !var_name.contains("!=") && 
+                   !var_name.contains("<=") && !var_name.contains(">=") {
+                    return Some(VariableAssignment {
+                        variable: var_name.to_string(),
+                        value: right.to_string(),
+                    });
+                }
             }
         }
-        
-        // Fallback to simple contains check for basic patterns
-        text.contains(&pattern.replace("\\.", ".").replace("\\\\", "\\"))
+        None
     }
-
-    /// Extract variable name from taint source
-    fn extract_variable_from_taint_source(text: &str, pattern: &str) -> String {
-        if pattern.contains("request.args") || pattern.contains("request.form") {
-            // Extract from patterns like: user_input = request.args.get('cmd')
-            if let Some(eq_pos) = text.find('=') {
-                let left = text[..eq_pos].trim();
-                if let Some(var) = left.split_whitespace().last() {
-                    return var.to_string();
-                }
-            }
-        }
-        
-        if pattern.contains("input(") {
-            // Extract from patterns like: user_data = input("Enter: ")
-            if let Some(eq_pos) = text.find('=') {
-                let left = text[..eq_pos].trim();
-                if let Some(var) = left.split_whitespace().last() {
-                    return var.to_string();
-                }
-            }
-        }
-        
-        if pattern.contains("environ") {
-            // Extract from patterns like: config = os.environ.get('CONFIG')
-            if let Some(eq_pos) = text.find('=') {
-                let left = text[..eq_pos].trim();
-                if let Some(var) = left.split_whitespace().last() {
-                    return var.to_string();
-                }
-            }
-        }
-        
-        "user_input".to_string()
-    }
-
-    /// Extract variable name from taint sink
-    fn extract_variable_from_taint_sink(text: &str, pattern: &str) -> String {
-        if pattern.contains("system") || pattern.contains("call") || pattern.contains("run") {
-            // Extract from patterns like: os.system(user_input) or subprocess.call(command)
-            if let Some(start) = text.find('(') {
-                if let Some(end) = text.find(')') {
-                    let args = &text[start + 1..end];
-                    if let Some(first_arg) = args.split(',').next() {
-                        let cleaned = first_arg.trim().trim_matches('"').trim_matches('\'');
-                        if !cleaned.is_empty() && !cleaned.starts_with('"') && !cleaned.starts_with('\'') {
-                            return cleaned.to_string();
-                        }
+    
+    /// Extract first argument from function call (reusing existing patterns)
+    fn extract_first_argument(text: &str) -> Option<String> {
+        if let Some(start) = text.find('(') {
+            if let Some(end) = text.rfind(')') {
+                let args = &text[start + 1..end];
+                if let Some(first_arg) = args.split(',').next() {
+                    let cleaned = first_arg.trim();
+                    // Only return if it looks like a variable (not a string literal)
+                    if !cleaned.is_empty() && 
+                       !cleaned.starts_with('"') && 
+                       !cleaned.starts_with('\'') &&
+                       !cleaned.starts_with('/') &&
+                       !cleaned.chars().all(|c| c.is_numeric()) {
+                        return Some(cleaned.to_string());
                     }
                 }
-            }
-        }
-        
-        if pattern.contains("execute") {
-            // Extract from patterns like: cursor.execute(query)
-            if let Some(start) = text.find('(') {
-                if let Some(end) = text.find(')') {
-                    let args = &text[start + 1..end];
-                    if let Some(first_arg) = args.split(',').next() {
-                        let cleaned = first_arg.trim();
-                        if !cleaned.is_empty() {
-                            return cleaned.to_string();
-                        }
-                    }
-                }
-            }
-        }
-        
-        "tainted_var".to_string()
-    }
-
-    /// Check if taint can flow between source and sink
-    fn can_taint_flow(
-        source: &crate::models::TaintSource,
-        sink: &crate::models::TaintSink,
-        _tree: &tree_sitter::Tree,
-        _source_bytes: &[u8],
-        _language_support: &dyn crate::language::LanguageSupport,
-    ) -> bool {
-        // Same file flows
-        if source.file == sink.file {
-            // Source must come before sink
-            if source.line >= sink.line {
-                return false;
-            }
-            
-            // Simple variable matching or same function
-            if source.variable == sink.variable || source.function == sink.function {
-                return true;
-            }
-            
-            // Check for common variable names that might be related
-            let source_normalized = source.variable.to_lowercase();
-            let sink_normalized = sink.variable.to_lowercase();
-            
-            // Common patterns: user_input -> command, data -> query, etc.
-            if (source_normalized.contains("input") || source_normalized.contains("user")) &&
-               (sink_normalized.contains("command") || sink_normalized.contains("cmd")) {
-                return true;
-            }
-            
-            if source_normalized.contains("data") && sink_normalized.contains("query") {
-                return true;
-            }
-            
-            // If in same function and close lines, likely connected
-            if source.function == sink.function && (sink.line - source.line) <= 10 {
-                return true;
-            }
-        }
-        
-        // For now, be permissive for same-file flows to catch obvious patterns
-        source.file == sink.file && source.line < sink.line
-    }
-
-    /// Find matching taint rule for source-sink pair
-    fn find_matching_taint_rule<'a>(
-        taint_rules: &'a [&'a crate::rules::UnifiedRule],
-        source: &crate::models::TaintSource,
-        sink: &crate::models::TaintSink,
-    ) -> Option<&'a crate::rules::UnifiedRule> {
-        for rule in taint_rules {
-            let source_matches = rule.sources.as_ref()
-                .map(|patterns| patterns.iter().any(|pattern| pattern == &source.operation))
-                .unwrap_or(false);
-                
-            let sink_matches = rule.sinks.as_ref()
-                .map(|patterns| patterns.iter().any(|pattern| pattern == &sink.operation))
-                .unwrap_or(false);
-                
-            if source_matches && sink_matches {
-                return Some(rule);
             }
         }
         None
     }
 
-    /// Create taint finding from source-sink pair
+    /// Get containing function name from node
+    fn get_containing_function_name(node: &tree_sitter::Node, source: &[u8]) -> String {
+        let mut current = *node;
+        
+        // Traverse up to find function definition
+        while let Some(parent) = current.parent() {
+            if parent.kind() == "function_definition" {
+                // Find the function name
+                let mut cursor = parent.walk();
+                if cursor.goto_first_child() {
+                    loop {
+                        if cursor.node().kind() == "identifier" {
+                            return crate::parser::get_node_text(&cursor.node(), source);
+                        }
+                        if !cursor.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                }
+            }
+            current = parent;
+        }
+        
+        "global".to_string()
+    }
+
+    /// Collect all relevant nodes for taint analysis (assignments and calls)
+    fn collect_all_relevant_nodes<'a>(node: tree_sitter::Node<'a>, nodes: &mut Vec<tree_sitter::Node<'a>>) {
+        // Include assignment and call nodes
+        match node.kind() {
+            "assignment" | "call" | "expression_statement" | "assignment_expression" => {
+                nodes.push(node);
+            }
+            _ => {}
+        }
+        
+        // Recursively traverse children
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                Self::collect_all_relevant_nodes(cursor.node(), nodes);
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Create taint finding from source-sink pair (reusing existing infrastructure)
     fn create_taint_finding(
         source: &crate::models::TaintSource,
         sink: &crate::models::TaintSink,
@@ -805,70 +855,6 @@ impl ScanningLogic {
                 rule.category.clone().unwrap_or_else(|| "injection".to_string()),
             ]),
         }
-    }
-
-    /// Get containing function name from node
-    fn get_containing_function_name(node: &tree_sitter::Node, source: &[u8]) -> String {
-        let mut current = *node;
-        
-        // Traverse up to find function definition
-        while let Some(parent) = current.parent() {
-            if parent.kind() == "function_definition" {
-                // Find the function name
-                let mut cursor = parent.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        if cursor.node().kind() == "identifier" {
-                            return crate::parser::get_node_text(&cursor.node(), source);
-                        }
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-            }
-            current = parent;
-        }
-        
-        "global".to_string()
-    }
-
-    /// Helper method to check if node matches taint source patterns
-    pub fn is_taint_source(
-        node: &tree_sitter::Node,
-        source: &[u8],
-        _filepath: &str,
-        _language_support: &dyn crate::language::LanguageSupport,
-    ) -> bool {
-        let node_text = crate::parser::get_node_text(node, source);
-        
-        // Common taint source patterns
-        let source_patterns = [
-            "request.args", "request.form", "request.json",
-            "input(", "raw_input(", "sys.argv",
-            "os.environ", "environ.get"
-        ];
-        
-        source_patterns.iter().any(|pattern| node_text.contains(pattern))
-    }
-
-    /// Helper method to check if node matches taint sink patterns  
-    pub fn is_taint_sink(
-        node: &tree_sitter::Node,
-        source: &[u8],
-        _filepath: &str,
-        _language_support: &dyn crate::language::LanguageSupport,
-    ) -> bool {
-        let node_text = crate::parser::get_node_text(node, source);
-        
-        // Common taint sink patterns
-        let sink_patterns = [
-            "os.system", "subprocess.call", "subprocess.run",
-            "cursor.execute", "eval(", "exec(",
-            "open(", "render_template_string"
-        ];
-        
-        sink_patterns.iter().any(|pattern| node_text.contains(pattern))
     }
 }
 
@@ -1472,4 +1458,75 @@ pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: b
         }
     }
     print_summary(findings, duration);
+}
+
+/// Variable flow tracker for legitimate taint analysis
+#[derive(Debug)]
+struct VariableFlowTracker {
+    /// Maps variable names to their taint source information
+    tainted_variables: std::collections::HashMap<String, TaintVariableInfo>,
+    /// Function scopes to handle variable visibility
+    function_scopes: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// Deduplication set for flows to prevent duplicates
+    processed_flows: std::collections::HashSet<(usize, String, String)>, // (line, source_pattern, sink_pattern)
+}
+
+#[derive(Debug, Clone)]
+struct TaintVariableInfo {
+    source_line: usize,
+    source_pattern: String,
+    source_function: String,
+    assignment_code: String,
+}
+
+impl VariableFlowTracker {
+    fn new() -> Self {
+        Self {
+            tainted_variables: std::collections::HashMap::new(),
+            function_scopes: std::collections::HashMap::new(),
+            processed_flows: std::collections::HashSet::new(),
+        }
+    }
+    
+    /// Record a variable as tainted from a source
+    fn record_tainted_variable(&mut self, var_name: String, source_info: TaintVariableInfo) {
+        self.tainted_variables.insert(var_name.clone(), source_info.clone());
+        
+        // Add to function scope
+        self.function_scopes
+            .entry(source_info.source_function.clone())
+            .or_insert_with(std::collections::HashSet::new)
+            .insert(var_name);
+    }
+    
+    /// Check if a variable is tainted
+    fn is_variable_tainted(&self, var_name: &str, function: &str) -> Option<&TaintVariableInfo> {
+        // Check direct variable
+        if let Some(info) = self.tainted_variables.get(var_name) {
+            // Same function or global variable
+            if info.source_function == function || Self::is_global_variable(var_name) {
+                return Some(info);
+            }
+        }
+        None
+    }
+    
+    /// Check if we've already processed this flow to prevent duplicates
+    fn is_flow_processed(&self, line: usize, source_pattern: &str, sink_pattern: &str) -> bool {
+        self.processed_flows.contains(&(line, source_pattern.to_string(), sink_pattern.to_string()))
+    }
+    
+    /// Mark a flow as processed
+    fn mark_flow_processed(&mut self, line: usize, source_pattern: &str, sink_pattern: &str) {
+        self.processed_flows.insert((line, source_pattern.to_string(), sink_pattern.to_string()));
+    }
+    
+    /// Check if variable is likely global/passed between functions (reusing existing logic)
+    fn is_global_variable(var_name: &str) -> bool {
+        // Simple heuristics for global variables
+        var_name.to_uppercase() == var_name || // ALL_CAPS
+        var_name.starts_with("app.") ||        // app.something
+        var_name.contains("_DIR") ||           // paths
+        var_name.contains("_PATH")             // paths
+    }
 }
