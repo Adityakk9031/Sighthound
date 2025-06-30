@@ -19,7 +19,7 @@ use std::fs;
 
 use crate::rules::Rules;
 
-use crate::skip::SKIP_DIRS;
+use crate::config::filters::SKIP_DIRS;
 
 use crate::models::{Finding};
 

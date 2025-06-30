@@ -5,7 +5,7 @@ use anyhow::Result;
 use walkdir::WalkDir;
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
-use crate::skip::SKIP_DIRS;
+use crate::config::filters::SKIP_DIRS;
 use tree_sitter::Node;
 use crate::common::CommonUtils;
 use crate::parser::get_node_text;

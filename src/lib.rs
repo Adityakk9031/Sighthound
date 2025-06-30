@@ -6,7 +6,6 @@ pub mod models;
 pub mod parser;
 pub mod rules;
 pub mod scanner;
-pub mod skip;
 
 // Re-export the main types and functions that main.rs needs
 pub use scanner::{VulnerabilityScanner, ScanningLogic, ProgressManager, print_findings_json, print_findings_csv, print_findings_text, print_summary, PreFilter, FilterStats, TaintAnalyzer, TaintAnalysisResult, merge_taint_results, run_explicit_scan, run_auto_detection_scan, run_taint_analysis};

@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use crate::rules::Rules;
 use crate::parser::{LanguageParser, get_node_text};
-use crate::skip::SKIP_MINIFIED_PATTERNS;
+use crate::config::filters::SKIP_MINIFIED_PATTERNS;
 use crate::scanner::utils::matches_glob_pattern;
 use tree_sitter::Node;
 
