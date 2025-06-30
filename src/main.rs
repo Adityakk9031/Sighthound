@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
-use find_vulns::{Cli, CommonUtils, print_findings_json, print_findings_csv, print_findings_text,
-                 run_explicit_scan, run_auto_detection_scan, run_taint_analysis};
+use find_vulns::{Cli, CommonUtils, run_explicit_scan, run_auto_detection_scan, run_taint_analysis};
+use find_vulns::scanner::core::{print_findings_json, print_findings_csv, print_findings_text, print_summary};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

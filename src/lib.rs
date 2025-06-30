@@ -8,7 +8,12 @@ pub mod rules;
 pub mod scanner;
 
 // Re-export the main types and functions that main.rs needs
-pub use scanner::{VulnerabilityScanner, ScanningLogic, ProgressManager, print_findings_json, print_findings_csv, print_findings_text, print_summary, PreFilter, FilterStats, TaintAnalyzer, TaintAnalysisResult, merge_taint_results, run_explicit_scan, run_auto_detection_scan, run_taint_analysis};
+pub use scanner::{
+    VulnerabilityScanner, ScanningLogic, PreFilter, FilterStats, 
+    run_explicit_scan, run_auto_detection_scan, run_taint_analysis,
+    // Backwards compatibility (deprecated)
+    TaintAnalyzer, TaintAnalysisResult, merge_taint_results
+};
 
 // Re-export types needed by tests and library users
 pub use common::CommonUtils;

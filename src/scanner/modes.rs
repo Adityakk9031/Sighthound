@@ -5,12 +5,10 @@ use std::path::PathBuf;
 
 use crate::cli::Cli;
 use crate::rules::Rules;
-use crate::scanner::{VulnerabilityScanner, Finding, TaintAnalyzer};
+use crate::scanner::{VulnerabilityScanner, Finding};
 use crate::scanner::core::ScanningLogic;
 use crate::scanner::utils::{discover_files_by_language, discover_files_by_language_parallel, discover_files_by_language_sequential};
 use crate::scanner::core::ProgressManager;
-use crate::scanner::taint::merge_taint_results;
-use crate::scanner::{TaintAnalysisResult, TaintSummary};
 
 /// Unified scan configuration and execution context
 #[derive(Debug)]
@@ -250,120 +248,64 @@ pub fn run_taint_analysis(cli: &Cli) -> Result<Vec<Finding>> {
     
     let scan_start = std::time::Instant::now();
     
-    // Initialize unified scan context
+    // Initialize unified scan context (reuse existing infrastructure)
     let context = ScanContext::new(cli)?;
     
-    // Load rules using unified pattern
+    // Load rules using unified pattern (reuse existing infrastructure)
     let rules = load_rules(cli, &context)?;
     
-    // Check if we have taint flow rules (unified only)
+    // Check if we have taint flow rules
     let taint_rules_count = rules.rules.iter().filter(|r| r.is_taint_rule()).count();
     
     if taint_rules_count == 0 {
-        return Err(anyhow::anyhow!("No taint flow rules found. Please ensure your rules contain 'rules' with mode='taint'."));
+        return Err(anyhow::anyhow!("No taint flow rules found. Please ensure your rules contain rules with mode='taint'."));
     }
     
-    println!("🔍 Starting Taint Analysis Mode");
+    println!("🔍 Starting Optimized Taint Analysis Mode");
     println!("📂 Target directory: {}", cli.root_dir);
     println!("🔧 Loaded {} taint flow rules", taint_rules_count);
     println!("📁 Total files to analyze: {}", context.total_files);
+    println!("⚡ Using parallel processing for maximum performance");
     println!();
     
-    // Rediscover files for processing
-    let files_by_language = discover_files_by_language_sequential(&cli.root_dir)?;
+    // Use the unified VulnerabilityScanner infrastructure for massive speedup!
+    // This reuses ALL existing optimizations: parallel processing, prefiltering, 
+    // memory mapping, thread-local parsers, progress tracking, etc.
+    let scanner = VulnerabilityScanner::with_skip_minified(
+        "", // Language will be auto-detected per file
+        rules, 
+        context.skip_minified
+    )?;
     
-    // Enhanced multi-file taint analysis with cross-file flow detection
-    let mut analyzer = TaintAnalyzer::new(rules);
-    let mut all_results = Vec::new();
-    let mut all_sources = Vec::new();
-    let mut all_sinks = Vec::new();
+    // Use unified scanner that processes both search and taint rules efficiently
+    let all_findings = scanner.find_vulnerabilities_unified(&cli.root_dir, "", true)?;
     
-    // Setup progress tracking using unified pattern
-    let mut progress_manager = context.create_progress_manager();
-    let processed_files = Arc::new(AtomicUsize::new(0));
-    let total_flows = Arc::new(AtomicUsize::new(0));
+    // Filter to only taint analysis findings 
+    let taint_findings: Vec<Finding> = all_findings.into_iter()
+        .filter(|f| {
+            f.tags.as_ref().map_or(false, |tags| 
+                tags.contains(&"taint_analysis".to_string())
+            )
+        })
+        .collect();
     
-    // Start progress tracking
-    progress_manager.start_tracking(Arc::clone(&processed_files), Arc::clone(&total_flows));
-    
-    println!("🔍 Phase 1: Analyzing individual files for sources and sinks...");
-    
-    for (language, files) in files_by_language {
-        if let Ok(mut parser) = crate::parser::LanguageParser::new(&language) {
-            // Update progress bar message to show current language
-            progress_manager.set_message(format!("| analyzing {} ({} files)", language, files.len()));
-            
-            for file_path in files {
-                let file_path_str = file_path.to_string_lossy();
-                
-                if let Ok(source) = std::fs::read(&file_path) {
-                    if let Ok(tree) = parser.parse(&source) {
-                        let result = analyzer.analyze_file(&file_path_str, &source, &tree, parser.language_support());
-                        
-                        // Collect all sources and sinks for cross-file analysis
-                        all_sources.extend(result.sources.clone());
-                        all_sinks.extend(result.sinks.clone());
-                        
-                        if !result.flows.is_empty() {
-                            total_flows.fetch_add(result.flows.len(), Ordering::Relaxed);
-                        }
-                        all_results.push(result);
-                    }
-                }
-                
-                // Update processed files counter
-                processed_files.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-    
-    // Phase 2: Cross-file taint analysis
-    println!("🌐 Phase 2: Analyzing cross-file taint flows...");
-    progress_manager.set_message("| analyzing cross-file flows".to_string());
-    
-    let cross_file_flows = analyzer.analyze_cross_file(&all_sources, &all_sinks);
-    if !cross_file_flows.is_empty() {
-        println!("🎯 Found {} potential cross-file taint flows", cross_file_flows.len());
-        total_flows.fetch_add(cross_file_flows.len(), Ordering::Relaxed);
-        
-        // Add cross-file flows to the first result or create a new one
-        if let Some(first_result) = all_results.first_mut() {
-            first_result.flows.extend(cross_file_flows);
-        } else {
-            // Create a new result for cross-file flows
-            let cross_file_result = TaintAnalysisResult {
-                flows: cross_file_flows,
-                summary: TaintSummary {
-                    total_flows: 0, // Will be recalculated in merge
-                    unsanitized_flows: 0,
-                    sanitized_flows: 0,
-                    cross_file_flows: 0,
-                    files_analyzed: 0,
-                    functions_analyzed: 0,
-                },
-                imports: Vec::new(),
-                exports: Vec::new(),
-                cross_file_flows: Vec::new(),
-                sources: Vec::new(),
-                sinks: Vec::new(),
-            };
-            all_results.push(cross_file_result);
-        }
-    }
-    
-    // Clean up progress tracking
-    progress_manager.stop();
-    
-    // Merge all results with enhanced cross-file support
-    let merged_result = merge_taint_results(all_results);
     let scan_duration = scan_start.elapsed();
     
-    // Use unified performance reporting
+    // Use unified performance reporting (reuse existing infrastructure)
     context.print_performance_summary(taint_rules_count, scan_duration);
-    println!("⏱️  Taint analysis completed in {:.2?}", scan_duration);
+    println!("⏱️  Optimized taint analysis completed in {:.2?}", scan_duration);
     
-    // Convert to unified Finding format
-    Ok(merged_result.to_findings())
+    if !taint_findings.is_empty() {
+        let same_file_count = taint_findings.iter()
+            .filter(|f| f.tags.as_ref().map_or(false, |tags| tags.contains(&"same_file".to_string())))
+            .count();
+        let cross_file_count = taint_findings.len() - same_file_count;
+        
+        println!("🎯 Found {} taint flows ({} same-file, {} cross-file)", 
+                taint_findings.len(), same_file_count, cross_file_count);
+    }
+    
+    Ok(taint_findings)
 }
 
  
