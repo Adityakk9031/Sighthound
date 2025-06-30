@@ -6,7 +6,7 @@ use crate::parser::get_node_text;
 use crate::scanner::utils::{AstUtils, CodePatternType, VariableType};
 use crate::scanner::data_flow::DataFlowGraph;
 use crate::common::CommonUtils;
-use tree_sitter::{Node, Tree, TreeCursor};
+use tree_sitter::{Node, Tree};
 use crate::models::{TaintFlow, TaintSource, TaintSink, TaintTrace, TaintSummary, TraceType};
 
 // Constants for taint analysis
@@ -55,8 +55,8 @@ pub struct TaintAnalysisResult {
 
 impl TaintAnalysisResult {
     /// Convert taint analysis results to unified Finding format
-    pub fn to_findings(&self) -> Vec<crate::scanner::types::Finding> {
-        use crate::scanner::types::*;
+    pub fn to_findings(&self) -> Vec<crate::models::Finding> {
+        use crate::models::*;
         
         self.flows.iter().map(|flow| Finding {
             file: flow.sink.file.clone(),
@@ -112,12 +112,6 @@ impl TaintAnalysisResult {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum TaintStatus {
-    Tainted(String), // Contains the source pattern
-    Unknown,
-}
-
 // NEW: Control flow scope tracking for branch-aware analysis
 #[derive(Debug, Clone)]
 struct ControlFlowScope {
@@ -126,17 +120,6 @@ struct ControlFlowScope {
     else_branch: Option<BranchInfo>,
     current_branch_id: Option<String>,
     branch_nesting_level: usize,
-}
-
-#[derive(Debug, Clone)]
-struct BranchInfo {
-    branch_id: String,
-    branch_type: BranchType,
-    line_start: usize,
-    line_end: usize,
-    variables: HashSet<String>,
-    parent_branch: Option<String>,
-    mutually_exclusive_with: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -284,6 +267,17 @@ impl ControlFlowScope {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct BranchInfo {
+    branch_id: String,
+    branch_type: BranchType,
+    line_start: usize,
+    line_end: usize,
+    variables: HashSet<String>,
+    parent_branch: Option<String>,
+    mutually_exclusive_with: Vec<String>,
+}
+
 pub struct TaintAnalyzer {
     rules: Rules,
     variable_tracker: VariableTracker,
@@ -294,33 +288,8 @@ pub struct TaintAnalyzer {
     control_flow_scope: ControlFlowScope,
 }
 
-#[derive(Debug, Clone)]
-struct TaintInfo {
-    // Enhanced with propagation tracking
-    flow_id: String,
-    source_type: String,
-    propagation_chain: Vec<String>, // Track variable assignment chain
-}
-
-#[derive(Debug, Clone)]
-struct CrossFileVarInfo {
-    original_file: String,
-    original_function: String,
-    import_info: Option<ImportInfo>,
-    taint_info: Option<TaintInfo>,
-}
-
-// NEW: Function call tracking for return value propagation
-#[derive(Debug, Clone)]
-struct FunctionCallInfo {
-    function_name: String,
-    file: String,
-    line: usize,
-    return_variable: Option<String>,
-    taint_status: TaintStatus,
-}
-
 // NEW: Enhanced variable tracker with function call support
+#[derive(Debug, Clone)]
 struct VariableTracker {
     // Maps variable names to their taint status and flow IDs
     tainted_vars: HashMap<String, TaintInfo>,
@@ -2615,423 +2584,33 @@ struct ImportName {
     alias: Option<String>,
 }
 
-// NEW: Unified AST Analysis Engine (DRY Foundation) 
-#[derive(Debug)]
-pub struct UnifiedASTAnalyzer {
-    // Unified state management - no duplication
-    branch_tracker: BranchTracker,
-    data_flow_builder: DataFlowGraphBuilder,
-    source_sink_collector: SourceSinkCollector,
-    rules: Rules,
-}
-
-// NEW: Enhanced Branch Tracker with proper Python AST understanding
-#[derive(Debug, Clone)]
-pub struct BranchTracker {
-    current_branches: Vec<BranchContext>,
-    branch_hierarchy: HashMap<String, BranchHierarchy>,
-    mutual_exclusions: HashMap<String, HashSet<String>>,
+#[derive(Debug, Clone, PartialEq)]
+enum TaintStatus {
+    Tainted(String), // Contains the source pattern
+    Unknown,
 }
 
 #[derive(Debug, Clone)]
-pub struct BranchContext {
-    branch_id: String,
-    branch_type: BranchType,
-    line_start: usize,
-    line_end: usize,
-    variables: HashSet<String>,
-    parent_branch: Option<String>,
+struct TaintInfo {
+    // Enhanced with propagation tracking
+    flow_id: String,
+    source_type: String,
+    propagation_chain: Vec<String>, // Track variable assignment chain
 }
 
 #[derive(Debug, Clone)]
-pub struct BranchHierarchy {
-    if_branch: Option<String>,
-    elif_branches: Vec<String>,
-    else_branch: Option<String>,
-}
-
-
-
-impl BranchTracker {
-    fn new() -> Self {
-        Self {
-            current_branches: Vec::new(),
-            branch_hierarchy: HashMap::new(),
-            mutual_exclusions: HashMap::new(),
-        }
-    }
-    
-    fn reset(&mut self) {
-        self.current_branches.clear();
-        self.branch_hierarchy.clear();
-        self.mutual_exclusions.clear();
-    }
-    
-    fn enter_branch(&mut self, branch_id: String, branch_type: BranchType, line_start: usize) {
-        let parent_branch = self.current_branches.last().map(|b| b.branch_id.clone());
-        
-        let context = BranchContext {
-            branch_id: branch_id.clone(),
-            branch_type,
-            line_start,
-            line_end: line_start,
-            variables: HashSet::new(),
-            parent_branch,
-        };
-        
-        self.current_branches.push(context);
-    }
-    
-    fn exit_branch(&mut self) {
-        self.current_branches.pop();
-    }
-    
-    fn establish_mutual_exclusions(&mut self, hierarchy_id: String, branch_ids: Vec<String>) {
-        // Store the hierarchy
-        if let Some(first_branch) = branch_ids.first() {
-            if first_branch.starts_with("if_") {
-                let mut hierarchy = BranchHierarchy {
-                    if_branch: Some(first_branch.clone()),
-                    elif_branches: Vec::new(),
-                    else_branch: None,
-                };
-                
-                for branch_id in &branch_ids[1..] {
-                    if branch_id.starts_with("elif_") {
-                        hierarchy.elif_branches.push(branch_id.clone());
-                    } else if branch_id.starts_with("else_") {
-                        hierarchy.else_branch = Some(branch_id.clone());
-                    }
-                }
-                
-                self.branch_hierarchy.insert(hierarchy_id, hierarchy);
-            }
-        }
-        
-        // Establish mutual exclusions between all branches in this group
-        for (i, branch_id1) in branch_ids.iter().enumerate() {
-            for branch_id2 in &branch_ids[i + 1..] {
-                // Add mutual exclusion in both directions
-                self.mutual_exclusions
-                    .entry(branch_id1.clone())
-                    .or_insert_with(HashSet::new)
-                    .insert(branch_id2.clone());
-                    
-                self.mutual_exclusions
-                    .entry(branch_id2.clone())
-                    .or_insert_with(HashSet::new)
-                    .insert(branch_id1.clone());
-            }
-        }
-    }
-    
-    fn are_branches_compatible(&self, branch_id1: &Option<String>, branch_id2: &Option<String>) -> bool {
-        // If either branch is None (global scope), always compatible
-        let (Some(id1), Some(id2)) = (branch_id1, branch_id2) else {
-            return true;
-        };
-        
-        // Same branch is always compatible
-        if id1 == id2 {
-            return true;
-        }
-        
-        // Check mutual exclusions
-        if let Some(exclusions) = self.mutual_exclusions.get(id1) {
-            return !exclusions.contains(id2);
-        }
-        
-        true // Default to compatible if no exclusion found
-    }
-    
-    fn get_current_branch_id(&self) -> Option<String> {
-        self.current_branches.last().map(|b| b.branch_id.clone())
-    }
-    
-    fn add_variable_to_current_branch(&mut self, variable: String) {
-        if let Some(current_branch) = self.current_branches.last_mut() {
-            current_branch.variables.insert(variable);
-        }
-    }
-}
-
-// NEW: Data Flow Graph Builder (extends existing DataFlowGraph)
-#[derive(Debug)]
-pub struct DataFlowGraphBuilder {
-    graph: DataFlowGraph,
-    assignments: HashMap<String, Vec<AssignmentInfo>>,
-    usages: HashMap<String, Vec<UsageInfo>>,
+struct CrossFileVarInfo {
+    original_file: String,
+    original_function: String,
+    import_info: Option<ImportInfo>,
+    taint_info: Option<TaintInfo>,
 }
 
 #[derive(Debug, Clone)]
-pub struct AssignmentInfo {
-    variable: String,
+struct FunctionCallInfo {
+    function_name: String,
+    file: String,
     line: usize,
-    branch_id: Option<String>,
-    source_variables: Vec<String>,
-    operation_type: AssignmentType,
-}
-
-#[derive(Debug, Clone)]
-pub enum AssignmentType {
-    UserInput,      // request.form, input(), etc.
-    Assignment,     // x = y
-    FunctionCall,   // x = func(y)
-    Expression,     // x = y + z
-}
-
-#[derive(Debug, Clone)]
-pub struct UsageInfo {
-    variable: String,
-    line: usize,
-    branch_id: Option<String>,
-    usage_context: String,
-}
-
-impl DataFlowGraphBuilder {
-    fn new() -> Self {
-        Self {
-            graph: DataFlowGraph::new(),
-            assignments: HashMap::new(),
-            usages: HashMap::new(),
-        }
-    }
-    
-    fn reset(&mut self) {
-        self.graph = DataFlowGraph::new();
-        self.assignments.clear();
-        self.usages.clear();
-    }
-    
-    fn process_assignment(&mut self, node: &Node, source: &[u8], line: usize, function: &str, current_branch: Option<&str>) {
-        let node_text = get_node_text(node, source);
-        
-        // Extract assignment target and sources using existing AST utilities
-        let variables = AstUtils::extract_semantic_variables(node, source);
-        
-        if let Some(target) = variables.iter().find(|v| matches!(v.var_type, VariableType::AssignmentTarget)) {
-            let source_vars: Vec<String> = variables.iter()
-                .filter(|v| matches!(v.var_type, VariableType::Source))
-                .map(|v| v.name.clone())
-                .collect();
-            
-            let operation_type = if node_text.contains("request.") || node_text.contains("input(") {
-                AssignmentType::UserInput
-            } else if node_text.contains('(') && node_text.contains(')') {
-                AssignmentType::FunctionCall
-            } else if source_vars.len() > 1 {
-                AssignmentType::Expression
-            } else {
-                AssignmentType::Assignment
-            };
-            
-            let assignment_info = AssignmentInfo {
-                variable: target.name.clone(),
-                line,
-                branch_id: current_branch.map(|s| s.to_string()),
-                source_variables: source_vars,
-                operation_type,
-            };
-            
-            self.assignments.entry(target.name.clone())
-                .or_insert_with(Vec::new)
-                .push(assignment_info);
-        }
-    }
-    
-    fn process_function_call(&mut self, node: &Node, source: &[u8], line: usize, _function: &str, current_branch: Option<&str>) {
-        let node_text = get_node_text(node, source);
-        let variables = AstUtils::extract_semantic_variables(node, source);
-        
-        for var in variables.iter().filter(|v| matches!(v.var_type, VariableType::FunctionArgument)) {
-            let usage_info = UsageInfo {
-                variable: var.name.clone(),
-                line,
-                branch_id: current_branch.map(|s| s.to_string()),
-                usage_context: node_text.clone(),
-            };
-            
-            self.usages.entry(var.name.clone())
-                .or_insert_with(Vec::new)
-                .push(usage_info);
-        }
-    }
-    
-    fn finalize(self) -> DataFlowGraph {
-        // The DataFlowGraph builds itself during traversal
-        // We already collected assignments and usages during the unified traversal
-        // Return the graph as-is since it contains the data flow information
-        self.graph
-    }
-}
-
-// NEW: Source/Sink Collector with branch awareness
-#[derive(Debug)]
-pub struct SourceSinkCollector {
-    sources: Vec<TaintSource>,
-    sinks: Vec<TaintSink>,
-    rules: Rules,
-}
-
-impl SourceSinkCollector {
-    fn new(rules: Rules) -> Self {
-        Self {
-            sources: Vec::new(),
-            sinks: Vec::new(),
-            rules,
-        }
-    }
-    
-    fn reset(&mut self) {
-        self.sources.clear();
-        self.sinks.clear();
-    }
-    
-    fn check_call_patterns(
-        &mut self,
-        node: &Node,
-        source: &[u8],
-        filepath: &str,
-        line: usize,
-        function: &str,
-        current_branch: Option<&str>,
-    ) {
-        let node_text = get_node_text(node, source);
-        
-        for rule in &self.rules.rules {
-            if rule.is_taint_rule() {
-                // Check source patterns
-                if let Some(source_patterns) = &rule.sources {
-                    for pattern in source_patterns {
-                        if self.matches_taint_pattern(pattern, &node_text) {
-                            let variable = self.extract_variable_from_node(node, source, Some(pattern));
-                            
-                            let source_item = TaintSource {
-                                file: filepath.to_string(),
-                                line,
-                                function: function.to_string(),
-                                variable,
-                                operation: pattern.to_string(),
-                                code: node_text.clone(),
-                                branch_id: current_branch.map(|s| s.to_string()),
-                            };
-                            
-                            self.sources.push(source_item);
-                        }
-                    }
-                }
-                
-                // Check sink patterns
-                if let Some(sink_patterns) = &rule.sinks {
-                    for pattern in sink_patterns {
-                        if self.matches_taint_pattern(pattern, &node_text) {
-                            let variable = self.extract_variable_from_node(node, source, Some(pattern));
-                            
-                            let sink_item = TaintSink {
-                                file: filepath.to_string(),
-                                line,
-                                function: function.to_string(),
-                                variable,
-                                operation: pattern.to_string(),
-                                code: node_text.clone(),
-                                branch_id: current_branch.map(|s| s.to_string()),
-                            };
-                            
-                            self.sinks.push(sink_item);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    fn check_node_patterns(
-        &mut self,
-        node: &Node,
-        source: &[u8],
-        filepath: &str,
-        line: usize,
-        function: &str,
-        current_branch: Option<&str>,
-    ) {
-        // Similar to check_call_patterns but for non-call nodes
-        // Reuse the same logic
-        self.check_call_patterns(node, source, filepath, line, function, current_branch);
-    }
-    
-    fn get_results(self) -> (Vec<TaintSource>, Vec<TaintSink>) {
-        (self.sources, self.sinks)
-    }
-    
-    // Reuse existing pattern matching logic
-    fn matches_taint_pattern(&self, pattern: &str, text: &str) -> bool {
-        // Use existing logic from the taint analyzer
-        if pattern.contains('*') {
-            self.wildcard_pattern_match(pattern, text)
-        } else if pattern.starts_with("regex:") {
-            self.regex_pattern_match(pattern, text)
-        } else {
-            self.strict_pattern_match(pattern, text)
-        }
-    }
-    
-    fn wildcard_pattern_match(&self, pattern: &str, text: &str) -> bool {
-        // Implementation similar to existing wildcard_pattern_match
-        if pattern == "*" {
-            return true;
-        }
-        
-        let parts: Vec<&str> = pattern.split('*').collect();
-        if parts.len() == 1 {
-            return text.contains(pattern);
-        }
-        
-        let mut current_pos = 0;
-        for (i, part) in parts.iter().enumerate() {
-            if part.is_empty() {
-                continue;
-            }
-            
-            if i == 0 {
-                if !text.starts_with(part) {
-                    return false;
-                }
-                current_pos = part.len();
-            } else if i == parts.len() - 1 {
-                return text[current_pos..].ends_with(part);
-            } else {
-                if let Some(pos) = text[current_pos..].find(part) {
-                    current_pos += pos + part.len();
-                } else {
-                    return false;
-                }
-            }
-        }
-        
-        true
-    }
-    
-    fn strict_pattern_match(&self, pattern: &str, text: &str) -> bool {
-        text.contains(pattern)
-    }
-    
-    fn regex_pattern_match(&self, pattern: &str, text: &str) -> bool {
-        if let Some(regex_pattern) = pattern.strip_prefix("regex:") {
-            if let Ok(regex) = regex::Regex::new(regex_pattern) {
-                return regex.is_match(text);
-            }
-        }
-        false
-    }
-    
-    fn extract_variable_from_node(&self, node: &Node, source: &[u8], _pattern: Option<&str>) -> String {
-        // Use existing variable extraction logic
-        let variables = AstUtils::extract_semantic_variables(node, source);
-        
-        if let Some(var) = variables.first() {
-            var.name.clone()
-        } else {
-            get_node_text(node, source)
-        }
-    }
+    return_variable: Option<String>,
+    taint_status: TaintStatus,
 }

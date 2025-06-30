@@ -18,8 +18,10 @@ use syntect::parsing::SyntaxSet;
 use std::fs;
 
 use crate::rules::Rules;
-use super::types::Finding;
+
 use crate::skip::SKIP_DIRS;
+
+use crate::models::{Finding};
 
 /// Shared functionality for vulnerability scanning (merged from shared.rs)
 pub struct ScanningLogic;
@@ -33,7 +35,7 @@ impl ScanningLogic {
         filepath: &str,
         func_name: &str,
         language_support: &dyn crate::language::LanguageSupport,
-    ) -> Option<crate::scanner::types::Finding> {
+    ) -> Option<crate::models::Finding> {
         let pattern_matches = if Self::rule_needs_full_context(rule) {
             let node_text = crate::parser::get_node_text(node, source);
             crate::rules::rule_matches_pattern_unified(rule, &node_text)
@@ -146,7 +148,7 @@ impl ScanningLogic {
         tree: &tree_sitter::Tree,
         rules: &[&crate::rules::UnifiedRule],
         language_support: &dyn crate::language::LanguageSupport,
-    ) -> Vec<crate::scanner::types::Finding> {
+    ) -> Vec<crate::models::Finding> {
         let mut findings = Vec::new();
         let mut processed_lines = std::collections::HashSet::new();
 
@@ -192,7 +194,7 @@ impl ScanningLogic {
         filepath: &str,
         rules: &[&crate::rules::UnifiedRule],
         language_support: &dyn crate::language::LanguageSupport,
-        findings: &mut Vec<crate::scanner::types::Finding>,
+        findings: &mut Vec<crate::models::Finding>,
         processed_lines: &mut std::collections::HashSet<(usize, String, String)>,
     ) {
         let assignment_rules: Vec<&crate::rules::UnifiedRule> = rules.iter()
@@ -214,7 +216,7 @@ impl ScanningLogic {
         filepath: &str,
         assignment_rules: &[&crate::rules::UnifiedRule],
         language_support: &dyn crate::language::LanguageSupport,
-        findings: &mut Vec<crate::scanner::types::Finding>,
+        findings: &mut Vec<crate::models::Finding>,
         processed_lines: &mut std::collections::HashSet<(usize, String, String)>,
     ) {
         if matches!(node.kind(), "assignment_expression" | "expression_statement") {
@@ -305,7 +307,7 @@ impl ScanningLogic {
         node: &tree_sitter::Node,
         source: &[u8],
         _language_support: &dyn crate::language::LanguageSupport,
-    ) -> Option<crate::scanner::types::SourceInfo> {
+    ) -> Option<crate::models::SourceInfo> {
         let node_text = crate::parser::get_node_text(node, source);
         
         let source_patterns = [
@@ -328,7 +330,7 @@ impl ScanningLogic {
 
         for (pattern, source_type) in &source_patterns {
             if node_text.contains(pattern) {
-                return Some(crate::scanner::types::SourceInfo {
+                return Some(crate::models::SourceInfo {
                     source_type: source_type.to_string(),
                     location: format!("Line {}", node.start_position().row + 1),
                     context: crate::scanner::utils::AstUtils::get_function_context(node, source),
@@ -345,7 +347,7 @@ impl ScanningLogic {
         source: &[u8],
         func_name: &str,
         finding_type: &str,
-    ) -> Option<crate::scanner::types::SinkInfo> {
+    ) -> Option<crate::models::SinkInfo> {
         let node_text = crate::parser::get_node_text(node, source);
         
         let sink_category = if finding_type.to_lowercase().contains("sql") {
@@ -362,7 +364,7 @@ impl ScanningLogic {
 
         let variable = Self::extract_variable_from_text(&node_text);
 
-        Some(crate::scanner::types::SinkInfo {
+        Some(crate::models::SinkInfo {
             sink_type: sink_category.to_string(),
             function_name: func_name.to_string(),
             location: format!("Line {}", node.start_position().row + 1),
@@ -454,7 +456,7 @@ impl ScanningLogic {
         source: &[u8],
         filepath: &str,
         language_support: &dyn crate::language::LanguageSupport,
-    ) -> Vec<crate::scanner::types::TraceStep> {
+    ) -> Vec<crate::models::TraceStep> {
         // Implementation of the method
         Vec::new()
     }
@@ -497,7 +499,7 @@ impl ScanningLogic {
     }
 
     /// Add metadata from rule to finding
-    pub fn add_finding_metadata(finding: &mut crate::scanner::types::Finding, rule: &crate::rules::UnifiedRule, _node: &tree_sitter::Node) {
+    pub fn add_finding_metadata(finding: &mut crate::models::Finding, rule: &crate::rules::UnifiedRule, _node: &tree_sitter::Node) {
         finding.severity = rule.get_severity().to_string();
         finding.confidence = rule.get_confidence().to_string();
         finding.description = rule.description.clone();
@@ -512,8 +514,8 @@ impl ScanningLogic {
         finding_type: &str,
         source: &[u8],
         severity: &str,
-    ) -> crate::scanner::types::Finding {
-        crate::scanner::types::Finding {
+    ) -> crate::models::Finding {
+        crate::models::Finding {
             file: file.to_string(),
             line: node.start_position().row + 1,
             column: node.start_position().column + 1,

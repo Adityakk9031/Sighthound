@@ -1,31 +1,15 @@
 use anyhow::{Context, Result};
 use regex::Regex;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use crate::language::LanguageSupport;
 use crate::common::CommonUtils;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use walkdir::WalkDir;
+
 // Re-export for backward compatibility
 pub use crate::models::{UnifiedRule, FileTypes, Condition};
 
-// Use consolidated deserializer from CommonUtils
-fn deserialize_pattern<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    CommonUtils::deserialize_optional_string(deserializer)
-}
 
-// Use consolidated deserializer from CommonUtils
-fn deserialize_patterns<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    CommonUtils::deserialize_optional_vector(deserializer)
-}
 
 // Simple injection pattern checking for basic patterns
 pub fn check_for_injection_pattern(text: &str, _language_support: &dyn LanguageSupport) -> bool {
