@@ -1,5 +1,6 @@
 use anyhow::Result;
 use tree_sitter::{Language, Node};
+use crate::common::CommonUtils;
 
 pub trait LanguageSupport: Send + Sync {
     fn name(&self) -> &'static str;
@@ -60,12 +61,8 @@ impl LanguageSupport for PythonLanguage {
     fn call_node_types(&self) -> &[&'static str] { &["call"] }
     
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
-        if let Some(function_node) = node.child_by_field_name("function") {
-            let start = function_node.start_byte();
-            let end = function_node.end_byte();
-            return std::str::from_utf8(&source[start..end]).ok();
-        }
-        None
+        node.child_by_field_name("function")
+            .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
     }
     
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
@@ -89,22 +86,15 @@ impl LanguageSupport for JavaLanguage {
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "method_invocation" => {
-                if let Some(method_node) = node.child_by_field_name("name") {
-                    let start = method_node.start_byte();
-                    let end = method_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("name")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
             "object_creation_expression" => {
-                if let Some(type_node) = node.child_by_field_name("type") {
-                    let start = type_node.start_byte();
-                    let end = type_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("type")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
-            _ => {}
+            _ => None
         }
-        None
     }
     
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
@@ -128,22 +118,15 @@ impl LanguageSupport for JavaScriptLanguage {
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "call_expression" => {
-                if let Some(function_node) = node.child_by_field_name("function") {
-                    let start = function_node.start_byte();
-                    let end = function_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("function")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
             "new_expression" => {
-                if let Some(constructor_node) = node.child_by_field_name("constructor") {
-                    let start = constructor_node.start_byte();
-                    let end = constructor_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("constructor")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
-            _ => {}
+            _ => None
         }
-        None
     }
     
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
@@ -167,29 +150,19 @@ impl LanguageSupport for TSXLanguage {
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "jsx_attribute" => {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    let start = name_node.start_byte();
-                    let end = name_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("name")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
             "call_expression" => {
-                if let Some(function_node) = node.child_by_field_name("function") {
-                    let start = function_node.start_byte();
-                    let end = function_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("function")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
             "new_expression" => {
-                if let Some(constructor_node) = node.child_by_field_name("constructor") {
-                    let start = constructor_node.start_byte();
-                    let end = constructor_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("constructor")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
-            _ => {}
+            _ => None
         }
-        None
     }
     
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
@@ -214,25 +187,18 @@ impl LanguageSupport for HTMLLanguage {
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "attribute" => {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    let start = name_node.start_byte();
-                    let end = name_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("name")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
             "start_tag" | "element" => {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    let start = name_node.start_byte();
-                    let end = name_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("name")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
             "script_element" => {
-                return Some("script");
+                Some("script")
             }
-            _ => {}
+            _ => None
         }
-        None
     }
     
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
@@ -274,43 +240,34 @@ impl LanguageSupport for DjangoTemplateLanguage {
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "text" => {
-                let start = node.start_byte();
-                let end = node.end_byte();
-                let text = std::str::from_utf8(&source[start..end]).ok()?;
+                let text = CommonUtils::extract_node_text_slice(node, source)?;
                 
-                // Check for Django template patterns
+                // Check for Django template patterns (return static strings for consistent lifetimes)
                 if text.contains("|safe") {
-                    return Some("|safe");
-                }
-                if text.contains("|mark_safe") {
-                    return Some("|mark_safe");
-                }
-                if text.contains("{% autoescape off %}") {
-                    return Some("{% autoescape off %}");
-                }
-                if text.contains("{{") && text.contains("}}") {
-                    return Some("{{");
-                }
-                if text.contains("{% include") {
-                    return Some("{% include");
-                }
-                if text.contains("{{") || text.contains("{%") {
-                    return Some("django_template");
+                    Some("|safe")
+                } else if text.contains("|mark_safe") {
+                    Some("|mark_safe")
+                } else if text.contains("{% autoescape off %}") {
+                    Some("{% autoescape off %}")
+                } else if text.contains("{{") && text.contains("}}") {
+                    Some("{{")}
+                else if text.contains("{% include") {
+                    Some("{% include")
+                } else if text.contains("{{") || text.contains("{%") {
+                    Some("django_template")
+                } else {
+                    None
                 }
             }
             "attribute" => {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    let start = name_node.start_byte();
-                    let end = name_node.end_byte();
-                    return std::str::from_utf8(&source[start..end]).ok();
-                }
+                node.child_by_field_name("name")
+                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
             }
             "script_element" => {
-                return Some("script");
+                Some("script")
             }
-            _ => {}
+            _ => None
         }
-        None
     }
     
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {

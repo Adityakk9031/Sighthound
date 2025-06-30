@@ -4,113 +4,22 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::fs;
 use std::path::Path;
 use crate::language::LanguageSupport;
+use crate::common::CommonUtils;
 
-// Custom deserializer that accepts both "value" and Some("value") for pattern field
+// Use consolidated deserializer from CommonUtils
 fn deserialize_pattern<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    use serde::de::{self, Visitor};
-    use std::fmt;
-
-    struct PatternVisitor;
-
-    impl<'de> Visitor<'de> for PatternVisitor {
-        type Value = Option<String>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("a string or Option<String>")
-        }
-
-        // Handle direct string: pattern: "value"
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(Some(value.to_string()))
-        }
-
-        // Handle option: pattern: Some("value") or pattern: None
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let s = String::deserialize(deserializer)?;
-            Ok(Some(s))
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-    }
-
-    deserializer.deserialize_any(PatternVisitor)
+    CommonUtils::deserialize_optional_string(deserializer)
 }
 
-// Custom deserializer that accepts both ["val1", "val2"] and Some(["val1", "val2"]) for patterns field
+// Use consolidated deserializer from CommonUtils
 fn deserialize_patterns<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    use serde::de::{self, Visitor};
-    use std::fmt;
-
-    struct PatternsVisitor;
-
-    impl<'de> Visitor<'de> for PatternsVisitor {
-        type Value = Option<Vec<String>>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            formatter.write_str("an array of strings or Option<Vec<String>>")
-        }
-
-        // Handle direct array: patterns: ["val1", "val2"]
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: de::SeqAccess<'de>,
-        {
-            let mut vec = Vec::new();
-            while let Some(elem) = seq.next_element()? {
-                vec.push(elem);
-            }
-            Ok(Some(vec))
-        }
-
-        // Handle option: patterns: Some(["val1", "val2"]) or patterns: None
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            let vec = Vec::<String>::deserialize(deserializer)?;
-            Ok(Some(vec))
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-    }
-
-    deserializer.deserialize_any(PatternsVisitor)
+    CommonUtils::deserialize_optional_vector(deserializer)
 }
 
 
@@ -308,12 +217,12 @@ impl UnifiedRule {
     
     /// Gets the effective severity with fallback
     pub fn get_severity(&self) -> String {
-        self.severity.clone().unwrap_or_else(|| "Medium".to_string())
+        CommonUtils::get_default_severity(&self.severity)
     }
     
     /// Gets the effective confidence with fallback
     pub fn get_confidence(&self) -> String {
-        self.confidence.clone().unwrap_or_else(|| "Medium".to_string())
+        CommonUtils::get_default_confidence(&self.confidence)
     }
 
     /// Gets the category with fallback
@@ -457,27 +366,12 @@ impl Rules {
 }
 
 pub fn match_pattern(pattern: &str, text: &str) -> bool {
-    if pattern.contains('*') {
-        // Convert wildcard pattern to regex
-        let regex_pattern = pattern.replace('*', ".*");
-        if let Ok(regex) = Regex::new(&format!("^{}$", regex_pattern)) {
-            return regex.is_match(text);
-        }
-    } else if let Some(regex_pattern) = pattern.strip_prefix("regex:") {
-        // Direct regex pattern
-        if let Ok(regex) = Regex::new(regex_pattern) {
-            return regex.is_match(text);
-        }
-    } else {
-        // Exact match
-        return pattern == text;
-    }
-    false
+    CommonUtils::matches_unified_pattern(pattern, text)
 }
 
 // Enhanced pattern matching with multiple patterns
 pub fn match_any_pattern(patterns: &[String], text: &str) -> bool {
-    patterns.iter().any(|pattern| match_pattern(pattern, text))
+    CommonUtils::matches_any_pattern(patterns, text)
 }
 
 pub fn rule_matches_pattern_unified(rule: &UnifiedRule, text: &str) -> bool {

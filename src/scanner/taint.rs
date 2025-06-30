@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::rules::{Rules, UnifiedRule};
 use crate::language::LanguageSupport;
 use crate::parser::get_node_text;
-use crate::scanner::ast_utils::{AstUtils, CodePatternType, SemanticVariable, VariableType};
-use crate::scanner::data_flow::{DataFlowGraph, FlowPath};
+use crate::scanner::utils::{AstUtils, CodePatternType, VariableType};
+use crate::scanner::data_flow::DataFlowGraph;
+use crate::common::CommonUtils;
 use tree_sitter::{Node, Tree};
 
 // Constants for taint analysis
@@ -479,15 +480,15 @@ impl TaintAnalyzer {
                                         source_item.line, sink_item.line, flows.len());
                     
                     let is_cross_file = source_item.file != sink_item.file;
-                    if is_cross_file {
-                        cross_file_flows.push(CrossFileFlow {
-                            source_file: source_item.file.clone(),
+                if is_cross_file {
+                    cross_file_flows.push(CrossFileFlow {
+                        source_file: source_item.file.clone(),
                             sink_file: sink_item.file.clone(),
-                            imported_function: source_item.function.clone(),
-                            is_cross_file: true,
-                        });
-                    }
-                    
+                        imported_function: source_item.function.clone(),
+                        is_cross_file: true,
+                    });
+                }
+                
                     // Create flow with validated data path
                     let (rule_id, rule_name, rule_description, rule_finding_type) = self.find_rule_info_for_flow(source_item, sink_item);
                     
@@ -510,8 +511,8 @@ impl TaintAnalyzer {
                     
                     // Create semantic key for better deduplication
                     let flow_key = self.create_semantic_flow_key(source_item, sink_item);
-                    
-                    if seen_flows.insert(flow_key) {
+                
+                if seen_flows.insert(flow_key) {
                         flows.push(flow);
                     }
                 } else if source_item.file == sink_item.file {
@@ -544,10 +545,10 @@ impl TaintAnalyzer {
                         let flow_key = self.create_semantic_flow_key(source_item, sink_item);
                         
                         if seen_flows.insert(flow_key) {
-                            flows.push(flow);
-                        }
-                    }
+                    flows.push(flow);
                 }
+            }
+        }
             }
         }
         
@@ -682,7 +683,7 @@ impl TaintAnalyzer {
                             let function_name = self.get_containing_function(&node, source);
                             
                             // Track variable in current branch
-                            if let Some(branch_id) = &current_branch_id {
+                            if let Some(_branch_id) = &current_branch_id {
                                 scope.add_variable_to_current_branch(variable.clone());
                             }
                             
@@ -709,7 +710,7 @@ impl TaintAnalyzer {
                             let function_name = self.get_containing_function(&node, source);
                             
                             // Track variable in current branch
-                            if let Some(branch_id) = &current_branch_id {
+                            if let Some(_branch_id) = &current_branch_id {
                                 scope.add_variable_to_current_branch(variable.clone());
                             }
                             
@@ -876,7 +877,7 @@ impl TaintAnalyzer {
     }
 
     // NEW: Parse from import statements using AST
-        fn parse_from_import_ast(&self, node: &Node, source: &[u8]) -> (Option<String>, Vec<ImportName>) {
+    fn parse_from_import_ast(&self, node: &Node, source: &[u8]) -> (Option<String>, Vec<ImportName>) {
         let mut module_name = None;
         let mut import_names = Vec::new();
 
@@ -1081,7 +1082,7 @@ impl TaintAnalyzer {
         language_support: &dyn LanguageSupport,
         sources: &mut Vec<TaintSource>,
         sinks: &mut Vec<TaintSink>,
-            ) {
+    ) {
         // Enhanced node type checking for better coverage
         let should_check = match node.kind() {
                          "assignment" | "assignment_expression" | "expression_statement" | "call" | "attribute" | "return_statement" => true,
@@ -1116,36 +1117,36 @@ impl TaintAnalyzer {
                                     },
                                     CodePatternType::UserInput => {
                                         // Create source only for actual user input
-                                        let variable = self.extract_variable_from_node(&node, source, None);
-                                        let taint_source = TaintSource {
-                                            file: filepath.to_string(),
-                                            line: node.start_position().row + 1,
-                                            function: function_name.clone(),
-                                            variable: variable.clone(),
-                                            operation: pattern.to_string(),
-                                            code: self.get_line_text(&node, source),
+                                let variable = self.extract_variable_from_node(&node, source, None);
+                                let taint_source = TaintSource {
+                                    file: filepath.to_string(),
+                                    line: node.start_position().row + 1,
+                                    function: function_name.clone(),
+                                    variable: variable.clone(),
+                                    operation: pattern.to_string(),
+                                    code: self.get_line_text(&node, source),
                                             branch_id: None,
-                                        };
-                                        
-                                        sources.push(taint_source);
-                                        
-                                        // Enhanced taint tracking
-                                        let flow_id = format!("flow_{}", sources.len());
-                                        self.variable_tracker.mark_tainted(
-                                            variable.clone(),
-                                            flow_id,
-                                            filepath.to_string(),
-                                            node.start_position().row + 1,
-                                            pattern.to_string()
-                                        );
-                                        
-                                        // NEW: If this is in a function, mark the function as returning tainted data
-                                        if function_name != "global" {
-                                            self.variable_tracker.mark_function_returns_taint(
-                                                function_name.clone(),
-                                                pattern.to_string()
-                                            );
-                                        }
+                                };
+                                
+                                sources.push(taint_source);
+                                
+                                // Enhanced taint tracking
+                                let flow_id = format!("flow_{}", sources.len());
+                                self.variable_tracker.mark_tainted(
+                                    variable.clone(),
+                                    flow_id,
+                                    filepath.to_string(),
+                                    node.start_position().row + 1,
+                                    pattern.to_string()
+                                );
+                                
+                                // NEW: If this is in a function, mark the function as returning tainted data
+                                if function_name != "global" {
+                                    self.variable_tracker.mark_function_returns_taint(
+                                        function_name.clone(),
+                                        pattern.to_string()
+                                    );
+                                }
                                     },
                                     CodePatternType::Neutral => {
                                         // Check environment variables more carefully
@@ -1370,16 +1371,10 @@ impl TaintAnalyzer {
 
     // NEW: Extract variable names from an expression
     fn extract_variables_from_expression(&self, expr: &str) -> Vec<String> {
-        // Simple variable extraction - split by common delimiters and filter
-        expr.split(&[' ', '+', '-', '*', '/', '(', ')', '[', ']', '{', '}', ',', '.'])
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_'))
-            .filter(|s| !s.chars().next().unwrap_or('0').is_ascii_digit()) // Not a number
-            .map(|s| s.to_string())
-            .collect()
+        CommonUtils::extract_variables_from_expression(expr)
     }
 
-    // NEW: Helper method to find rule information for a taint flow
+    // NEW: Helper method to find rule information for a taint flow (delegates to CoreUtils for variable extraction)
     fn find_rule_info_for_flow(&self, source: &TaintSource, sink: &TaintSink) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
         let mut matching_rules = Vec::new();
         
@@ -1586,7 +1581,7 @@ impl TaintAnalyzer {
     fn find_matching_import<'a>(&self, imports: &'a [ImportInfo], source: &TaintSource, sink: &TaintSink) -> Option<&'a ImportInfo> {
         let source_module = self.extract_module_from_filepath(&source.file);
         
-        for import in imports {
+            for import in imports {
             // Check if import is from the source module
             if self.module_matches(&import.from_module, &source_module) {
                 // Check if the imported name matches the source function/variable
@@ -1644,10 +1639,10 @@ impl TaintAnalyzer {
     /// Check if import context matches source context
     fn import_matches_source_context(&self, import: &ImportInfo, source: &TaintSource, _sink: &TaintSink) -> bool {
         // For function imports, the imported name should match or be related to source function
-        if import.imported_name == source.function {
-            return true;
-        }
-        
+                if import.imported_name == source.function {
+                    return true;
+                }
+                
         // For module imports, check if source function is accessible through the import
         if import.imported_name == "*" {
             // Wildcard import - allows access to any function in the module
@@ -1665,9 +1660,9 @@ impl TaintAnalyzer {
     /// Check if source function is accessible through the import
     fn is_function_accessible_through_import(&self, import: &ImportInfo, source: &TaintSource) -> bool {
         // If importing the specific function name
-        if import.imported_name == source.function {
-            return true;
-        }
+                    if import.imported_name == source.function {
+                        return true;
+                    }
         
         // If importing a module that contains the function
         // This requires the import to be module-level (not specific function)
@@ -1690,8 +1685,8 @@ impl TaintAnalyzer {
     fn module_matches(&self, import_module: &str, source_module: &str) -> bool {
         // Direct match
         if import_module == source_module {
-            return true;
-        }
+                    return true;
+                }
         
         // Handle relative imports
         if import_module.starts_with('.') {
@@ -1713,7 +1708,7 @@ impl TaintAnalyzer {
         
         false
     }
-    
+
     /// Extract module name from filepath
     fn extract_module_from_filepath(&self, filepath: &str) -> String {
         if let Some(filename) = filepath.split('/').last() {
@@ -2160,11 +2155,11 @@ impl TaintAnalyzer {
             return false;
         }
         
-        // Use strict matching based on pattern type
+        // FIXED: Treat taint rule patterns as regex by default (they contain regex escaping)
         if pattern.contains('*') {
             self.strict_wildcard_match(pattern, text)
         } else if pattern.starts_with("regex:") {
-            // Use simple regex matching for now
+            // Explicit regex patterns
             if let Some(regex_pattern) = pattern.strip_prefix("regex:") {
                 if let Ok(regex) = regex::Regex::new(regex_pattern) {
                     regex.is_match(text)
@@ -2173,6 +2168,14 @@ impl TaintAnalyzer {
                 }
             } else {
                 false
+            }
+        } else if pattern.contains("\\\\") || pattern.contains("\\.") {
+            // FIXED: Patterns with regex escaping are regex patterns
+            if let Ok(regex) = regex::Regex::new(pattern) {
+                regex.is_match(text)
+            } else {
+                // Fallback to literal matching if regex is invalid
+                self.strict_exact_match(pattern, text)
             }
         } else {
             self.strict_exact_match(pattern, text)
@@ -2628,7 +2631,7 @@ fn deduplicate_flows_semantically(flows: Vec<TaintFlow>) -> Vec<TaintFlow> {
     for (_, mut group) in flow_groups {
         if group.len() == 1 {
             deduplicated.extend(group);
-        } else {
+    } else {
             // Sort by rule completeness (use existing metadata)
             group.sort_by_key(|flow| {
                 let mut score = 0;

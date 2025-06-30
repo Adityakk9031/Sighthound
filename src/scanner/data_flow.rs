@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use tree_sitter::{Node, Tree};
-use crate::scanner::ast_utils::{AstUtils, SemanticVariable, VariableType};
+use crate::scanner::utils::{AstUtils, VariableType};
 
 /// Data flow graph for tracking variable assignments and usage
 #[derive(Debug, Clone)]
@@ -99,7 +99,7 @@ impl DataFlowGraph {
     
     /// NEW: Enhanced traverse with branch tracking
     fn traverse_and_build(&mut self, node: Node, source: &[u8], current_function: &str, current_branch: Option<&str>) {
-        let _node_text = AstUtils::get_node_text(&node, source);
+        let _node_text = crate::parser::get_node_text(&node, source);
         let line = node.start_position().row + 1;
         
         match node.kind() {
@@ -276,7 +276,7 @@ impl DataFlowGraph {
     /// Enhanced process assignment with branch tracking
     fn process_assignment(&mut self, node: &Node, source: &[u8], line: usize, _function: &str, current_branch: Option<&str>) {
         let variables = AstUtils::extract_semantic_variables(node, source);
-        let node_text = AstUtils::get_node_text(node, source);
+        let node_text = crate::parser::get_node_text(node, source);
         
         // Find assignment target
         if let Some(target) = variables.iter()
@@ -321,7 +321,7 @@ impl DataFlowGraph {
     /// Enhanced process function call with branch tracking
     fn process_function_call(&mut self, node: &Node, source: &[u8], line: usize, _function: &str, current_branch: Option<&str>) {
         let variables = AstUtils::extract_semantic_variables(node, source);
-        let node_text = AstUtils::get_node_text(node, source);
+        let node_text = crate::parser::get_node_text(node, source);
         
         // Track variable usage in function arguments
         for var in variables.iter()
@@ -391,7 +391,7 @@ impl DataFlowGraph {
     pub fn find_flow_path(&self, source_var: &str, sink_var: &str, source_line: usize, sink_line: usize) -> Option<FlowPath> {
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
-        let mut path = Vec::new();
+        let path = Vec::new();
         
         // Start BFS from source variable
         queue.push_back((source_var.to_string(), source_line, path.clone()));
@@ -461,7 +461,7 @@ impl DataFlowGraph {
         if cursor.goto_first_child() {
             loop {
                 if cursor.node().kind() == "identifier" {
-                    return AstUtils::get_node_text(&cursor.node(), source);
+                    return crate::parser::get_node_text(&cursor.node(), source);
                 }
                 if !cursor.goto_next_sibling() {
                     break;

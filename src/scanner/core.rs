@@ -19,8 +19,519 @@ use std::fs;
 
 use crate::rules::Rules;
 use super::types::Finding;
-use super::shared::ScanningLogic;
 use crate::skip::SKIP_DIRS;
+
+/// Shared functionality for vulnerability scanning (merged from shared.rs)
+pub struct ScanningLogic;
+
+impl ScanningLogic {
+    /// Check if a rule matches against a specific node
+    pub fn check_rule_against_node(
+        rule: &crate::rules::UnifiedRule,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        func_name: &str,
+        language_support: &dyn crate::language::LanguageSupport,
+    ) -> Option<crate::scanner::types::Finding> {
+        let pattern_matches = if Self::rule_needs_full_context(rule) {
+            let node_text = crate::parser::get_node_text(node, source);
+            crate::rules::rule_matches_pattern_unified(rule, &node_text)
+        } else {
+            crate::rules::rule_matches_pattern_unified(rule, func_name)
+        };
+
+        if !pattern_matches {
+            return None;
+        }
+
+        if !crate::scanner::utils::rule_applies_to_file(rule.file_types.as_ref(), filepath) {
+            return None;
+        }
+
+        if let Some(conditions) = &rule.conditions {
+            if !crate::scanner::conditions::check_ast_conditions(conditions, node, source, language_support) {
+                return None;
+            }
+        }
+
+        if language_support.name() == "javascript" || language_support.name() == "typescript" {
+            let node_text = crate::parser::get_node_text(node, source);
+            if !Self::should_apply_rule_with_sanitization(rule, &node_text) {
+                return None;
+            }
+        }
+
+        if Self::should_check_injection_patterns(rule) {
+            if !Self::has_injection_pattern(node, source, language_support) {
+                return None;
+            }
+        }
+
+        let mut finding = Self::create_finding(
+            filepath,
+            node,
+            func_name,
+            &rule.get_finding_type(),
+            source,
+            &rule.get_severity(),
+        );
+
+        Self::add_finding_metadata(&mut finding, rule, node);
+
+        if let Some(source_info) = Self::detect_source_pattern(node, source, language_support) {
+            finding.source_info = Some(source_info);
+        }
+
+        if let Some(sink_info) = Self::detect_sink_pattern(node, source, func_name, &rule.get_finding_type()) {
+            finding.sink_info = Some(sink_info);
+        }
+
+        let traces = Self::detect_simple_traces(node, source, filepath, language_support);
+        if !traces.is_empty() {
+            finding.traces = Some(traces);
+        }
+
+        Some(finding)
+    }
+
+    /// Determine if a rule needs full context (node text) for pattern matching
+    fn rule_needs_full_context(rule: &crate::rules::UnifiedRule) -> bool {
+        if let Some(patterns) = &rule.patterns {
+            for pattern in patterns {
+                if pattern.contains('%') || pattern.contains('+') || pattern.contains("DROP") || 
+                   pattern.contains("DELETE") || pattern.contains("UNION") || 
+                   pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
+                   pattern.contains("location") || pattern.contains("postMessage") ||
+                   pattern.contains("localStorage") || pattern.contains("sessionStorage") ||
+                   pattern.contains("console.log") || pattern.contains("console.debug") ||
+                   pattern.contains("fetch") || pattern.contains("axios") ||
+                   pattern.contains("password") || pattern.contains("token") || 
+                   pattern.contains("secret") || pattern.contains("key") ||
+                   pattern.contains("http://") ||
+                   pattern.contains("=") {
+                    return true;
+                }
+            }
+        }
+        
+        if let Some(pattern) = &rule.pattern {
+            if pattern.contains('%') || pattern.contains('+') || pattern.contains("DROP") || 
+               pattern.contains("DELETE") || pattern.contains("UNION") ||
+               pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
+               pattern.contains("location") || pattern.contains("postMessage") ||
+               pattern.contains("localStorage") || pattern.contains("sessionStorage") ||
+               pattern.contains("console.log") || pattern.contains("console.debug") ||
+               pattern.contains("fetch") || pattern.contains("axios") ||
+               pattern.contains("password") || pattern.contains("token") || 
+               pattern.contains("secret") || pattern.contains("key") ||
+               pattern.contains("http://") ||
+               pattern.contains("=") {
+                return true;
+            }
+        }
+        
+        false
+    }
+
+    /// Determine if injection pattern checking should be applied
+    fn should_check_injection_patterns(rule: &crate::rules::UnifiedRule) -> bool {
+        rule.get_category() == "injection"
+    }
+
+    /// Scan a file with a list of unified rules
+    pub fn scan_file_with_rules(
+        filepath: &str,
+        source: &[u8],
+        tree: &tree_sitter::Tree,
+        rules: &[&crate::rules::UnifiedRule],
+        language_support: &dyn crate::language::LanguageSupport,
+    ) -> Vec<crate::scanner::types::Finding> {
+        let mut findings = Vec::new();
+        let mut processed_lines = std::collections::HashSet::new();
+
+        let call_nodes: Vec<_> = crate::parser::traverse_calls_only(tree.root_node(), language_support).collect();
+        
+        for node in call_nodes.iter() {
+            if let Some(func_name) = language_support.get_function_name(node, source) {
+                let relevant_rules: Vec<(usize, &crate::rules::UnifiedRule)> = rules.iter().enumerate()
+                    .filter(|(_, rule)| Self::rule_might_match_function(*rule, &func_name))
+                    .map(|(idx, rule)| (idx, *rule))
+                    .collect();
+                
+                for (_, rule) in relevant_rules {
+                    if let Some(finding) = Self::check_rule_against_node(
+                        rule,
+                        node,
+                        source,
+                        filepath,
+                        &func_name,
+                        language_support,
+                    ) {
+                        let line_key = (finding.line, finding.function.clone(), finding.finding_type.clone());
+                        if !processed_lines.contains(&line_key) {
+                            processed_lines.insert(line_key);
+                            findings.push(finding);
+                        }
+                    }
+                }
+            }
+        }
+
+        if language_support.name() == "javascript" || language_support.name() == "typescript" {
+            Self::scan_assignments(tree.root_node(), source, filepath, rules, language_support, &mut findings, &mut processed_lines);
+        }
+
+        findings
+    }
+
+    /// Simplified assignment scanning using unified traversal
+    fn scan_assignments(
+        node: tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        rules: &[&crate::rules::UnifiedRule],
+        language_support: &dyn crate::language::LanguageSupport,
+        findings: &mut Vec<crate::scanner::types::Finding>,
+        processed_lines: &mut std::collections::HashSet<(usize, String, String)>,
+    ) {
+        let assignment_rules: Vec<&crate::rules::UnifiedRule> = rules.iter()
+            .filter(|rule| Self::rule_has_assignment_patterns(rule))
+            .copied()
+            .collect();
+        
+        if assignment_rules.is_empty() {
+            return;
+        }
+
+        Self::scan_node_for_assignments(node, source, filepath, &assignment_rules, language_support, findings, processed_lines);
+    }
+
+    /// Simplified recursive assignment scanner
+    fn scan_node_for_assignments(
+        node: tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        assignment_rules: &[&crate::rules::UnifiedRule],
+        language_support: &dyn crate::language::LanguageSupport,
+        findings: &mut Vec<crate::scanner::types::Finding>,
+        processed_lines: &mut std::collections::HashSet<(usize, String, String)>,
+    ) {
+        if matches!(node.kind(), "assignment_expression" | "expression_statement") {
+            let node_text = crate::parser::get_node_text(&node, source);
+            
+            if crate::common::CommonUtils::is_valid_assignment_text(&node_text) {
+                let assignment_target = crate::common::CommonUtils::extract_variable_from_assignment(&node_text, true).unwrap_or_default();
+        
+                for rule in assignment_rules {
+                    if Self::rule_might_match_assignment(rule, &node_text) {
+                        if let Some(finding) = Self::check_rule_against_node(
+                            rule, &node, source, filepath, &assignment_target, language_support,
+                        ) {
+                            let line_key = (finding.line, finding.function.clone(), finding.finding_type.clone());
+                            if !processed_lines.contains(&line_key) {
+                                processed_lines.insert(line_key);
+                                findings.push(finding);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                Self::scan_node_for_assignments(cursor.node(), source, filepath, assignment_rules, language_support, findings, processed_lines);
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Check if a rule has assignment-related patterns (pre-filter at rule level)
+    fn rule_has_assignment_patterns(rule: &crate::rules::UnifiedRule) -> bool {
+        let patterns_to_check = if let Some(patterns) = &rule.patterns {
+            patterns.as_slice()
+        } else if let Some(pattern) = &rule.pattern {
+            std::slice::from_ref(pattern)
+        } else {
+            return false;
+        };
+
+        patterns_to_check.iter().any(|pattern| {
+            pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
+            pattern.contains("location") || pattern.contains("localStorage") ||
+            pattern.contains("sessionStorage") || pattern.contains("__proto__") ||
+            pattern.contains("=") || pattern.contains("prototype")
+        })
+    }
+
+    /// Check if a rule might match assignment patterns (pre-filter)
+    fn rule_might_match_assignment(rule: &crate::rules::UnifiedRule, node_text: &str) -> bool {
+        if let Some(patterns) = &rule.patterns {
+            for pattern in patterns {
+                if pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
+                   pattern.contains("location") || pattern.contains("localStorage") ||
+                   pattern.contains("sessionStorage") || pattern.contains("__proto__") ||
+                   pattern.contains("=") {
+                    if Self::quick_pattern_check(pattern, node_text) {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        if let Some(pattern) = &rule.pattern {
+            if pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
+               pattern.contains("location") || pattern.contains("localStorage") ||
+               pattern.contains("sessionStorage") || pattern.contains("__proto__") ||
+               pattern.contains("=") {
+                return Self::quick_pattern_check(pattern, node_text);
+            }
+        }
+        
+        false
+    }
+
+    /// Quick pattern check (delegates to CommonUtils pattern matching)
+    fn quick_pattern_check(pattern: &str, text: &str) -> bool {
+        crate::common::CommonUtils::matches_pattern(pattern, text)
+    }
+
+    /// Detect if a node represents a taint source
+    fn detect_source_pattern(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        _language_support: &dyn crate::language::LanguageSupport,
+    ) -> Option<crate::scanner::types::SourceInfo> {
+        let node_text = crate::parser::get_node_text(node, source);
+        
+        let source_patterns = [
+            ("request", "HTTP Request"),
+            ("input", "User Input"),
+            ("sys.argv", "Command Line"),
+            ("environ", "Environment Variable"),
+            ("cookie", "HTTP Cookie"),
+            ("header", "HTTP Header"),
+            ("form", "Form Data"),
+            ("query", "Query Parameter"),
+            ("file", "File Input"),
+            ("socket", "Network Socket"),
+            ("subprocess", "External Process"),
+            ("json.loads", "JSON Parsing"),
+            ("pickle.loads", "Pickle Deserialization"),
+            ("eval", "Dynamic Evaluation"),
+            ("exec", "Dynamic Execution"),
+        ];
+
+        for (pattern, source_type) in &source_patterns {
+            if node_text.contains(pattern) {
+                return Some(crate::scanner::types::SourceInfo {
+                    source_type: source_type.to_string(),
+                    location: format!("Line {}", node.start_position().row + 1),
+                    context: crate::scanner::utils::AstUtils::get_function_context(node, source),
+                });
+            }
+        }
+
+        None
+    }
+
+    /// Detect if a node represents a taint sink
+    fn detect_sink_pattern(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        func_name: &str,
+        finding_type: &str,
+    ) -> Option<crate::scanner::types::SinkInfo> {
+        let node_text = crate::parser::get_node_text(node, source);
+        
+        let sink_category = if finding_type.to_lowercase().contains("sql") {
+            "Database Query"
+        } else if finding_type.to_lowercase().contains("command") {
+            "Command Execution"
+        } else if finding_type.to_lowercase().contains("path") {
+            "File System"
+        } else if finding_type.to_lowercase().contains("xss") {
+            "Web Output"
+        } else {
+            "General Sink"
+        };
+
+        let variable = Self::extract_variable_from_text(&node_text);
+
+        Some(crate::scanner::types::SinkInfo {
+            sink_type: sink_category.to_string(),
+            function_name: func_name.to_string(),
+            location: format!("Line {}", node.start_position().row + 1),
+            variable,
+        })
+    }
+
+    /// Extract variable name from code text (delegates to CommonUtils)
+    fn extract_variable_from_text(text: &str) -> Option<String> {
+        crate::common::CommonUtils::extract_variable_from_code_pattern(text)
+    }
+
+    /// Check if a rule should apply based on sanitization (uses unified sanitization checking)
+    fn should_apply_rule_with_sanitization(rule: &crate::rules::UnifiedRule, node_text: &str) -> bool {
+        if rule.get_finding_type().to_lowercase().contains("xss") || 
+           rule.get_finding_type().to_lowercase().contains("dom") {
+            return !crate::scanner::utils::AstUtils::check_for_sanitization(node_text, "javascript");
+        }
+        
+        if rule.get_finding_type().to_lowercase().contains("prototype") {
+            return node_text.contains("__proto__") || 
+                   node_text.contains("['__proto__']") || 
+                   node_text.contains("[\"__proto__\"]");
+        }
+        
+        true
+    }
+
+    /// Check if a rule might match the function name (optimized pattern-based pre-filter)
+    fn rule_might_match_function(rule: &crate::rules::UnifiedRule, func_name: &str) -> bool {
+        let patterns_to_check = if let Some(patterns) = &rule.patterns {
+            patterns.as_slice()
+        } else if let Some(pattern) = &rule.pattern {
+            std::slice::from_ref(pattern)
+        } else {
+            return false;
+        };
+
+        for pattern in patterns_to_check {
+            if Self::pattern_might_match_function(pattern, func_name) {
+                return true;
+            }
+        }
+        
+        false
+    }
+    
+    /// Efficient pattern matching for function names
+    fn pattern_might_match_function(pattern: &str, func_name: &str) -> bool {
+        if pattern == func_name {
+            return true;
+        }
+        
+        if pattern.contains(func_name) || func_name.contains(pattern) {
+            return true;
+        }
+        
+        match pattern {
+            p if p == "eval" => func_name == "eval",
+            p if p == "Function" => func_name == "Function",
+            p if p == "setTimeout" => func_name == "setTimeout",
+            p if p == "setInterval" => func_name == "setInterval",
+            p if p == "fetch" => func_name == "fetch",
+            p if p == "Math.random" => func_name == "Math.random",
+            p if p == "RegExp" => func_name == "RegExp",
+            p if p == "import" => func_name == "import",
+            p if p == "require" => func_name == "require",
+            
+            p if p.contains("document.write") => func_name.contains("document.write"),
+            p if p.contains("console.") => func_name.contains("console"),
+            p if p.contains("localStorage") => func_name.contains("localStorage"),
+            p if p.contains("sessionStorage") => func_name.contains("sessionStorage"),
+            p if p.contains("postMessage") => func_name.contains("postMessage"),
+            p if p.contains("axios") => func_name.contains("axios"),
+            
+            p if p.contains('*') => Self::glob_match(p, func_name),
+            
+            _ => pattern.contains(func_name) || func_name.contains(pattern),
+        }
+    }
+    
+    /// Simple glob-style pattern matching (delegates to CommonUtils)
+    fn glob_match(pattern: &str, text: &str) -> bool {
+        crate::common::CommonUtils::matches_glob_pattern(pattern, text)
+    }
+
+    pub fn detect_simple_traces(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        language_support: &dyn crate::language::LanguageSupport,
+    ) -> Vec<crate::scanner::types::TraceStep> {
+        // Implementation of the method
+        Vec::new()
+    }
+
+    /// Check if rules have any patterns matching the function name (fast pre-filter)
+    pub fn has_matching_rules(rules: &crate::rules::Rules, func_name: &str) -> bool {
+        rules.get_search_rules().iter().any(|rule| crate::rules::rule_matches_pattern_unified(rule, func_name))
+    }
+
+    /// Get all search mode rules from a Rules struct as a flat vector
+    pub fn get_all_search_rules(rules: &crate::rules::Rules) -> Vec<&crate::rules::UnifiedRule> {
+        rules.get_search_rules()
+    }
+
+    /// Count total number of rules
+    pub fn count_total_rules(rules: &crate::rules::Rules) -> usize {
+        rules.count_rules()
+    }
+
+    /// Check if a node has injection patterns in its arguments
+    pub fn has_injection_pattern(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        language_support: &dyn crate::language::LanguageSupport,
+    ) -> bool {
+        if let Some(args_node) = language_support.get_arguments_node(node) {
+            for i in 0..args_node.named_child_count() {
+                if let Some(arg) = args_node.named_child(i) {
+                    let arg_text = crate::parser::get_node_text(&arg, source);
+                    if crate::rules::is_literal_node(&arg) {
+                        continue;
+                    }
+                    if crate::rules::check_for_injection_pattern(&arg_text, language_support) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Add metadata from rule to finding
+    pub fn add_finding_metadata(finding: &mut crate::scanner::types::Finding, rule: &crate::rules::UnifiedRule, _node: &tree_sitter::Node) {
+        finding.severity = rule.get_severity();
+        finding.confidence = rule.get_confidence();
+        finding.description = rule.description.clone();
+        finding.tags = rule.tags.clone();
+    }
+
+    /// Create a basic finding
+    pub fn create_finding(
+        file: &str,
+        node: &tree_sitter::Node,
+        function: &str,
+        finding_type: &str,
+        source: &[u8],
+        severity: &str,
+    ) -> crate::scanner::types::Finding {
+        crate::scanner::types::Finding {
+            file: file.to_string(),
+            line: node.start_position().row + 1,
+            column: node.start_position().column + 1,
+            end_line: node.end_position().row + 1,
+            end_column: node.end_position().column + 1,
+            function: function.to_string(),
+            finding_type: finding_type.to_string(),
+            severity: severity.to_string(),
+            confidence: "Medium".to_string(),
+            snippet: crate::parser::get_node_text(node, source),
+            description: None,
+            source_info: None,
+            sink_info: None,
+            traces: None,
+            tags: None,
+        }
+    }
+}
 
 thread_local! {
     // Store (language_name, parser) so we can reuse per language inside each thread
@@ -341,33 +852,6 @@ pub fn print_findings_csv(findings: &[Finding]) {
     }
 }
 
-/// Detect syntax for syntax highlighting
-fn detect_syntax(file_path: &str) -> &'static str {
-    match std::path::Path::new(file_path).extension().and_then(|e| e.to_str()) {
-        Some("py") => "Python",
-        Some("js") | Some("mjs") => "JavaScript",
-        Some("ts") | Some("tsx") => "TypeScript",
-        Some("rs") => "Rust",
-        Some("java") => "Java",
-        Some("html") => "HTML",
-        Some("css") => "CSS",
-        Some("json") => "JSON",
-        Some("md") => "Markdown",
-        Some("sh") => "Shell",
-        Some("go") => "Go",
-        Some("php") => "PHP",
-        Some("rb") => "Ruby",
-        Some("swift") => "Swift",
-        Some("kt") => "Kotlin",
-        Some("scala") => "Scala",
-        Some("c") => "C",
-        Some("cpp") | Some("cc") | Some("cxx") | Some("hpp") => "C++",
-        Some("cs") => "C#",
-        Some("sql") => "SQL",
-        _ => "Plain Text",
-    }
-}
-
 /// Print findings in text format with syntax highlighting
 pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool, duration: std::time::Duration) {
     if !summary_only {
@@ -401,7 +885,7 @@ pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: b
                 lines = file_contents.lines().collect();
                 
                 // Set up syntax highlighting for the new file
-                let syntax_name = detect_syntax(&finding.file);
+                let syntax_name = crate::common::CommonUtils::detect_syntax(&finding.file);
                 syntax = ps.find_syntax_by_name(syntax_name);
                 
                 println!("\n\x1b[1;34m{}\x1b[0m", finding.file);

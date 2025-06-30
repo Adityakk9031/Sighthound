@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use find_vulns::{Cli, print_findings_json, print_findings_csv, print_findings_text,
+use find_vulns::{Cli, CommonUtils, print_findings_json, print_findings_csv, print_findings_text,
                  run_explicit_scan, run_auto_detection_scan, run_taint_analysis};
 
 fn main() -> Result<()> {
@@ -20,18 +20,20 @@ fn main() -> Result<()> {
     let findings = if cli.taint_analysis {
         run_taint_analysis(&cli)?
     } else {
+        // Validate CLI parameters using CommonUtils
+        CommonUtils::validate_cli_params(&cli.language, &cli.rules_path)
+            .map_err(|_| anyhow::anyhow!(
+                "❌ Invalid combination. Please provide both language and rules path:\n  \
+                cargo run -- {} <language> <rules_path>\n  \
+                Or use auto-detection (no language/rules args):\n  \
+                cargo run -- {}", 
+                cli.root_dir, cli.root_dir
+            ))?;
+
         match (&cli.language, &cli.rules_path) {
             (Some(_), Some(_)) => run_explicit_scan(&cli)?,
             (None, None) => run_auto_detection_scan(&cli)?,
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "❌ Invalid combination. Please provide both language and rules path:\n  \
-                    cargo run -- {} <language> <rules_path>\n  \
-                    Or use auto-detection (no language/rules args):\n  \
-                    cargo run -- {}", 
-                    cli.root_dir, cli.root_dir
-                ));
-            }
+            _ => unreachable!(), // Validation above ensures this won't happen
         }
     };
 

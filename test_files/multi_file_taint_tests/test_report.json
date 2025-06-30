@@ -1,0 +1,86 @@
+{
+  "summary": {
+    "total_tests": 5,
+    "passed_tests": 3,
+    "failed_tests": 2,
+    "success_rate": 60.0
+  },
+  "performance": {
+    "total_time": 4.053,
+    "average_time": 0.811,
+    "meets_performance_target": false
+  },
+  "category_breakdown": {
+    "Category 1: Valid Flows": {
+      "total": 1,
+      "passed": 1
+    },
+    "Category 2: Phantom Flows": {
+      "total": 1,
+      "passed": 0
+    },
+    "Category 4: Configuration Safety": {
+      "total": 1,
+      "passed": 0
+    },
+    "Category 4: Real Vulnerabilities": {
+      "total": 1,
+      "passed": 1
+    },
+    "Category 5: Complex Scenarios": {
+      "total": 1,
+      "passed": 1
+    }
+  },
+  "critical_failures": [
+    "PHANTOM FLOW DETECTED: test2_1_phantom_no_import",
+    "CONFIG FALSE POSITIVE: test4_1_safe_config"
+  ],
+  "detailed_results": [
+    {
+      "name": "test1_1_direct_import_flow",
+      "category": "Category 1: Valid Flows",
+      "expected": "DETECT",
+      "actual": "DETECT",
+      "correct": true,
+      "time": 0.79,
+      "description": "Direct function import flow: input() -> os.system()"
+    },
+    {
+      "name": "test2_1_phantom_no_import",
+      "category": "Category 2: Phantom Flows",
+      "expected": "REJECT",
+      "actual": "DETECT",
+      "correct": false,
+      "time": 0.653,
+      "description": "No import relationship - should not create phantom flow"
+    },
+    {
+      "name": "test4_1_safe_config",
+      "category": "Category 4: Configuration Safety",
+      "expected": "REJECT",
+      "actual": "DETECT",
+      "correct": false,
+      "time": 0.865,
+      "description": "Configuration patterns should not be flagged"
+    },
+    {
+      "name": "test4_2_real_env_vuln",
+      "category": "Category 4: Real Vulnerabilities",
+      "expected": "DETECT",
+      "actual": "DETECT",
+      "correct": true,
+      "time": 0.879,
+      "description": "Real environment variable vulnerability"
+    },
+    {
+      "name": "test5_1_three_file_chain",
+      "category": "Category 5: Complex Scenarios",
+      "expected": "DETECT",
+      "actual": "DETECT",
+      "correct": true,
+      "time": 0.866,
+      "description": "Three-file chain: input() -> processor -> os.system()"
+    }
+  ]
+}
