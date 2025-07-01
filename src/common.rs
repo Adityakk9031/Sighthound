@@ -214,6 +214,41 @@ impl CommonUtils {
             .replace("\\.", ".")
             .replace("\\\\", "\\");
 
+        // For patterns like "os.listdir", ensure we match the exact module.function pattern
+        // This prevents "listdir" from matching "list(" and other false positives
+        if cleaned_pattern.contains('.') {
+            // Module.function pattern - require exact match with proper word boundaries
+            let parts: Vec<&str> = cleaned_pattern.split('.').collect();
+            if parts.len() == 2 {
+                let module_name = parts[0];
+                let func_name = parts[1];
+                
+                // Look for exact "module.function" pattern in text
+                let full_pattern = format!("{}.{}", module_name, func_name);
+                return text.contains(&full_pattern);
+            }
+        }
+
+        // For function call patterns ending with '(', ensure exact function name match
+        if cleaned_pattern.ends_with('(') {
+            let func_name = &cleaned_pattern[..cleaned_pattern.len() - 1];
+            
+            // Special handling for module.function( patterns
+            if func_name.contains('.') {
+                return text.contains(&cleaned_pattern);
+            }
+            
+            // Look for the function name followed by '(' in the text
+            if let Some(pos) = text.find(&format!("{}(", func_name)) {
+                // Ensure it's a word boundary (not part of a larger identifier)
+                let before_pos = if pos > 0 { pos - 1 } else { 0 };
+                let char_before = text.chars().nth(before_pos);
+                
+                return char_before.map_or(true, |c| !c.is_alphanumeric() && c != '_');
+            }
+            return false;
+        }
+
         text.contains(&cleaned_pattern)
     }
 
@@ -334,7 +369,9 @@ impl CommonUtils {
                         brace_depth -= 1;
                         if brace_depth == 0 {
                             if let Some(start) = current_start.take() {
-                                let raw_var = expr[start..i].trim();
+                                // Extract the variable using character indices, not byte indices
+                                let raw_var: String = chars[start..i].iter().collect();
+                                let raw_var = raw_var.trim();
                                 // Strip format specifiers after ':' or '!'
                                 let clean_var = raw_var.split([':', '!'].as_ref()).next().unwrap_or("").trim();
                                 if Self::is_valid_variable_name(clean_var) {
