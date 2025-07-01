@@ -1,0 +1,1104 @@
+(
+    rules: [
+        // ==================== CWE-79: DOM-based XSS ====================
+        (
+            id: Some("js-dom-xss-taint-001"),
+            name: Some("DOM-based XSS via User Input"),
+            category: Some("xss"),
+            mode: "taint",
+            
+            sources: Some([
+                // URL and location sources
+                "window.location.hash",
+                "window.location.search", 
+                "window.location.href",
+                "location.hash",
+                "location.search",
+                "location.href",
+                "document.URL",
+                "document.documentURI",
+                "document.baseURI",
+                
+                // URL parameter parsing
+                "URLSearchParams",
+                "new URL",
+                "decodeURIComponent",
+                "decodeURI",
+                
+                // DOM input sources
+                "*.value",
+                "*.textContent", 
+                "*.innerText",
+                "*.innerHTML",
+                "*.getAttribute",
+                "*.dataset",
+                
+                // Form data
+                "FormData",
+                "*.files",
+                "*.selectedOptions",
+                
+                // User interaction
+                "prompt(",
+                "confirm(",
+                
+                // PostMessage
+                "event.data",
+                "e.data",
+                "message.data",
+                
+                // Storage (could contain user data)
+                "localStorage.getItem",
+                "sessionStorage.getItem",
+                "*.cookie"
+            ]),
+            
+            sinks: Some([
+                // Direct DOM manipulation
+                "*.innerHTML",
+                "*.outerHTML", 
+                "document.write",
+                "document.writeln",
+                "*.insertAdjacentHTML",
+                
+                // Script injection
+                "*.src",
+                "*.href",
+                "document.createElement",
+                
+                // Eval-like functions
+                "eval(",
+                "Function(",
+                "setTimeout(",
+                "setInterval(",
+                
+                // Dynamic script loading
+                "import(",
+                "*.appendChild",
+                "*.insertBefore"
+            ]),
+            
+            sanitizers: Some([
+                // HTML encoding
+                "encodeHTML",
+                "escapeHTML", 
+                "*.textContent",
+                "document.createTextNode",
+                
+                // Validation
+                "DOMPurify.sanitize",
+                "validator.escape",
+                "sanitize(",
+                "validate(",
+                "clean(",
+                
+                // Safe DOM methods
+                "document.createElement",
+                "document.createTextNode"
+            ]),
+            
+            finding_type: Some("DOM-based XSS"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            
+            description: Some("User-controlled data flows to DOM manipulation without proper sanitization, enabling XSS attacks"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"]),
+                exclude_patterns: Some(["*test*", "*spec*", "*mock*", "*.min.js"])
+            )),
+            
+            tags: Some(["xss", "dom", "cwe-79", "frontend"])
+        ),
+
+        // ==================== CWE-80: Basic XSS ====================
+        (
+            id: Some("js-basic-xss-taint-001"),
+            name: Some("Basic XSS via User Input"),
+            category: Some("xss"),
+            mode: "taint",
+            
+            sources: Some([
+                // All DOM-based sources plus additional
+                "window.location.*",
+                "location.*",
+                "document.URL",
+                "document.referrer",
+                "*.value",
+                "*.textContent",
+                "*.innerText", 
+                "*.getAttribute",
+                "FormData",
+                "URLSearchParams",
+                "prompt(",
+                "event.data",
+                "localStorage.*",
+                "sessionStorage.*",
+                "*.cookie",
+                
+                // Network sources
+                "fetch(",
+                "XMLHttpRequest",
+                "*.responseText",
+                "*.response",
+                "axios.*",
+                "$.get",
+                "$.post",
+                "$.ajax"
+            ]),
+            
+            sinks: Some([
+                // DOM sinks
+                "*.innerHTML",
+                "*.outerHTML",
+                "document.write",
+                "document.writeln",
+                "*.insertAdjacentHTML",
+                
+                // Attribute sinks
+                "*.src",
+                "*.href", 
+                "*.action",
+                "*.formAction",
+                "*.setAttribute",
+                
+                // Event handler sinks
+                "*.onclick",
+                "*.onload",
+                "*.onerror",
+                "addEventListener",
+                
+                // Template/rendering
+                "template.innerHTML",
+                "*.render",
+                "*.compile"
+            ]),
+            
+            sanitizers: Some([
+                "DOMPurify.sanitize",
+                "validator.escape",
+                "encodeHTML",
+                "escapeHTML",
+                "sanitizeHTML",
+                "*.textContent",
+                "document.createTextNode",
+                "encodeURIComponent"
+            ]),
+            
+            finding_type: Some("Cross-Site Scripting"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            
+            description: Some("User input flows to output context without proper encoding, enabling XSS attacks"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["xss", "cwe-80", "frontend"])
+        ),
+
+        // ==================== CWE-200: Exposure of Sensitive Information ====================
+        (
+            id: Some("js-info-exposure-taint-001"),
+            name: Some("Sensitive Information Exposure"),
+            category: Some("information-disclosure"),
+            mode: "taint",
+            
+            sources: Some([
+                // Sensitive data sources
+                "password",
+                "token",
+                "apiKey",
+                "secret",
+                "privateKey",
+                "sessionId",
+                "authToken",
+                "accessToken",
+                "refreshToken",
+                "apiSecret",
+                "credentials",
+                "*.cookie",
+                "localStorage.*",
+                "sessionStorage.*",
+                
+                // Environment/config
+                "process.env",
+                "config.*",
+                "settings.*",
+                
+                // Form inputs that might be sensitive
+                "*[type=password]*",
+                "*[name*=password]*",
+                "*[name*=token]*",
+                "*[name*=key]*"
+            ]),
+            
+            sinks: Some([
+                // Logging and debugging
+                "console.log",
+                "console.info", 
+                "console.warn",
+                "console.error",
+                "console.debug",
+                "console.trace",
+                
+                // Network transmission
+                "fetch(",
+                "XMLHttpRequest",
+                "axios.*",
+                "$.ajax",
+                "$.get",
+                "$.post",
+                
+                // URL construction
+                "window.location",
+                "location.href",
+                "*.src",
+                "*.href",
+                
+                // Storage (if different from source)
+                "localStorage.setItem",
+                "sessionStorage.setItem",
+                
+                // Error reporting
+                "*.onerror",
+                "addEventListener",
+                "reportError"
+            ]),
+            
+            sanitizers: Some([
+                "redact(",
+                "sanitize(",
+                "mask(",
+                "obfuscate(",
+                "hash(",
+                "encrypt(",
+                "*.substring(0,",
+                "*.slice(0,"
+            ]),
+            
+            finding_type: Some("Information Disclosure"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            
+            description: Some("Sensitive information may be exposed through logging, network requests, or URL parameters"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["information-disclosure", "cwe-200", "sensitive-data"])
+        ),
+
+        // ==================== CWE-116: Improper Output Encoding ====================
+        (
+            id: Some("js-improper-encoding-taint-001"),
+            name: Some("Improper Output Encoding"),
+            category: Some("encoding"),
+            mode: "taint",
+            
+            sources: Some([
+                "*.value",
+                "*.textContent",
+                "*.innerText",
+                "window.location.*",
+                "location.*",
+                "URLSearchParams",
+                "decodeURIComponent",
+                "decodeURI",
+                "event.data",
+                "FormData",
+                "*.responseText",
+                "*.response"
+            ]),
+            
+            sinks: Some([
+                // Raw HTML output
+                "*.innerHTML",
+                "*.outerHTML",
+                "document.write",
+                "document.writeln",
+                "*.insertAdjacentHTML",
+                
+                // URL contexts without encoding
+                "*.href",
+                "*.src",
+                "window.location",
+                "location.href",
+                
+                // Attribute contexts
+                "*.setAttribute",
+                "*.title",
+                "*.alt",
+                
+                // CSS contexts
+                "*.style",
+                "*.className"
+            ]),
+            
+            sanitizers: Some([
+                // Proper encoding functions
+                "encodeHTML",
+                "escapeHTML",
+                "encodeURIComponent",
+                "encodeURI",
+                "DOMPurify.sanitize",
+                "validator.escape",
+                
+                // Safe DOM methods
+                "document.createTextNode",
+                "*.textContent",
+                
+                // Context-specific encoding
+                "escapeCSS",
+                "escapeJS",
+                "escapeURL"
+            ]),
+            
+            finding_type: Some("Improper Output Encoding"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            
+            description: Some("User data is output without proper context-specific encoding"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["encoding", "cwe-116", "output-encoding"])
+        ),
+
+        // ==================== CWE-1336: Client-side Template Injection ====================
+        (
+            id: Some("js-template-injection-taint-001"),
+            name: Some("Client-side Template Injection"),
+            category: Some("injection"),
+            mode: "taint",
+            
+            sources: Some([
+                "*.value",
+                "window.location.*",
+                "location.*",
+                "URLSearchParams",
+                "event.data",
+                "*.responseText",
+                "*.response",
+                "prompt(",
+                "localStorage.*",
+                "sessionStorage.*"
+            ]),
+            
+            sinks: Some([
+                // Template engines
+                "Handlebars.compile",
+                "_.template",
+                "*.compile",
+                "*.render",
+                "mustache.render",
+                "Mustache.render",
+                
+                // Template literals with eval-like behavior
+                "eval(`",
+                "Function(`",
+                "new Function(",
+                
+                // Framework-specific
+                "Vue.compile",
+                "*.compileToFunctions",
+                "Angular.*compile",
+                
+                // Generic template processing
+                "*.template",
+                "processTemplate",
+                "renderTemplate"
+            ]),
+            
+            sanitizers: Some([
+                "escape(",
+                "sanitize(",
+                "validate(",
+                "DOMPurify.sanitize",
+                "validator.escape",
+                "encodeHTML"
+            ]),
+            
+            finding_type: Some("Template Injection"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            
+            description: Some("User input flows to template compilation/rendering without sanitization"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["template-injection", "cwe-1336", "client-side"])
+        ),
+
+        // ==================== CWE-601: Open Redirect ====================
+        (
+            id: Some("js-open-redirect-taint-001"),
+            name: Some("Open Redirect Vulnerability"),
+            category: Some("redirect"),
+            mode: "taint",
+            
+            sources: Some([
+                // URL parameters
+                "window.location.search",
+                "location.search",
+                "window.location.hash",
+                "location.hash",
+                "URLSearchParams",
+                "new URL",
+                
+                // User input
+                "*.value",
+                "prompt(",
+                "event.data",
+                
+                // Network responses
+                "*.responseText",
+                "*.response",
+                "*.location",
+                
+                // Storage
+                "localStorage.getItem",
+                "sessionStorage.getItem"
+            ]),
+            
+            sinks: Some([
+                // Direct navigation
+                "window.location",
+                "window.location.href",
+                "location.href",
+                "location.assign",
+                "location.replace",
+                "window.open",
+                
+                // Form actions
+                "*.action",
+                "*.formAction",
+                
+                // Link modification
+                "*.href",
+                
+                // Meta refresh
+                "*.setAttribute(\"http-equiv\"",
+                "*.content"
+            ]),
+            
+            sanitizers: Some([
+                // URL validation
+                "validateURL",
+                "isValidURL",
+                "sanitizeURL",
+                "whitelistURL",
+                
+                // Domain checking
+                "checkDomain",
+                "validateDomain",
+                "isAllowedDomain",
+                
+                // URL parsing for validation
+                "new URL(",
+                "URL.parse"
+            ]),
+            
+            finding_type: Some("Open Redirect"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            
+            description: Some("User-controlled input flows to URL redirection without validation"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["open-redirect", "cwe-601", "redirect"])
+        ),
+
+        // ==================== CWE-1173: Insecure postMessage ====================
+        (
+            id: Some("js-insecure-postmessage-taint-001"),
+            name: Some("Insecure postMessage Usage"),
+            category: Some("postmessage"),
+            mode: "taint",
+            
+            sources: Some([
+                // PostMessage data
+                "event.data",
+                "e.data",
+                "message.data",
+                "*.data"
+            ]),
+            
+            sinks: Some([
+                // Dangerous operations with postMessage data
+                "eval(",
+                "Function(",
+                "setTimeout(",
+                "setInterval(",
+                
+                // DOM manipulation
+                "*.innerHTML",
+                "*.outerHTML", 
+                "document.write",
+                
+                // Script/resource loading
+                "*.src",
+                "*.href",
+                "import(",
+                
+                // Local storage
+                "localStorage.setItem",
+                "sessionStorage.setItem",
+                
+                // Navigation
+                "window.location",
+                "location.href"
+            ]),
+            
+            sanitizers: Some([
+                // Origin validation
+                "event.origin",
+                "validateOrigin",
+                "checkOrigin",
+                "isAllowedOrigin",
+                
+                // Data validation
+                "validate(",
+                "sanitize(",
+                "JSON.parse",
+                "typeof",
+                "instanceof"
+            ]),
+            
+            finding_type: Some("Insecure postMessage"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            
+            description: Some("postMessage data is used in dangerous operations without proper validation"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["postmessage", "cwe-1173", "origin-validation"])
+        ),
+
+        // ==================== CWE-927: Missing Origin Validation ====================
+        (
+            id: Some("js-missing-origin-validation-taint-001"),
+            name: Some("Missing Origin Validation in postMessage"),
+            category: Some("postmessage"),
+            mode: "taint",
+            
+            sources: Some([
+                "event.data",
+                "e.data", 
+                "message.data"
+            ]),
+            
+            sinks: Some([
+                // Any usage of postMessage data without origin check
+                "eval(",
+                "Function(",
+                "*.innerHTML",
+                "document.write",
+                "*.src",
+                "*.href",
+                "localStorage.setItem",
+                "sessionStorage.setItem",
+                "window.location",
+                "setTimeout(",
+                "setInterval(",
+                "import("
+            ]),
+            
+            sanitizers: Some([
+                // Must include origin validation
+                "event.origin ===",
+                "event.origin !==", 
+                "e.origin ===",
+                "e.origin !==",
+                "message.origin ===",
+                "checkOrigin(",
+                "validateOrigin(",
+                "isAllowedOrigin(",
+                "allowedOrigins.includes",
+                "trustedOrigins.includes"
+            ]),
+            
+            finding_type: Some("Missing Origin Validation"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            
+            description: Some("postMessage data is processed without validating the message origin"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            conditions: Some([
+                (
+                    field: "context",
+                    operator: "not_contains",
+                    value: "origin",
+                    condition_type: Some("in_context")
+                )
+            ]),
+            
+            tags: Some(["postmessage", "cwe-927", "origin-validation"])
+        ),
+
+        // ==================== CWE-922: Insecure Storage ====================
+        (
+            id: Some("js-insecure-storage-taint-001"),
+            name: Some("Insecure Storage of Sensitive Data"),
+            category: Some("storage"),
+            mode: "taint",
+            
+            sources: Some([
+                // Actual sensitive data sources - API responses
+                "*.responseJSON.token",
+                "*.responseJSON.accessToken",
+                "*.responseJSON.refreshToken",
+                "*.responseJSON.apiKey",
+                "*.responseJSON.sessionId",
+                "*.response.data.token",
+                "*.response.data.accessToken",
+                "*.response.data.key",
+                
+                // Authentication form fields (actual values)
+                "*[type=\"password\"].value",
+                "*[name=\"password\"].value",
+                "*[name=\"token\"].value",
+                "*[name=\"apiKey\"].value",
+                "*[name=\"secret\"].value",
+                "*[id=\"password\"].value",
+                "*[id=\"token\"].value",
+                
+                // JWT and authentication tokens
+                "jwt.sign(",
+                "generateToken(",
+                "createToken(",
+                "authToken",
+                "bearerToken",
+                
+                // Cookie values containing sensitive data
+                "document.cookie.match",
+                "getCookie(*password*)",
+                "getCookie(*token*)",
+                "getCookie(*session*)",
+                
+                // Environment or config with sensitive data
+                "process.env.API_KEY",
+                "process.env.SECRET",
+                "process.env.TOKEN",
+                "config.apiKey",
+                "config.secret",
+                "config.privateKey",
+                
+                // User input that's clearly sensitive
+                "prompt(*password*)",
+                "prompt(*token*)",
+                "prompt(*key*)",
+                
+                // Biometric/crypto data
+                "*.privateKey",
+                "*.publicKey",
+                "crypto.generateKey",
+                "generateKeyPair"
+            ]),
+            
+            sinks: Some([
+                // Insecure storage with sensitive data patterns
+                "localStorage.setItem(*password*",
+                "localStorage.setItem(*token*",
+                "localStorage.setItem(*key*",
+                "localStorage.setItem(*secret*",
+                "localStorage.setItem(*session*",
+                "sessionStorage.setItem(*password*",
+                "sessionStorage.setItem(*token*",
+                "sessionStorage.setItem(*key*",
+                "sessionStorage.setItem(*secret*",
+                "sessionStorage.setItem(*session*",
+                
+                // Generic storage sinks (will be filtered by sources)
+                "localStorage.setItem",
+                "sessionStorage.setItem",
+                "document.cookie =",
+                "*.cookie =",
+                
+                // IndexedDB storage of sensitive data
+                "indexedDB.*.put",
+                "indexedDB.*.add",
+                "*.objectStore.put",
+                "*.objectStore.add",
+                
+                // WebSQL (deprecated but still risky)
+                "*.executeSql"
+            ]),
+            
+            sanitizers: Some([
+                // Cryptographic operations
+                "encrypt(",
+                "AES.encrypt(",
+                "CryptoJS.AES.encrypt(",
+                "crypto.subtle.encrypt(",
+                "bcrypt.hash(",
+                "scrypt(",
+                "pbkdf2(",
+                
+                // Hashing
+                "hash(",
+                "sha256(",
+                "md5(",
+                "crypto.createHash(",
+                
+                // Secure storage libraries
+                "secureStorage.setItem",
+                "encryptedStorage.setItem",
+                "secureLocalStorage.setItem",
+                "cryptoStorage.set",
+                
+                // Tokenization/obfuscation
+                "tokenize(",
+                "obfuscate(",
+                "mask(",
+                "redact(",
+                
+                // Validation that indicates non-sensitive data
+                "isPublic(",
+                "isNonSensitive(",
+                "isSafeToStore(",
+                
+                // JWT encoding (which includes some protection)
+                "jwt.sign(",
+                "jsonwebtoken.sign(",
+                
+                // Base64 encoding (minimal protection but some)
+                "btoa(",
+                "Buffer.from(.*.toString('base64')"
+            ]),
+            
+            finding_type: Some("Insecure Storage"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            
+            description: Some("Sensitive authentication or cryptographic data is stored in browser storage without proper encryption"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"]),
+                exclude_patterns: Some(["*test*", "*spec*", "*mock*", "*.min.js", "*demo*", "*example*"])
+            )),
+            
+            conditions: Some([
+                (
+                    field: "context",
+                    operator: "not_in",
+                    value: "",
+                    condition_type: Some("in_context"),
+                    not_in: Some(["comment", "string_literal", "template_literal"])
+                ),
+                (
+                    field: "argument",
+                    operator: "not_literal",
+                    value: "",
+                    condition_type: Some("not_literal"),
+                    argument_position: Some(1)
+                )
+            ]),
+            
+            tags: Some(["storage", "cwe-922", "sensitive-data", "authentication"])
+        ),
+
+        // ==================== CWE-95: Eval of User-Controlled Code ====================
+        (
+            id: Some("js-eval-user-code-taint-001"),
+            name: Some("Evaluation of User-Controlled Code"),
+            category: Some("code-injection"),
+            mode: "taint",
+            
+            sources: Some([
+                // User input sources
+                "*.value",
+                "window.location.*",
+                "location.*",
+                "URLSearchParams",
+                "event.data",
+                "prompt(",
+                "*.responseText",
+                "*.response",
+                "localStorage.*",
+                "sessionStorage.*",
+                "FormData",
+                "*.files",
+                "*.textContent"
+            ]),
+            
+            sinks: Some([
+                // Code evaluation
+                "eval(",
+                "Function(",
+                "new Function(",
+                "setTimeout(",
+                "setInterval(",
+                
+                // Dynamic imports
+                "import(",
+                "require(",
+                
+                // Script creation and execution
+                "document.createElement(\"script\")",
+                "*.appendChild",
+                "*.insertBefore",
+                
+                // WebAssembly
+                "WebAssembly.compile",
+                "WebAssembly.instantiate"
+            ]),
+            
+            sanitizers: Some([
+                // Validation
+                "validate(",
+                "sanitize(",
+                "whitelist(",
+                "isValid(",
+                
+                // Safe alternatives
+                "JSON.parse",
+                "parseInt",
+                "parseFloat",
+                "Number(",
+                "Boolean("
+            ]),
+            
+            finding_type: Some("Code Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            
+            description: Some("User-controlled input flows to code evaluation functions"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["code-injection", "cwe-95", "eval"])
+        ),
+
+        // ==================== CWE-1333: ReDoS ====================
+        (
+            id: Some("js-redos-taint-001"),
+            name: Some("Regular Expression Denial of Service"),
+            category: Some("redos"),
+            mode: "taint",
+            
+            sources: Some([
+                // User input that could contain malicious regex patterns
+                "*.value",
+                "window.location.*",
+                "location.*", 
+                "URLSearchParams",
+                "event.data",
+                "prompt(",
+                "*.responseText",
+                "*.response",
+                "FormData"
+            ]),
+            
+            sinks: Some([
+                // Regex operations
+                "new RegExp(",
+                "RegExp(",
+                "*.match(",
+                "*.replace(",
+                "*.search(",
+                "*.split(",
+                "*.test(",
+                "*.exec(",
+                
+                // String methods that use regex
+                "*.matchAll(",
+                "*.replaceAll("
+            ]),
+            
+            sanitizers: Some([
+                // Regex validation
+                "validateRegex(",
+                "sanitizeRegex(",
+                "escapeRegex(",
+                "isValidRegex(",
+                
+                // Timeouts
+                "setTimeout(",
+                "Promise.race",
+                
+                // Escaped regex
+                "escapeStringRegexp",
+                "escape-string-regexp"
+            ]),
+            
+            finding_type: Some("ReDoS"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            
+            description: Some("User input flows to regex operations without validation, potentially causing ReDoS"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["redos", "cwe-1333", "regex", "dos"])
+        ),
+
+        // ==================== CWE-338: Weak Randomness ====================
+        (
+            id: Some("js-weak-randomness-taint-001"),
+            name: Some("Use of Weak Random Values for Security"),
+            category: Some("randomness"),
+            mode: "taint",
+            
+            sources: Some([
+                // Weak randomness sources
+                "Math.random(",
+                "Date.now(",
+                "new Date().getTime(",
+                "Math.floor(Math.random(",
+                "Math.round(Math.random(",
+                "parseInt(Math.random("
+            ]),
+            
+            sinks: Some([
+                // Security-sensitive operations
+                "token",
+                "sessionId",
+                "nonce",
+                "csrf",
+                "*.cookie",
+                "localStorage.setItem",
+                "sessionStorage.setItem",
+                
+                // Authentication
+                "authenticate",
+                "login",
+                "password",
+                "key",
+                "secret",
+                
+                // Crypto operations
+                "encrypt(",
+                "decrypt(",
+                "sign(",
+                "verify("
+            ]),
+            
+            sanitizers: Some([
+                // Cryptographically secure randomness
+                "crypto.getRandomValues",
+                "window.crypto.getRandomValues",
+                "crypto.randomBytes",
+                "crypto.randomUUID",
+                
+                // Proper random libraries
+                "secureRandom",
+                "cryptoRandomString",
+                "uuid.v4"
+            ]),
+            
+            finding_type: Some("Weak Randomness"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            
+            description: Some("Weak random values are used in security-sensitive contexts"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            tags: Some(["randomness", "cwe-338", "crypto"])
+        ),
+
+        // ==================== CWE-319: Clear-text Network Request ====================
+        (
+            id: Some("js-cleartext-network-taint-001"),
+            name: Some("Clear-text Transmission of Sensitive Data"),
+            category: Some("network"),
+            mode: "taint",
+            
+            sources: Some([
+                // Sensitive data
+                "password",
+                "token",
+                "apiKey",
+                "secret",
+                "privateKey",
+                "sessionId",
+                "authToken",
+                "accessToken",
+                "credentials",
+                
+                // Sensitive form fields
+                "*[type=password]*",
+                "*[name*=password]*",
+                "*[name*=token]*",
+                "*[name*=key]*",
+                "*[name*=secret]*"
+            ]),
+            
+            sinks: Some([
+                // HTTP (non-HTTPS) requests
+                "fetch(\"http:",
+                "XMLHttpRequest",
+                "axios.get(\"http:",
+                "axios.post(\"http:",
+                "$.ajax({url:\"http:",
+                "$.get(\"http:",
+                "$.post(\"http:",
+                
+                // WebSocket non-secure
+                "WebSocket(\"ws:",
+                "new WebSocket(\"ws:",
+                
+                // Form submissions to HTTP
+                "*.action = \"http:",
+                "*.submit("
+            ]),
+            
+            sanitizers: Some([
+                // HTTPS enforcement
+                "https:",
+                "wss:",
+                "startsWith(\"https:",
+                "protocol === \"https:",
+                
+                // Encryption
+                "encrypt(",
+                "hash(",
+                "crypto.encrypt"
+            ]),
+            
+            finding_type: Some("Clear-text Transmission"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            
+            description: Some("Sensitive data is transmitted over unencrypted connections"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"])
+            )),
+            
+            conditions: Some([
+                (
+                    field: "pattern",
+                    operator: "contains",
+                    value: "http:",
+                    condition_type: Some("has_argument")
+                )
+            ]),
+            
+            tags: Some(["network", "cwe-319", "cleartext", "https"])
+        )
+    ]
+) 

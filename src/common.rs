@@ -447,6 +447,12 @@ impl CommonUtils {
     pub fn extract_function_arguments(call_expr: &str) -> Option<Vec<String>> {
         let start = call_expr.find('(')?;
         let end = call_expr.rfind(')')?;
+        
+        // Validate bounds before slicing to prevent panic
+        if start + 1 >= end {
+            return Some(Vec::new()); // Return empty args for malformed expressions
+        }
+        
         let args_str = &call_expr[start + 1..end];
 
         Some(args_str.split(',')

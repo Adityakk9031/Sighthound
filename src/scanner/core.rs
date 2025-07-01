@@ -645,8 +645,8 @@ impl ScanningLogic {
                         // Check if we have a legitimate rule for this source-sink combination
                         if let Some(rule) = rule_deduplicator.get_rule_for_combination(&taint_info.source_pattern, &sink_pattern) {
                             // Ensure we haven't already processed this exact flow
-                            if !flow_tracker.is_flow_processed(line, &taint_info.source_pattern, &sink_pattern, &used_variable) {
-                                flow_tracker.mark_flow_processed(line, &taint_info.source_pattern, &sink_pattern, &used_variable);
+                            if !flow_tracker.is_flow_processed(line, &taint_info.source_pattern, &sink_pattern) {
+                                flow_tracker.mark_flow_processed(line, &taint_info.source_pattern, &sink_pattern);
 
                                 // Create legitimate taint finding
                                 let taint_source = crate::models::TaintSource {
@@ -1523,7 +1523,7 @@ struct VariableFlowTracker {
     /// Taint propagation through operations
     taint_propagations: std::collections::HashMap<String, Vec<String>>, // var -> [dependent_vars]
     /// Deduplication set for flows to prevent duplicates
-    processed_flows: std::collections::HashSet<(usize, String, String, String)>, // (line, source_pattern, sink_pattern, sink_variable)
+    processed_flows: std::collections::HashSet<(usize, String, String)>, // (line, source_pattern, sink_pattern)
 }
 
 #[derive(Debug, Clone)]
@@ -1582,13 +1582,13 @@ impl VariableFlowTracker {
     }
 
     /// Check if we've already processed this flow to prevent duplicates
-    fn is_flow_processed(&self, line: usize, source_pattern: &str, sink_pattern: &str, sink_variable: &str) -> bool {
-        self.processed_flows.contains(&(line, source_pattern.to_string(), sink_pattern.to_string(), sink_variable.to_string()))
+    fn is_flow_processed(&self, line: usize, source_pattern: &str, sink_pattern: &str) -> bool {
+        self.processed_flows.contains(&(line, source_pattern.to_string(), sink_pattern.to_string()))
     }
 
     /// Mark a flow as processed
-    fn mark_flow_processed(&mut self, line: usize, source_pattern: &str, sink_pattern: &str, sink_variable: &str) {
-        self.processed_flows.insert((line, source_pattern.to_string(), sink_pattern.to_string(), sink_variable.to_string()));
+    fn mark_flow_processed(&mut self, line: usize, source_pattern: &str, sink_pattern: &str) {
+        self.processed_flows.insert((line, source_pattern.to_string(), sink_pattern.to_string()));
     }
 
     /// Record taint propagation through operations
@@ -1840,26 +1840,10 @@ impl MultiFileTaintAnalyzer {
                         log::debug!("[CROSS_FILE_NEW] VERIFIED taint flow: {} -> {}", 
                             flow.source_pattern, flow.sink_pattern);
 
-                        // Check for duplicates before creating finding
-                        let flow_key = (
-                            flow.sink_file.clone(),
-                            flow.sink_line,
-                            flow.source_pattern.clone(),
-                            flow.sink_pattern.clone(),
-                            flow.sink_variable.clone(),
-                        );
-
-                        if !data_flow_tracer.processed_verified_flows.contains(&flow_key) {
-                            data_flow_tracer.processed_verified_flows.insert(flow_key);
-
-                            // Get the appropriate rule for this flow
-                            if let Some(rule) = rule_deduplicator.get_rule_for_combination(&flow.source_pattern, &flow.sink_pattern) {
-                                let finding = self.create_finding_from_verified_flow(&flow, rule);
-                                findings.push(finding);
-                            }
-                        } else {
-                            log::debug!("[CROSS_FILE_NEW] DUPLICATE flow detected, skipping: {}:{} {} -> {}", 
-                                flow.sink_file, flow.sink_line, flow.source_pattern, flow.sink_pattern);
+                        // Get the appropriate rule for this flow
+                        if let Some(rule) = rule_deduplicator.get_rule_for_combination(&flow.source_pattern, &flow.sink_pattern) {
+                            let finding = self.create_finding_from_verified_flow(&flow, rule);
+                            findings.push(finding);
                         }
                     }
                     AnalysisResult::DefinitelySafe => {
@@ -3118,8 +3102,6 @@ struct DataFlowTracer {
     variable_source_cache: std::collections::HashMap<(String, String, String), VariableSource>,
     /// Verified taint flows that have been fully validated
     verified_flows: Vec<VerifiedTaintFlow>,
-    /// Deduplication set for verified flows to prevent duplicates
-    processed_verified_flows: std::collections::HashSet<(String, usize, String, String, String)>, // (file, line, source_pattern, sink_pattern, sink_variable)
 }
 
 impl DataFlowTracer {
@@ -3129,7 +3111,6 @@ impl DataFlowTracer {
             function_analyzer: FunctionBodyAnalyzer::new(),
             variable_source_cache: std::collections::HashMap::new(),
             verified_flows: Vec::new(),
-            processed_verified_flows: std::collections::HashSet::new(),
         }
     }
 
@@ -3686,34 +3667,6 @@ impl DataFlowTracer {
                             }
                         }
                     }
-
-                    // NEW: Check if return expression is a variable that was assigned tainted data
-                    if !return_expr.contains('(') && !return_expr.contains('"') && !return_expr.contains("'") {
-                        log::debug!("[ANALYZE_FUNCTION] Return expression is a variable: \"{}\"", return_expr);
-                        
-                        // Trace the variable through the function body to see if it gets tainted data
-                        if let Some(taint_result) = self.trace_variable_through_function(&function_body, return_expr, rule_deduplicator, file_path, function_name) {
-                            log::debug!("[ANALYZE_FUNCTION] Variable \"{}\" is tainted through assignment", return_expr);
-                            return taint_result;
-                        }
-                    }
-
-                    // NEW: Check if return expression is an f-string that uses tainted variables
-                    if return_expr.starts_with("f\"") || return_expr.starts_with("f'") {
-                        log::debug!("[ANALYZE_FUNCTION] Return expression is an f-string: \"{}\"", return_expr);
-                        
-                        // Extract variables from the f-string
-                        let f_string_vars = CommonUtils::extract_f_string_variables(return_expr);
-                        log::debug!("[ANALYZE_FUNCTION] F-string variables: {:?}", f_string_vars);
-                        
-                        // Check if any of the f-string variables are tainted
-                        for var in f_string_vars {
-                            if let Some(taint_result) = self.trace_variable_through_function(&function_body, &var, rule_deduplicator, file_path, function_name) {
-                                log::debug!("[ANALYZE_FUNCTION] F-string variable \"{}\" is tainted", var);
-                                return taint_result;
-                            }
-                        }
-                    }
                 }
             }
 
@@ -3773,78 +3726,6 @@ impl DataFlowTracer {
             log::debug!("[EXTRACT_FUNCTION_BODY] Function body:\n{}", body);
             Some(body)
         }
-    }
-
-    /// Trace a variable through a function body to see if it gets assigned tainted data
-    fn trace_variable_through_function(
-        &mut self,
-        function_body: &str,
-        variable_name: &str,
-        rule_deduplicator: &TaintRuleDeduplicator,
-        file_path: &str,
-        function_name: &str,
-    ) -> Option<AnalysisResult> {
-        log::debug!("[TRACE_VARIABLE] Tracing variable \"{}\" through function body", variable_name);
-
-        for (line_num, line) in function_body.lines().enumerate() {
-            let line = line.trim();
-            
-            // Look for assignments to this variable
-            if line.starts_with(&format!("{} =", variable_name)) || line.contains(&format!("{} =", variable_name)) {
-                if let Some(assignment_start) = line.find(&format!("{} =", variable_name)) {
-                    let assignment_expr = &line[assignment_start + variable_name.len() + 2..].trim();
-                    log::debug!("[TRACE_VARIABLE] Found assignment: {} = {}", variable_name, assignment_expr);
-
-                    // Check if the assignment is a direct taint source
-                    if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(assignment_expr) {
-                        log::debug!("[TRACE_VARIABLE] Variable assigned direct taint source: \"{}\"", source_pattern);
-                        
-                        let flow = VerifiedTaintFlow {
-                            source_file: file_path.to_string(),
-                            source_function: function_name.to_string(),
-                            source_line: line_num + 1,
-                            source_pattern: source_pattern.clone(),
-                            sink_file: file_path.to_string(),
-                            sink_function: function_name.to_string(),
-                            sink_line: line_num + 1,
-                            sink_variable: variable_name.to_string(),
-                            sink_pattern: "variable_assignment".to_string(),
-                            call_chain: Vec::new(),
-                            data_flow_evidence: DataFlowEvidence {
-                                variable_assignments: vec![(variable_name.to_string(), assignment_expr.to_string(), line_num + 1)],
-                                function_calls: Vec::new(),
-                                return_statements: Vec::new(),
-                            },
-                        };
-                        return Some(AnalysisResult::DefinitelyTainted { flow });
-                    }
-
-                    // Check if the assignment is a function call
-                    if assignment_expr.contains('(') && assignment_expr.contains(')') {
-                        log::debug!("[TRACE_VARIABLE] Variable assigned from function call: \"{}\"", assignment_expr);
-                        
-                        let result = self.trace_local_assignment_taint(
-                            file_path, function_name, assignment_expr, line_num + 1,
-                            "variable_assignment", line_num + 1, variable_name,
-                            rule_deduplicator
-                        );
-                        
-                        match result {
-                            AnalysisResult::DefinitelyTainted { flow } => {
-                                log::debug!("[TRACE_VARIABLE] Function call returns tainted data");
-                                return Some(AnalysisResult::DefinitelyTainted { flow });
-                            },
-                            _ => {
-                                log::debug!("[TRACE_VARIABLE] Function call analysis inconclusive");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        log::debug!("[TRACE_VARIABLE] Variable \"{}\" not found to be tainted", variable_name);
-        None
     }
 }
 
