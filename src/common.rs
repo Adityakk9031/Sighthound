@@ -292,6 +292,8 @@ impl CommonUtils {
 
     /// Extract variables from F-strings
     pub fn extract_f_string_variables(expr: &str) -> Vec<String> {
+        println!("🔍 [F_STRING_EXTRACT] Processing: '{}'", expr);
+        
         let mut variables = Vec::new();
         let mut in_brace = false;
         let mut var_start = 0;
@@ -299,20 +301,27 @@ impl CommonUtils {
         for (i, ch) in expr.chars().enumerate() {
             match ch {
                 '{' if !in_brace => {
+                    println!("   Found opening brace at position {}", i);
                     in_brace = true;
                     var_start = i + 1;
                 }
                 '}' if in_brace => {
+                    println!("   Found closing brace at position {}, extracting from {} to {}", i, var_start, i);
                     in_brace = false;
                     let var = &expr[var_start..i].trim();
+                    println!("   Extracted variable candidate: '{}'", var);
                     if Self::is_valid_variable_name(var) {
+                        println!("   ✅ Valid variable name: '{}'", var);
                         variables.push(var.to_string());
+                    } else {
+                        println!("   ❌ Invalid variable name: '{}'", var);
                     }
                 }
                 _ => {}
             }
         }
 
+        println!("🔍 [F_STRING_EXTRACT] Result: {:?}", variables);
         variables
     }
 
