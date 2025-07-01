@@ -330,27 +330,22 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - [Rule Writing Guide](rules/RULE_WRITING_GUIDE.md) - Create custom security rules
 - [Multi-File Taint Analysis](MULTI_FILE_TAINT_PLAN.md) - Advanced taint flow capabilities
 - [Language Support](src/language.rs) - Adding new programming languages
-- [Architecture Design](docs/architecture.md) - System design and components
 
 ## 🐛 Known Issues & Limitations
 
 ### Current Limitations
-- **JavaScript Minified Files**: May produce false positives (use `--skip-minified`)
+- **JavaScript Minified Files**: May produce false positives (use `--skip-minified`). This needs improving as it currently relies on file name only.
+- **Multi-file Taint**: Requires more testing
 - **Dynamic Languages**: Runtime-only vulnerabilities may not be detected
-- **Third-Party Libraries**: Limited analysis inside external dependencies
 - **Performance**: Very large files (>10MB) may impact scanning speed
+
 
 ### Roadmap
 - [ ] **IDE Integration**: VS Code and JetBrains plugins
 - [ ] **CI/CD Integration**: GitHub Actions, GitLab CI templates
 - [ ] **Additional Languages**: Go, C/C++, PHP, Ruby support
 - [ ] **Advanced Analysis**: Control flow and symbolic execution
-- [ ] **Machine Learning**: AI-powered vulnerability detection
 - [ ] **Incremental Scanning**: Cache and diff-based analysis
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🏢 Credits
 
@@ -361,18 +356,9 @@ Developed by the [Corgea Team](https://github.com/corgea) as part of our mission
 - **Rust Community**: Amazing ecosystem and tooling
 - **Security Researchers**: Vulnerability patterns and detection techniques
 
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/corgea/greppy_prototype/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/corgea/greppy_prototype/discussions)
-- **Email**: support@corgea.com
-- **Documentation**: [Wiki](https://github.com/corgea/greppy_prototype/wiki)
-
 ---
 
 <div align="center">
-
-**⭐ Star this repository if you find it useful!**
 
 Made with ❤️ by the Corgea Team
 
