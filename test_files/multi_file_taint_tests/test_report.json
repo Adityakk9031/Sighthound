@@ -6,8 +6,8 @@
     "success_rate": 60.0
   },
   "performance": {
-    "total_time": 4.053,
-    "average_time": 0.811,
+    "total_time": 3.757,
+    "average_time": 0.751,
     "meets_performance_target": false
   },
   "category_breakdown": {
@@ -43,7 +43,7 @@
       "expected": "DETECT",
       "actual": "DETECT",
       "correct": true,
-      "time": 0.79,
+      "time": 1.259,
       "description": "Direct function import flow: input() -> os.system()"
     },
     {
@@ -52,7 +52,7 @@
       "expected": "REJECT",
       "actual": "DETECT",
       "correct": false,
-      "time": 0.653,
+      "time": 0.515,
       "description": "No import relationship - should not create phantom flow"
     },
     {
@@ -61,7 +61,7 @@
       "expected": "REJECT",
       "actual": "DETECT",
       "correct": false,
-      "time": 0.865,
+      "time": 0.656,
       "description": "Configuration patterns should not be flagged"
     },
     {
@@ -70,7 +70,7 @@
       "expected": "DETECT",
       "actual": "DETECT",
       "correct": true,
-      "time": 0.879,
+      "time": 0.674,
       "description": "Real environment variable vulnerability"
     },
     {
@@ -79,7 +79,7 @@
       "expected": "DETECT",
       "actual": "DETECT",
       "correct": true,
-      "time": 0.866,
+      "time": 0.652,
       "description": "Three-file chain: input() -> processor -> os.system()"
     }
   ]

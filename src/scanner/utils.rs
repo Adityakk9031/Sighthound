@@ -12,7 +12,7 @@ use crate::parser::get_node_text;
 
 /// Check if a file path matches a glob pattern (delegates to common utils)
 pub fn matches_glob_pattern(pattern: &str, file_path: &str) -> bool {
-    crate::common::CommonUtils::file_matches_pattern(pattern, file_path)
+    crate::common::CommonUtils::matches_file_pattern(pattern, file_path)
 }
 
 /// Check if a rule applies to a given file path based on file type constraints
@@ -90,7 +90,7 @@ pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
 /// Discover files by language with configurable parallelism
 pub fn discover_files_by_language(root_dir: &str, parallel: bool) -> Result<HashMap<String, Vec<PathBuf>>> {
     let estimated_languages = crate::config::ScanDefaults::ESTIMATED_LANGUAGES;
-    
+
     if parallel {
         discover_files_parallel(root_dir, estimated_languages)
     } else {
@@ -120,20 +120,20 @@ fn discover_files_parallel(root_dir: &str, estimated_languages: usize) -> Result
             })
         })
         .collect();
-    
-    let estimated_files_per_lang = if all_paths.is_empty() { 
-        crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG 
-    } else { 
-        (all_paths.len() / estimated_languages).max(crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG) 
+
+    let estimated_files_per_lang = if all_paths.is_empty() {
+        crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG
+    } else {
+        (all_paths.len() / estimated_languages).max(crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG)
     };
-    
-    println!("📂 Discovered {} files total, estimating {} files per language", 
+
+    println!("📂 Discovered {} files total, estimating {} files per language",
              all_paths.len(), estimated_files_per_lang);
-    
+
     let files_by_language = Arc::new(Mutex::new(
         HashMap::<String, Vec<PathBuf>>::with_capacity(estimated_languages)
     ));
-    
+
     all_paths.par_iter().for_each(|path| {
         if let Some(language) = detect_language_from_path(path) {
             let mut map = files_by_language.lock().unwrap();
@@ -142,7 +142,7 @@ fn discover_files_parallel(root_dir: &str, estimated_languages: usize) -> Result
                 .push(path.clone());
         }
     });
-    
+
     Arc::try_unwrap(files_by_language)
         .map_err(|_| anyhow::anyhow!("Failed to unwrap shared file map"))?
         .into_inner()
@@ -152,7 +152,7 @@ fn discover_files_parallel(root_dir: &str, estimated_languages: usize) -> Result
 /// Internal sequential file discovery implementation
 fn discover_files_sequential(root_dir: &str, estimated_languages: usize) -> Result<HashMap<String, Vec<PathBuf>>> {
     let mut files_by_language = HashMap::with_capacity(estimated_languages);
-    
+
     for entry in WalkDir::new(root_dir)
         .follow_links(false)
         .into_iter()
@@ -175,7 +175,7 @@ fn discover_files_sequential(root_dir: &str, estimated_languages: usize) -> Resu
             }
         }
     }
-    
+
     Ok(files_by_language)
 }
 
@@ -203,18 +203,18 @@ impl AstUtils {
         if Self::is_configuration_pattern(code) {
             return CodePatternType::Configuration;
         }
-        
+
         if Self::is_user_input_pattern(code, pattern) {
             return CodePatternType::UserInput;
         }
-        
+
         if Self::is_dangerous_sink_pattern(code, pattern) {
             return CodePatternType::DangerousSink;
         }
-        
+
         CodePatternType::Neutral
     }
-    
+
     /// Check if code represents configuration (safe) - FIXED: Much more specific
     fn is_configuration_pattern(code: &str) -> bool {
         // SPECIFIC configuration patterns only - not broad keyword matching
@@ -225,13 +225,13 @@ impl AstUtils {
             "settings.",              // settings.SOMETHING
             "_config.",               // some_config.something
         ];
-        
+
         // Only match if it's clearly a configuration operation, not just containing keywords
         specific_config_patterns.iter().any(|&pattern| code.contains(pattern)) ||
         // Special case: setdefault is always configuration
         (code.contains("setdefault") && code.contains("("))
     }
-    
+
     /// Check if code represents user input (source)
     fn is_user_input_pattern(code: &str, pattern: &str) -> bool {
         // Only consider user input if it's actually getting user data
@@ -243,16 +243,16 @@ impl AstUtils {
             "request.json",
             "sys.argv",
         ];
-        
+
         user_input_patterns.iter().any(|&p| code.contains(p)) ||
         (pattern.contains("environ") && Self::is_environment_read(code))
     }
-    
+
     /// Check if environment access is reading (source) vs setting (config)
     pub fn is_environment_read(code: &str) -> bool {
         code.contains("get(") || code.contains("[]") // os.environ.get() or os.environ['key']
     }
-    
+
     /// Check if code represents dangerous sink
     fn is_dangerous_sink_pattern(_code: &str, pattern: &str) -> bool {
         let dangerous_sinks = [
@@ -263,7 +263,7 @@ impl AstUtils {
             "exec(",
             "open(",
         ];
-        
+
         dangerous_sinks.iter().any(|&sink| pattern.contains(sink))
     }
 
@@ -274,7 +274,7 @@ impl AstUtils {
     /// Get function context from AST node
     pub fn get_function_context(node: &Node, source: &[u8]) -> String {
         let mut current = *node;
-        
+
         // Look for containing function
         loop {
             if Self::is_function_node(&current) {
@@ -283,20 +283,20 @@ impl AstUtils {
                     return name;
                 }
             }
-            
+
             if let Some(parent) = current.parent() {
                 current = parent;
             } else {
                 break;
             }
         }
-        
+
         "global".to_string()
     }
 
     /// Check if node is a function definition
     pub fn is_function_node(node: &Node) -> bool {
-        matches!(node.kind(), 
+        matches!(node.kind(),
             "function_definition" | "function_declaration" | "method_definition" |
             "arrow_function" | "function_expression" | "generator_function" |
             "async_function" | "constructor_definition"
@@ -309,7 +309,7 @@ impl AstUtils {
         if let Some(name_node) = node.child_by_field_name("name") {
             return Some(get_node_text(&name_node, source));
         }
-        
+
         // Try child-based extraction
         let mut cursor = node.walk();
         if cursor.goto_first_child() {
@@ -322,7 +322,7 @@ impl AstUtils {
                 }
             }
         }
-        
+
         None
     }
 
@@ -371,12 +371,12 @@ impl AstUtils {
         ];
         generic_sanitizers.iter().any(|pattern| code.contains(pattern))
     }
-    
-    /// Extract variables from expression with semantic understanding  
+
+    /// Extract variables from expression with semantic understanding
     pub fn extract_semantic_variables(node: &Node, source: &[u8]) -> Vec<SemanticVariable> {
         let node_text = get_node_text(node, source);
         let mut variables = Vec::new();
-        
+
         match node.kind() {
             "assignment" | "assignment_expression" => {
                 if let Some(target) = CommonUtils::extract_variable_from_assignment(&node_text, false) {
@@ -386,11 +386,11 @@ impl AstUtils {
                         context: node_text.clone(),
                     });
                 }
-                
+
                 // Extract source variables from right side
                 if let Some(eq_pos) = node_text.find('=') {
                     let right_side = node_text[eq_pos + 1..].trim();
-                    let source_vars = CommonUtils::extract_variables_from_expression(right_side);
+                    let source_vars = CommonUtils::extract_simple_variables(right_side);
                     for var in source_vars {
                         variables.push(SemanticVariable {
                             name: var,
@@ -416,7 +416,7 @@ impl AstUtils {
             }
             _ => {}
         }
-        
+
         variables
     }
 }
@@ -441,4 +441,4 @@ pub enum VariableType {
     AssignmentTarget,
     Source,
     FunctionArgument,
-} 
+}

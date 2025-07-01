@@ -1,47 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use tree_sitter::Node;
-use serde::{Deserialize, Deserializer};
 
-// Re-export LanguageInfo from models for backward compatibility
 pub use crate::models::LanguageInfo;
-
-/// Consolidated common utilities used across the entire codebase
-/// This module eliminates DRY violations by providing unified implementations
 pub struct CommonUtils;
 
 impl CommonUtils {
-    // =========================================================================
-    // UNIFIED TEXT EXTRACTION (consolidates 6 duplicate implementations)
-    // =========================================================================
-
-    /// Extract text from AST node using byte positions
-    /// Consolidates identical logic from all language implementations
-    pub fn extract_node_text(node: &Node, source: &[u8]) -> Option<String> {
-        let start = node.start_byte();
-        let end = node.end_byte();
-        std::str::from_utf8(&source[start..end])
-            .ok()
-            .map(|s| s.to_string())
-    }
-
-    /// Extract text slice from AST node (zero-copy version)
-    pub fn extract_node_text_slice<'a>(node: &Node, source: &'a [u8]) -> Option<&'a str> {
-        let start = node.start_byte();
-        let end = node.end_byte();
-        std::str::from_utf8(&source[start..end]).ok()
-    }
-
-    /// Extract text from node by field name (common pattern)
-    pub fn extract_field_text(node: &Node, field: &str, source: &[u8]) -> Option<String> {
-        node.child_by_field_name(field)
-            .and_then(|child| Self::extract_node_text(&child, source))
-    }
-
-    // =========================================================================
-    // UNIFIED PATTERN MATCHING (consolidates all pattern matching implementations)
-    // =========================================================================
-
     /// Unified pattern matching supporting exact, wildcard, glob, and regex
+    /// This is the single source of truth for all pattern matching in the codebase
     pub fn matches_unified_pattern(pattern: &str, text: &str) -> bool {
         // Fast exact match
         if pattern == text {
@@ -63,42 +28,75 @@ impl CommonUtils {
 
         // Handle glob/wildcard patterns
         if pattern.contains('*') {
-            return Self::matches_wildcard(pattern, text);
+            return Self::matches_glob_pattern(pattern, text);
         }
 
         // Default: substring matching
         text.contains(pattern)
     }
 
-    /// Enhanced pattern matching supporting exact, glob, and regex patterns
-    /// (Consolidated from core_utils.rs)
-    pub fn matches_pattern(pattern: &str, text: &str) -> bool {
+    /// Specialized pattern matching for file paths and names
+    pub fn matches_file_pattern(pattern: &str, file_path: &str) -> bool {
+        // Try full path match first
+        if Self::matches_unified_pattern(pattern, file_path) {
+            return true;
+        }
+
+        // Try filename only
+        if let Some(filename) = std::path::Path::new(file_path).file_name() {
+            if let Some(filename_str) = filename.to_str() {
+                return Self::matches_unified_pattern(pattern, filename_str);
+            }
+        }
+
+        false
+    }
+
+    /// Specialized pattern matching for taint analysis with context awareness
+    pub fn matches_taint_pattern(pattern: &str, text: &str) -> bool {
+        // Skip string literals and metadata
+        if text.trim().starts_with('"') || text.trim().starts_with("'") ||
+           text.contains("__all__") || text.contains("__version__") {
+            return false;
+        }
+
+        Self::matches_unified_pattern(pattern, text)
+    }
+
+    /// Context-aware taint pattern matching with additional filtering
+    pub fn matches_taint_pattern_in_context(
+        pattern: &str,
+        text: &str,
+        _node_kind: &str,
+        _context: &str,
+    ) -> bool {
+        // Skip string literals in any context
+        if text.starts_with('"') || text.starts_with("'") || text.starts_with("b\"") || text.starts_with("b'") {
+            return false;
+        }
+
+        // Skip __all__ lists and other metadata
+        if text.contains("__all__") || text.contains("__version__") || text.contains("__author__") {
+            return false;
+        }
+
+        Self::matches_unified_pattern(pattern, text)
+    }
+
+    /// General rule pattern matching (replaces old matches_pattern)
+    pub fn matches_rule_pattern(pattern: &str, text: &str) -> bool {
         // Fast exact match
         if pattern == text {
             return true;
         }
-        
-        // Glob pattern matching
-        if pattern.contains('*') {
-            return Self::matches_glob_pattern(pattern, text);
-        }
-        
-        // Regex pattern matching (if pattern looks like regex)
-        if Self::is_regex_pattern(pattern) {
-            return Self::matches_regex_pattern(pattern, text);
-        }
-        
-        // Substring matching with word boundaries for short patterns
-        if pattern.len() <= 3 {
-            Self::matches_with_word_boundary(pattern, text)
-        } else {
-            text.contains(pattern)
-        }
+
+        // Use unified pattern matching for consistency
+        Self::matches_unified_pattern(pattern, text)
     }
 
     /// Enhanced glob pattern matching for file paths and function names
-    /// (Consolidated from core_utils.rs)
-    pub fn matches_glob_pattern(pattern: &str, text: &str) -> bool {
+    /// (Used internally by unified pattern matching)
+    fn matches_glob_pattern(pattern: &str, text: &str) -> bool {
         if !pattern.contains('*') {
             return pattern == text;
         }
@@ -108,7 +106,7 @@ impl CommonUtils {
             if glob_pattern.matches(text) {
                 return true;
             }
-            
+
             // Also try matching against just the filename
             if let Some(filename) = std::path::Path::new(text).file_name() {
                 if let Some(filename_str) = filename.to_str() {
@@ -123,15 +121,7 @@ impl CommonUtils {
         Self::simple_glob_match(pattern, text)
     }
 
-    /// Match wildcard patterns (* and ?)
-    fn matches_wildcard(pattern: &str, text: &str) -> bool {
-        // Convert wildcard to regex for consistent behavior
-        let regex_pattern = pattern
-            .replace('*', ".*")
-            .replace('?', ".");
-        
-        Self::matches_regex(&format!("^{}$", regex_pattern), text)
-    }
+
 
     /// Simple glob matching for basic wildcard patterns
     fn simple_glob_match(pattern: &str, text: &str) -> bool {
@@ -139,11 +129,11 @@ impl CommonUtils {
         if parts.is_empty() {
             return true;
         }
-        
+
         if parts.len() == 2 {
             let prefix = parts[0];
             let suffix = parts[1];
-            
+
             if prefix.is_empty() && suffix.is_empty() {
                 return true; // Pattern is just "*"
             } else if prefix.is_empty() {
@@ -154,14 +144,14 @@ impl CommonUtils {
                 return text.starts_with(prefix) && text.ends_with(suffix) && text.len() >= prefix.len() + suffix.len();
             }
         }
-        
+
         // For complex patterns, check that all non-empty parts exist in order
         let mut current_pos = 0;
         for (i, part) in parts.iter().enumerate() {
             if part.is_empty() {
                 continue;
             }
-            
+
             if i == 0 {
                 // First part must match at start
                 if !text.starts_with(part) {
@@ -180,14 +170,14 @@ impl CommonUtils {
                 }
             }
         }
-        
+
         true
     }
 
     /// Check if pattern is a regex pattern
     fn is_regex_pattern(pattern: &str) -> bool {
-        pattern.starts_with("regex:") || 
-        pattern.contains("\\\\") || 
+        pattern.starts_with("regex:") ||
+        pattern.contains("\\\\") ||
         pattern.contains("\\.")
     }
 
@@ -206,53 +196,27 @@ impl CommonUtils {
             .replace("\\)", ")")
             .replace("\\.", ".")
             .replace("\\\\", "\\");
-        
+
         text.contains(&cleaned_pattern)
     }
 
-    /// Match regex patterns (consolidated from core_utils.rs)
-    fn matches_regex_pattern(pattern: &str, text: &str) -> bool {
-        let regex_pattern = if pattern.starts_with("regex:") {
-            &pattern[6..]
-        } else {
-            pattern
-        };
-        
-        if let Ok(regex) = regex::Regex::new(regex_pattern) {
-            regex.is_match(text)
-        } else {
-            false
-        }
-    }
 
-    /// Match with word boundaries for short patterns
-    fn matches_with_word_boundary(pattern: &str, text: &str) -> bool {
-        if let Ok(regex) = regex::Regex::new(&format!(r"\b{}\b", regex::escape(pattern))) {
-            regex.is_match(text)
-        } else {
-            text.contains(pattern)
-        }
-    }
 
     /// Match any pattern from a list (common use case)
     pub fn matches_any_pattern(patterns: &[String], text: &str) -> bool {
         patterns.iter().any(|pattern| Self::matches_unified_pattern(pattern, text))
     }
 
-    // =========================================================================
-    // UNIFIED VARIABLE EXTRACTION (consolidated from core_utils.rs)
-    // =========================================================================
-
     /// Extract variable name from assignment expression with configurable behavior
     pub fn extract_variable_from_assignment(assignment_text: &str, return_empty_on_none: bool) -> Option<String> {
         let eq_pos = assignment_text.find('=')?;
         let left_side = assignment_text[..eq_pos].trim();
-        
+
         // Handle multiple assignments: a = b = c (take first)
         let target = left_side.split('=').next()?.trim();
-        
+
         let result = Self::extract_clean_variable_name(target);
-        
+
         if return_empty_on_none && result.is_none() {
             Some(String::new())
         } else {
@@ -271,7 +235,7 @@ impl CommonUtils {
             // For arr[index], extract arr
             return expr.split('[').next().map(|s| s.trim().to_string());
         }
-        
+
         // Extract final identifier from whitespace-separated expression
         expr.split_whitespace()
             .last()
@@ -280,9 +244,10 @@ impl CommonUtils {
     }
 
     /// Extract all variable identifiers from code expression
-    pub fn extract_variables_from_expression(expr: &str) -> Vec<String> {
+    /// Extract simple variable identifiers from code expression (separator-based)
+    pub fn extract_simple_variables(expr: &str) -> Vec<String> {
         let separators = [' ', '+', '-', '*', '/', '(', ')', '[', ']', '{', '}', ',', '.', '='];
-        
+
         expr.split(&separators)
             .map(|s| s.trim())
             .filter(|s| Self::is_valid_variable_name(s))
@@ -292,26 +257,27 @@ impl CommonUtils {
     }
 
     /// Extract all variables from an expression, including complex cases
-    pub fn extract_all_variables_from_expression(expr: &str) -> Vec<String> {
+    /// Extract all variables from an expression, including complex patterns (comprehensive)
+    pub fn extract_all_variables(expr: &str) -> Vec<String> {
         let mut variables = Vec::new();
-        
+
         // Direct variable usage
         if let Some(var) = Self::extract_direct_variable(expr) {
             variables.push(var);
         }
-        
+
         // F-string variables: f"echo {user_input}"
         variables.extend(Self::extract_f_string_variables(expr));
-        
+
         // Format string variables: "echo {}".format(user_input)
         variables.extend(Self::extract_format_variables(expr));
-        
+
         // String concatenation: "echo " + user_input
         variables.extend(Self::extract_concatenation_variables(expr));
-        
+
         // Function call arguments: eval(user_input)
         variables.extend(Self::extract_function_arguments(expr).unwrap_or_default());
-        
+
         variables
     }
 
@@ -329,7 +295,7 @@ impl CommonUtils {
         let mut variables = Vec::new();
         let mut in_brace = false;
         let mut var_start = 0;
-        
+
         for (i, ch) in expr.chars().enumerate() {
             match ch {
                 '{' if !in_brace => {
@@ -346,7 +312,7 @@ impl CommonUtils {
                 _ => {}
             }
         }
-        
+
         variables
     }
 
@@ -360,14 +326,14 @@ impl CommonUtils {
                 return Self::extract_function_arguments(args).unwrap_or_default();
             }
         }
-        
+
         Vec::new()
     }
 
     /// Extract variables from string concatenation
     fn extract_concatenation_variables(expr: &str) -> Vec<String> {
         let mut variables = Vec::new();
-        
+
         // Handle + concatenation: "echo " + user_input
         let parts: Vec<&str> = expr.split('+').collect();
         for part in parts {
@@ -376,17 +342,18 @@ impl CommonUtils {
                 variables.push(trimmed.to_string());
             }
         }
-        
+
         variables
     }
 
     /// Extract variable from various code patterns (function calls, assignments, etc.)
-    pub fn extract_variable_from_code_pattern(code: &str) -> Option<String> {
+    /// Extract variable from various code patterns (assignments, function calls, etc.)
+    pub fn extract_variable_from_pattern(code: &str) -> Option<String> {
         // Try assignment pattern first
         if let Some(var) = Self::extract_variable_from_assignment(code, false) {
             return Some(var);
         }
-        
+
         // Try function call pattern
         if let Some(paren_pos) = code.find('(') {
             let before_paren = &code[..paren_pos];
@@ -398,7 +365,7 @@ impl CommonUtils {
                 }
             }
         }
-        
+
         None
     }
 
@@ -407,7 +374,7 @@ impl CommonUtils {
         let start = call_expr.find('(')?;
         let end = call_expr.rfind(')')?;
         let args_str = &call_expr[start + 1..end];
-        
+
         Some(args_str.split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && !s.starts_with('"') && !s.starts_with('\''))
@@ -416,46 +383,42 @@ impl CommonUtils {
 
     /// Check if assignment text is valid (not comparison)
     pub fn is_valid_assignment_text(text: &str) -> bool {
-        text.contains('=') && 
-        !text.contains("==") && 
+        text.contains('=') &&
+        !text.contains("==") &&
         !text.contains("!=") &&
         !text.contains("<=") &&
         !text.contains(">=")
     }
 
-    // =========================================================================
-    // UNIFIED VALIDATION FUNCTIONS (consolidated from core_utils.rs)
-    // =========================================================================
-
     /// Check if string is a valid variable name
     pub fn is_valid_variable_name(s: &str) -> bool {
-        !s.is_empty() && 
+        !s.is_empty() &&
         s.chars().all(|c| c.is_alphanumeric() || c == '_') &&
         !s.chars().next().unwrap().is_ascii_digit()
     }
 
     /// Check if string is a keyword or builtin (consolidated from multiple implementations)
     pub fn is_keyword_or_builtin(s: &str) -> bool {
-        matches!(s, 
+        matches!(s,
             // Python keywords
-            "and" | "as" | "assert" | "break" | "class" | "continue" | "def" | "del" | "elif" | 
-            "else" | "except" | "exec" | "finally" | "for" | "from" | "global" | "if" | "import" | 
-            "in" | "is" | "lambda" | "not" | "or" | "pass" | "print" | "raise" | "return" | 
+            "and" | "as" | "assert" | "break" | "class" | "continue" | "def" | "del" | "elif" |
+            "else" | "except" | "exec" | "finally" | "for" | "from" | "global" | "if" | "import" |
+            "in" | "is" | "lambda" | "not" | "or" | "pass" | "print" | "raise" | "return" |
             "try" | "while" | "with" | "yield" |
-            
+
             // Python builtins
-            "True" | "False" | "None" | "str" | "int" | "float" | "list" | "dict" | "set" | 
+            "True" | "False" | "None" | "str" | "int" | "float" | "list" | "dict" | "set" |
             "tuple" | "bool" | "len" | "range" | "enumerate" | "zip" | "map" | "filter" |
-            
+
             // SQL keywords
             "SELECT" | "FROM" | "WHERE" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "DROP" |
             "ALTER" | "INDEX" | "TABLE" | "DATABASE" | "UNION" | "JOIN" | "AND" | "OR" |
-            
+
             // JavaScript keywords (unique only)
             "var" | "let" | "const" | "function" | "do" |
             "switch" | "case" | "default" | "typeof" |
             "instanceof" | "new" | "this" | "super" | "extends" | "implements" |
-            
+
             // Common database/web terms
             "cursor" | "execute" | "query" | "request" | "response" | "session" | "document" |
             "window" | "console" | "undefined" | "null"
@@ -465,23 +428,6 @@ impl CommonUtils {
     // =========================================================================
     // UNIFIED FILE OPERATIONS (consolidated from core_utils.rs)
     // =========================================================================
-
-    /// Check if file path matches pattern (consolidates file type checking)
-    pub fn file_matches_pattern(pattern: &str, file_path: &str) -> bool {
-        // Try full path match first
-        if Self::matches_pattern(pattern, file_path) {
-            return true;
-        }
-        
-        // Try filename only
-        if let Some(filename) = std::path::Path::new(file_path).file_name() {
-            if let Some(filename_str) = filename.to_str() {
-                return Self::matches_pattern(pattern, filename_str);
-            }
-        }
-        
-        false
-    }
 
     /// Detect syntax for syntax highlighting (moved from core.rs)
     pub fn detect_syntax(file_path: &str) -> &'static str {
@@ -510,10 +456,6 @@ impl CommonUtils {
         }
     }
 
-    // =========================================================================
-    // UNIFIED AST TRAVERSAL (consolidates cursor loop patterns)
-    // =========================================================================
-
     /// Apply function to all children and collect results
     pub fn map_children<F, T>(node: &Node, mut mapper: F) -> Vec<T>
     where
@@ -521,7 +463,7 @@ impl CommonUtils {
     {
         let mut results = Vec::new();
         let mut cursor = node.walk();
-        
+
         if cursor.goto_first_child() {
             loop {
                 if let Some(result) = mapper(&cursor.node()) {
@@ -532,7 +474,7 @@ impl CommonUtils {
                 }
             }
         }
-        
+
         results
     }
 
@@ -542,7 +484,7 @@ impl CommonUtils {
         F: FnMut(&Node),
     {
         let mut cursor = node.walk();
-        
+
         if cursor.goto_first_child() {
             loop {
                 visitor(&cursor.node());
@@ -559,7 +501,7 @@ impl CommonUtils {
         F: FnMut(&Node) -> bool,
     {
         let mut cursor = node.walk();
-        
+
         if cursor.goto_first_child() {
             loop {
                 let child = cursor.node();
@@ -571,7 +513,7 @@ impl CommonUtils {
                 }
             }
         }
-        
+
         None
     }
 
@@ -585,159 +527,11 @@ impl CommonUtils {
         }
 
         visitor(node);
-        
+
         Self::for_each_child(node, |child| {
             Self::traverse_recursive(&child, visitor, max_depth - 1);
         });
     }
-
-    // =========================================================================
-    // UNIFIED ERROR HANDLING (consolidates anyhow patterns)
-    // =========================================================================
-
-    /// Standard context wrapper for file operations
-    pub fn file_context(operation: String, path: String) -> impl Fn(std::io::Error) -> anyhow::Error {
-        move |e| anyhow::anyhow!("Failed to {} file '{}': {}", operation, path, e)
-    }
-
-    /// Standard context wrapper for parsing operations
-    pub fn parse_context(file_type: String, path: String) -> impl Fn(Box<dyn std::error::Error>) -> anyhow::Error {
-        move |e| anyhow::anyhow!("Failed to parse {} file '{}': {}", file_type, path, e)
-    }
-
-    /// Load and parse file with unified error handling
-    pub fn load_and_parse<T>(path: &str, parser: impl FnOnce(&str) -> Result<T>) -> Result<T> {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read file: {}", path))?;
-        
-        parser(&content)
-            .with_context(|| format!("Failed to parse file: {}", path))
-    }
-
-    // =========================================================================
-    // UNIFIED SERDE UTILITIES (consolidates custom deserializers)
-    // =========================================================================
-
-    /// Generic optional string deserializer (handles both "value" and Some("value"))
-    pub fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::{self, Visitor};
-        use std::fmt;
-
-        struct OptionalStringVisitor;
-
-        impl<'de> Visitor<'de> for OptionalStringVisitor {
-            type Value = Option<String>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a string or Option<String>")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(Some(value.to_string()))
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                Ok(Some(String::deserialize(deserializer)?))
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(None)
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(None)
-            }
-        }
-
-        deserializer.deserialize_any(OptionalStringVisitor)
-    }
-
-    /// Generic optional vector deserializer (handles both ["val1", "val2"] and Some(["val1", "val2"]))
-    pub fn deserialize_optional_vector<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::{self, Visitor};
-        use std::fmt;
-
-        struct OptionalVectorVisitor;
-
-        impl<'de> Visitor<'de> for OptionalVectorVisitor {
-            type Value = Option<Vec<String>>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("an array of strings or Option<Vec<String>>")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::SeqAccess<'de>,
-            {
-                let mut vec = Vec::new();
-                while let Some(elem) = seq.next_element()? {
-                    vec.push(elem);
-                }
-                Ok(Some(vec))
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                Ok(Some(Vec::<String>::deserialize(deserializer)?))
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(None)
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(None)
-            }
-        }
-
-        deserializer.deserialize_any(OptionalVectorVisitor)
-    }
-
-    // =========================================================================
-    // UNIFIED LANGUAGE SUPPORT UTILITIES
-    // =========================================================================
-
-    /// Get standard field-based function name (common pattern)
-    pub fn get_standard_function_name<'a>(node: &'a Node<'a>, source: &[u8], field: &str) -> Option<String> {
-        node.child_by_field_name(field)
-            .and_then(|child| Self::extract_node_text(&child, source))
-    }
-
-    /// Get standard arguments node (common pattern)
-    pub fn get_standard_arguments_node<'a>(node: &'a Node<'a>) -> Option<Node<'a>> {
-        node.child_by_field_name("arguments")
-    }
-
-    // =========================================================================
-    // UNIFIED VALIDATION & DEFAULTS
-    // =========================================================================
 
     /// Validate required CLI parameter combination
     pub fn validate_cli_params(language: &Option<String>, rules_path: &Option<String>) -> Result<()> {
@@ -748,14 +542,4 @@ impl CommonUtils {
             )),
         }
     }
-
-    /// Get default severity with fallback
-    pub fn get_default_severity(severity: &Option<String>) -> String {
-        severity.clone().unwrap_or_else(|| "Medium".to_string())
-    }
-
-    /// Get default confidence with fallback
-    pub fn get_default_confidence(confidence: &Option<String>) -> String {
-        confidence.clone().unwrap_or_else(|| "Medium".to_string())
-    }
-} 
+}

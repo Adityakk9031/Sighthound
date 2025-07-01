@@ -36,7 +36,7 @@ struct TaintRuleDeduplicator {
     rule_mapping: std::collections::HashMap<(String, String), crate::rules::UnifiedRule>,
     /// Consolidated source patterns across all rules
     source_patterns: std::collections::HashSet<String>,
-    /// Consolidated sink patterns across all rules  
+    /// Consolidated sink patterns across all rules
     sink_patterns: std::collections::HashSet<String>,
 }
 
@@ -48,7 +48,7 @@ impl TaintRuleDeduplicator {
             source_patterns: std::collections::HashSet::new(),
             sink_patterns: std::collections::HashSet::new(),
         };
-        
+
         // Process each rule and create specific source-sink mappings
         for rule in taint_rules {
             if let (Some(sources), Some(sinks)) = (&rule.sources, &rule.sinks) {
@@ -59,7 +59,7 @@ impl TaintRuleDeduplicator {
                 for sink in sinks {
                     deduplicator.sink_patterns.insert(sink.clone());
                 }
-                
+
                 // Create specific mappings for this rule's source-sink combinations
                 for source in sources {
                     for sink in sinks {
@@ -69,15 +69,15 @@ impl TaintRuleDeduplicator {
                 }
             }
         }
-        
+
         deduplicator
     }
-    
+
     /// Get the specific rule for a source-sink combination
     fn get_rule_for_combination(&self, source_pattern: &str, sink_pattern: &str) -> Option<&crate::rules::UnifiedRule> {
         self.rule_mapping.get(&(source_pattern.to_string(), sink_pattern.to_string()))
     }
-    
+
     /// Check if a pattern matches any source
     fn matches_source_pattern(&self, text: &str) -> Option<String> {
         for pattern in &self.source_patterns {
@@ -87,8 +87,8 @@ impl TaintRuleDeduplicator {
         }
         None
     }
-    
-    /// Check if a pattern matches any sink  
+
+    /// Check if a pattern matches any sink
     fn matches_sink_pattern(&self, text: &str) -> Option<String> {
         for pattern in &self.sink_patterns {
             if Self::matches_taint_pattern(pattern, text) {
@@ -97,17 +97,10 @@ impl TaintRuleDeduplicator {
         }
         None
     }
-    
-    /// Pattern matching logic (reusing existing implementation) - UPDATED for context awareness
+
+    /// Pattern matching logic (delegates to CommonUtils for consistency)
     fn matches_taint_pattern(pattern: &str, text: &str) -> bool {
-        // Skip string literals and metadata
-        if text.trim().starts_with('"') || text.trim().starts_with("'") || 
-           text.contains("__all__") || text.contains("__version__") {
-            return false;
-        }
-        
-        // Use unified pattern matching from CommonUtils
-        crate::common::CommonUtils::matches_unified_pattern(pattern, text)
+        crate::common::CommonUtils::matches_taint_pattern(pattern, text)
     }
 }
 
@@ -177,10 +170,7 @@ impl ScanningLogic {
             finding.sink_info = Some(sink_info);
         }
 
-        let traces = Self::detect_simple_traces(node, source, filepath, language_support);
-        if !traces.is_empty() {
-            finding.traces = Some(traces);
-        }
+        // Note: Simple trace detection removed as it was just a stub returning empty vector
 
         Some(finding)
     }
@@ -189,14 +179,14 @@ impl ScanningLogic {
     fn rule_needs_full_context(rule: &crate::rules::UnifiedRule) -> bool {
         if let Some(patterns) = &rule.patterns {
             for pattern in patterns {
-                if pattern.contains('%') || pattern.contains('+') || pattern.contains("DROP") || 
-                   pattern.contains("DELETE") || pattern.contains("UNION") || 
+                if pattern.contains('%') || pattern.contains('+') || pattern.contains("DROP") ||
+                   pattern.contains("DELETE") || pattern.contains("UNION") ||
                    pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
                    pattern.contains("location") || pattern.contains("postMessage") ||
                    pattern.contains("localStorage") || pattern.contains("sessionStorage") ||
                    pattern.contains("console.log") || pattern.contains("console.debug") ||
                    pattern.contains("fetch") || pattern.contains("axios") ||
-                   pattern.contains("password") || pattern.contains("token") || 
+                   pattern.contains("password") || pattern.contains("token") ||
                    pattern.contains("secret") || pattern.contains("key") ||
                    pattern.contains("http://") ||
                    pattern.contains("=") {
@@ -204,23 +194,23 @@ impl ScanningLogic {
                 }
             }
         }
-        
+
         if let Some(pattern) = &rule.pattern {
-            if pattern.contains('%') || pattern.contains('+') || pattern.contains("DROP") || 
+            if pattern.contains('%') || pattern.contains('+') || pattern.contains("DROP") ||
                pattern.contains("DELETE") || pattern.contains("UNION") ||
                pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
                pattern.contains("location") || pattern.contains("postMessage") ||
                pattern.contains("localStorage") || pattern.contains("sessionStorage") ||
                pattern.contains("console.log") || pattern.contains("console.debug") ||
                pattern.contains("fetch") || pattern.contains("axios") ||
-               pattern.contains("password") || pattern.contains("token") || 
+               pattern.contains("password") || pattern.contains("token") ||
                pattern.contains("secret") || pattern.contains("key") ||
                pattern.contains("http://") ||
                pattern.contains("=") {
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -241,14 +231,14 @@ impl ScanningLogic {
         let mut processed_lines = std::collections::HashSet::new();
 
         let call_nodes: Vec<tree_sitter::Node> = crate::parser::traverse_calls_only(tree.root_node(), language_support).collect();
-        
+
         for node in call_nodes.iter() {
             if let Some(func_name) = language_support.get_function_name(node, source) {
                 let relevant_rules: Vec<(usize, &crate::rules::UnifiedRule)> = rules.iter().enumerate()
                     .filter(|(_, rule)| Self::rule_might_match_function(*rule, &func_name))
                     .map(|(idx, rule)| (idx, *rule))
                     .collect();
-                
+
                 for (_, rule) in relevant_rules {
                     if let Some(finding) = Self::check_rule_against_node(
                         rule,
@@ -289,7 +279,7 @@ impl ScanningLogic {
             .filter(|rule| Self::rule_has_assignment_patterns(rule))
             .copied()
             .collect();
-        
+
         if assignment_rules.is_empty() {
             return;
         }
@@ -309,10 +299,10 @@ impl ScanningLogic {
     ) {
         if matches!(node.kind(), "assignment_expression" | "expression_statement") {
             let node_text = crate::parser::get_node_text(&node, source);
-            
+
             if crate::common::CommonUtils::is_valid_assignment_text(&node_text) {
                 let assignment_target = crate::common::CommonUtils::extract_variable_from_assignment(&node_text, true).unwrap_or_default();
-        
+
                 for rule in assignment_rules {
                     if Self::rule_might_match_assignment(rule, &node_text) {
                         if let Some(finding) = Self::check_rule_against_node(
@@ -372,7 +362,7 @@ impl ScanningLogic {
                 }
             }
         }
-        
+
         if let Some(pattern) = &rule.pattern {
             if pattern.contains("innerHTML") || pattern.contains("outerHTML") ||
                pattern.contains("location") || pattern.contains("localStorage") ||
@@ -381,13 +371,13 @@ impl ScanningLogic {
                 return Self::quick_pattern_check(pattern, node_text);
             }
         }
-        
+
         false
     }
 
     /// Quick pattern check (delegates to CommonUtils pattern matching)
     fn quick_pattern_check(pattern: &str, text: &str) -> bool {
-        crate::common::CommonUtils::matches_pattern(pattern, text)
+        crate::common::CommonUtils::matches_rule_pattern(pattern, text)
     }
 
     /// Detect if a node represents a taint source
@@ -397,7 +387,7 @@ impl ScanningLogic {
         _language_support: &dyn crate::language::LanguageSupport,
     ) -> Option<crate::models::SourceInfo> {
         let node_text = crate::parser::get_node_text(node, source);
-        
+
         let source_patterns = [
             ("request", "HTTP Request"),
             ("input", "User Input"),
@@ -437,7 +427,7 @@ impl ScanningLogic {
         finding_type: &str,
     ) -> Option<crate::models::SinkInfo> {
         let node_text = crate::parser::get_node_text(node, source);
-        
+
         let sink_category = if finding_type.to_lowercase().contains("sql") {
             "Database Query"
         } else if finding_type.to_lowercase().contains("command") {
@@ -462,22 +452,22 @@ impl ScanningLogic {
 
     /// Extract variable name from code text (delegates to CommonUtils)
     fn extract_variable_from_text(text: &str) -> Option<String> {
-        crate::common::CommonUtils::extract_variable_from_code_pattern(text)
+        crate::common::CommonUtils::extract_variable_from_pattern(text)
     }
 
     /// Check if a rule should apply based on sanitization (uses unified sanitization checking)
     fn should_apply_rule_with_sanitization(rule: &crate::rules::UnifiedRule, node_text: &str) -> bool {
-        if rule.get_finding_type().to_lowercase().contains("xss") || 
+        if rule.get_finding_type().to_lowercase().contains("xss") ||
            rule.get_finding_type().to_lowercase().contains("dom") {
             return !crate::scanner::utils::AstUtils::check_for_sanitization(node_text, "javascript");
         }
-        
+
         if rule.get_finding_type().to_lowercase().contains("prototype") {
-            return node_text.contains("__proto__") || 
-                   node_text.contains("['__proto__']") || 
+            return node_text.contains("__proto__") ||
+                   node_text.contains("['__proto__']") ||
                    node_text.contains("[\"__proto__\"]");
         }
-        
+
         true
     }
 
@@ -496,20 +486,20 @@ impl ScanningLogic {
                 return true;
             }
         }
-        
+
         false
     }
-    
+
     /// Efficient pattern matching for function names
     fn pattern_might_match_function(pattern: &str, func_name: &str) -> bool {
         if pattern == func_name {
             return true;
         }
-        
+
         if pattern.contains(func_name) || func_name.contains(pattern) {
             return true;
         }
-        
+
         match pattern {
             p if p == "eval" => func_name == "eval",
             p if p == "Function" => func_name == "Function",
@@ -520,34 +510,26 @@ impl ScanningLogic {
             p if p == "RegExp" => func_name == "RegExp",
             p if p == "import" => func_name == "import",
             p if p == "require" => func_name == "require",
-            
+
             p if p.contains("document.write") => func_name.contains("document.write"),
             p if p.contains("console.") => func_name.contains("console"),
             p if p.contains("localStorage") => func_name.contains("localStorage"),
             p if p.contains("sessionStorage") => func_name.contains("sessionStorage"),
             p if p.contains("postMessage") => func_name.contains("postMessage"),
             p if p.contains("axios") => func_name.contains("axios"),
-            
+
             p if p.contains('*') => Self::glob_match(p, func_name),
-            
+
             _ => pattern.contains(func_name) || func_name.contains(pattern),
         }
     }
-    
+
     /// Simple glob-style pattern matching (delegates to CommonUtils)
     fn glob_match(pattern: &str, text: &str) -> bool {
-        crate::common::CommonUtils::matches_glob_pattern(pattern, text)
+        crate::common::CommonUtils::matches_unified_pattern(pattern, text)
     }
 
-    pub fn detect_simple_traces(
-        node: &tree_sitter::Node,
-        source: &[u8],
-        filepath: &str,
-        language_support: &dyn crate::language::LanguageSupport,
-    ) -> Vec<crate::models::TraceStep> {
-        // Implementation of the method
-        Vec::new()
-    }
+
 
     /// Check if rules have any patterns matching the function name (fast pre-filter)
     pub fn has_matching_rules(rules: &crate::rules::Rules, func_name: &str) -> bool {
@@ -636,25 +618,25 @@ impl ScanningLogic {
         language_support: &dyn crate::language::LanguageSupport,
     ) -> Vec<crate::models::Finding> {
         let mut findings = Vec::new();
-        
+
         // Create rule deduplicator to prevent cartesian product problems
         let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
-        
+
         // Create variable flow tracker for legitimate flows only
         let mut flow_tracker = VariableFlowTracker::new();
-        
-        // Use broader traversal to include assignment statements 
-        let mut all_nodes = Vec::new();
-        Self::collect_all_relevant_nodes(tree.root_node(), &mut all_nodes);
-        
 
-        
+        // Use broader traversal to include assignment statements
+        let mut all_nodes = Vec::new();
+        Self::collect_all_relevant_nodes(tree.root_node(), &mut all_nodes, None);
+
+
+
         // Phase 1: Track variable assignments from taint sources
         for node in all_nodes.iter() {
             let node_text = crate::parser::get_node_text(node, source);
             let line = node.start_position().row + 1;
             let func_name = ScanningLogic::get_containing_function_name(node, source);
-            
+
             // Look for assignment patterns: var = source_call()
             if let Some(assignment) = Self::extract_assignment_from_node(&node_text) {
                 // Check if the assignment value matches any taint source
@@ -670,24 +652,24 @@ impl ScanningLogic {
                     );
                 }
             }
-            
+
             // Check for taint propagation through operations
             if let Some((source_var, dependent_vars)) = Self::detect_taint_propagation(&node_text) {
                 flow_tracker.record_taint_propagation(&source_var, &dependent_vars);
             }
         }
-        
+
         // Phase 2: Find sinks that use tainted variables
         for node in all_nodes.iter() {
             let node_text = crate::parser::get_node_text(node, source);
             let line = node.start_position().row + 1;
             let func_name = ScanningLogic::get_containing_function_name(node, source);
-            
+
             // Check if this node matches any sink pattern
             if let Some(sink_pattern) = rule_deduplicator.matches_sink_pattern(&node_text) {
                 // Extract ALL variables used in this sink (enhanced extraction)
                 let used_variables = ScanningLogic::extract_all_variables(&node_text);
-                
+
                 // Check if ANY of these variables are tainted
                 for used_variable in used_variables.clone() {
                     if let Some(taint_info) = flow_tracker.is_variable_tainted(&used_variable, &func_name).cloned() {
@@ -696,7 +678,7 @@ impl ScanningLogic {
                             // Ensure we haven't already processed this exact flow
                             if !flow_tracker.is_flow_processed(line, &taint_info.source_pattern, &sink_pattern) {
                                 flow_tracker.mark_flow_processed(line, &taint_info.source_pattern, &sink_pattern);
-                                
+
                                 // Create legitimate taint finding
                                 let taint_source = crate::models::TaintSource {
                                     file: filepath.to_string(),
@@ -707,7 +689,7 @@ impl ScanningLogic {
                                     code: taint_info.assignment_code.clone(),
                                     branch_id: None,
                                 };
-                                
+
                                 let taint_sink = crate::models::TaintSink {
                                     file: filepath.to_string(),
                                     line,
@@ -717,7 +699,7 @@ impl ScanningLogic {
                                     code: node_text.clone(),
                                     branch_id: None,
                                 };
-                                
+
                                 findings.push(Self::create_taint_finding(&taint_source, &taint_sink, rule, tree, source));
                             }
                         }
@@ -734,11 +716,11 @@ impl ScanningLogic {
         if let Some(eq_pos) = text.find('=') {
             let left = text[..eq_pos].trim();
             let right = text[eq_pos + 1..].trim();
-            
+
             // Get the variable name (last identifier on left side)
             if let Some(var_name) = left.split_whitespace().last() {
-                // Filter out comparison operators  
-                if !var_name.contains("==") && !var_name.contains("!=") && 
+                // Filter out comparison operators
+                if !var_name.contains("==") && !var_name.contains("!=") &&
                    !var_name.contains("<=") && !var_name.contains(">=") {
                     return Some(VariableAssignment {
                         variable: var_name.to_string(),
@@ -749,7 +731,7 @@ impl ScanningLogic {
         }
         None
     }
-    
+
     /// Detect taint propagation in expressions
     fn detect_taint_propagation(node_text: &str) -> Option<(String, Vec<String>)> {
         // Check for F-string propagation
@@ -761,7 +743,7 @@ impl ScanningLogic {
                 }
             }
         }
-        
+
         // Check for format propagation
         if node_text.contains(".format(") {
             if let Some(source_var) = Self::extract_direct_variable(node_text) {
@@ -771,10 +753,10 @@ impl ScanningLogic {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Extract direct variable from simple expressions
     fn extract_direct_variable(expr: &str) -> Option<String> {
         let trimmed = expr.trim();
@@ -783,11 +765,11 @@ impl ScanningLogic {
         }
         None
     }
-    
+
     /// Extract all variables from function call or expression (using enhanced extraction)
     fn extract_all_variables(text: &str) -> Vec<String> {
         // Use the enhanced variable extraction from CommonUtils
-        crate::common::CommonUtils::extract_all_variables_from_expression(text)
+        crate::common::CommonUtils::extract_all_variables(text)
     }
 
     /// Extract first argument from function call (reusing existing patterns)
@@ -798,8 +780,8 @@ impl ScanningLogic {
                 if let Some(first_arg) = args.split(',').next() {
                     let cleaned = first_arg.trim();
                     // Only return if it looks like a variable (not a string literal)
-                    if !cleaned.is_empty() && 
-                       !cleaned.starts_with('"') && 
+                    if !cleaned.is_empty() &&
+                       !cleaned.starts_with('"') &&
                        !cleaned.starts_with('\'') &&
                        !cleaned.starts_with('/') &&
                        !cleaned.chars().all(|c| c.is_numeric()) {
@@ -814,7 +796,7 @@ impl ScanningLogic {
     /// Get containing function name from node
     pub fn get_containing_function_name(node: &tree_sitter::Node, source: &[u8]) -> String {
         let mut current = *node;
-        
+
         // Traverse up to find function definition
         while let Some(parent) = current.parent() {
             if parent.kind() == "function_definition" {
@@ -833,25 +815,65 @@ impl ScanningLogic {
             }
             current = parent;
         }
-        
+
         "global".to_string()
     }
 
     /// Collect all relevant nodes for taint analysis (assignments and calls)
-    fn collect_all_relevant_nodes<'a>(node: tree_sitter::Node<'a>, nodes: &mut Vec<tree_sitter::Node<'a>>) {
+    /// Unified version that supports optional source filtering
+    fn collect_all_relevant_nodes<'a>(node: tree_sitter::Node<'a>, nodes: &mut Vec<tree_sitter::Node<'a>>, source: Option<&[u8]>) {
         // Include assignment and call nodes
         match node.kind() {
             "assignment" | "call" | "expression_statement" | "assignment_expression" => {
-                nodes.push(node);
+                // Apply source filtering if provided
+                if let Some(source_bytes) = source {
+                    let node_text = crate::parser::get_node_text(&node, source_bytes);
+                    if !node_text.trim().is_empty() &&
+                       !node_text.starts_with('"') &&
+                       !node_text.starts_with("'") &&
+                       !node_text.contains("__all__") {
+                        nodes.push(node);
+                    }
+                } else {
+                    nodes.push(node);
+                }
             }
-            _ => {}
+            "import_statement" | "import_from_statement" | "function_definition" |
+            "return_statement" | "binary_expression" | "identifier" => {
+                if source.is_some() {
+                    // Only collect these additional types when doing source filtering
+                    let node_text = crate::parser::get_node_text(&node, source.unwrap());
+                    if !node_text.trim().is_empty() &&
+                       !node_text.starts_with('"') &&
+                       !node_text.starts_with("'") &&
+                       !node_text.contains("__all__") {
+                        nodes.push(node);
+                    }
+                }
+            }
+            // Skip string literals, comments, and metadata
+            "string" | "string_literal" | "comment" | "module" => {
+                // Don't collect these
+            }
+            _ => {
+                // For other node types, check if they contain actual code when source filtering is enabled
+                if let Some(source_bytes) = source {
+                    let node_text = crate::parser::get_node_text(&node, source_bytes);
+                    if !node_text.trim().is_empty() &&
+                       !node_text.starts_with('"') &&
+                       !node_text.starts_with("'") &&
+                       !node_text.contains("__all__") {
+                        nodes.push(node);
+                    }
+                }
+            }
         }
-        
+
         // Recursively traverse children
         let mut cursor = node.walk();
         if cursor.goto_first_child() {
             loop {
-                Self::collect_all_relevant_nodes(cursor.node(), nodes);
+                Self::collect_all_relevant_nodes(cursor.node(), nodes, source);
                 if !cursor.goto_next_sibling() {
                     break;
                 }
@@ -935,7 +957,7 @@ pub struct VulnerabilityScanner {
 
 impl VulnerabilityScanner {
     pub fn new(language_name: &str, rules: Rules) -> Result<Self> {
-        Ok(Self { 
+        Ok(Self {
             language: language_name.to_string(),
             rules,
             skip_minified: true,
@@ -943,7 +965,7 @@ impl VulnerabilityScanner {
     }
 
     pub fn with_skip_minified(language_name: &str, rules: Rules, skip_minified: bool) -> Result<Self> {
-        Ok(Self { 
+        Ok(Self {
             language: language_name.to_string(),
             rules,
             skip_minified,
@@ -955,7 +977,7 @@ impl VulnerabilityScanner {
         // Get extension once using a fresh parser (cheap, happens only once)
         let parser = LanguageParser::new(&self.language)?;
         let target_extension = parser.file_extension();
-        
+
         for entry in WalkDir::new(root_dir)
             .follow_links(false)
             .into_iter()
@@ -990,26 +1012,26 @@ impl VulnerabilityScanner {
 
         // Apply pre-filtering to discovered files
         let prefilter = crate::scanner::prefilter::PreFilter::with_options(
-            &self.rules, 
-            language_name, 
-            self.skip_minified, 
+            &self.rules,
+            language_name,
+            self.skip_minified,
             Vec::new() // No custom patterns in simplified version
         );
         let (filtered_files, filter_stats) = prefilter.filter_files(files);
-        
+
         if show_progress {
             println!("{}", filter_stats);
         }
-        
+
         if filtered_files.is_empty() {
             println!("No {} files remaining after filtering", language_name);
             return Ok(Vec::new());
         }
 
-        let mut progress_manager = if show_progress { 
-            Some(ProgressManager::new(filtered_files.len())) 
-        } else { 
-            None 
+        let mut progress_manager = if show_progress {
+            Some(ProgressManager::new(filtered_files.len()))
+        } else {
+            None
         };
         let total_findings = Arc::new(AtomicUsize::new(0));
         let all_rules = ScanningLogic::get_all_search_rules(&self.rules);
@@ -1018,7 +1040,7 @@ impl VulnerabilityScanner {
         use rayon::slice::ParallelSlice;
 
         let processed = Arc::new(AtomicUsize::new(0));
-        
+
         // Start progress tracking
         if let Some(ref mut progress) = progress_manager {
             progress.start_tracking(Arc::clone(&processed), Arc::clone(&total_findings));
@@ -1097,7 +1119,7 @@ impl VulnerabilityScanner {
             }
             result
         };
-        
+
         if files_by_language.is_empty() {
             if show_progress {
                 println!("No supported files found in {}", root_dir);
@@ -1107,7 +1129,7 @@ impl VulnerabilityScanner {
 
         // Flatten all files for unified processing
         let all_files: Vec<std::path::PathBuf> = files_by_language.values().flatten().cloned().collect();
-        
+
         if all_files.is_empty() {
             if show_progress {
                 println!("No files found after discovery");
@@ -1117,17 +1139,17 @@ impl VulnerabilityScanner {
 
         // Apply same pre-filtering as search mode
         let prefilter = crate::scanner::prefilter::PreFilter::with_options(
-            &self.rules, 
-            language_name, 
-            self.skip_minified, 
+            &self.rules,
+            language_name,
+            self.skip_minified,
             Vec::new()
         );
         let (filtered_files, filter_stats) = prefilter.filter_files(all_files);
-        
+
         if show_progress {
             println!("{}", filter_stats);
         }
-        
+
         if filtered_files.is_empty() {
             if show_progress {
                 println!("No files remaining after filtering");
@@ -1138,10 +1160,10 @@ impl VulnerabilityScanner {
         // Get both rule types (reuse existing infrastructure)
         let search_rules = ScanningLogic::get_all_search_rules(&self.rules);
         let taint_rules = ScanningLogic::get_all_taint_rules(&self.rules);
-        
+
         let has_search_rules = !search_rules.is_empty();
         let has_taint_rules = !taint_rules.is_empty();
-        
+
         if !has_search_rules && !has_taint_rules {
             if show_progress {
                 println!("No applicable rules found");
@@ -1150,10 +1172,10 @@ impl VulnerabilityScanner {
         }
 
         // Reuse existing progress management infrastructure
-        let mut progress_manager = if show_progress { 
-            Some(ProgressManager::new(filtered_files.len())) 
-        } else { 
-            None 
+        let mut progress_manager = if show_progress {
+            Some(ProgressManager::new(filtered_files.len()))
+        } else {
+            None
         };
         let total_findings = Arc::new(AtomicUsize::new(0));
         let chunk_size = crate::config::ScanDefaults::CHUNK_SIZE;
@@ -1161,7 +1183,7 @@ impl VulnerabilityScanner {
         use rayon::slice::ParallelSlice;
 
         let processed = Arc::new(AtomicUsize::new(0));
-        
+
         // Start progress tracking (reuse existing infrastructure)
         if let Some(ref mut progress) = progress_manager {
             progress.start_tracking(Arc::clone(&processed), Arc::clone(&total_findings));
@@ -1174,7 +1196,7 @@ impl VulnerabilityScanner {
                 let mut local_vec = Vec::new();
                 for path in chunk {
                     let filepath_str = path.to_string_lossy().to_string();
-                    
+
                     // Auto-detect language for each file
                     if let Some(detected_language) = crate::scanner::utils::detect_language_from_path(path) {
                         match File::open(&path) {
@@ -1184,23 +1206,23 @@ impl VulnerabilityScanner {
                                         let source: &[u8] = &mmap;
                                         match with_local_parser(detected_language, |parser| {
                                             let tree = parser.parse(source)?;
-                                            
+
                                             let mut file_findings = Vec::new();
-                                            
+
                                             // Search mode findings (existing functionality)
                                             if has_search_rules {
                                                 file_findings.extend(ScanningLogic::scan_file_with_rules(
                                                     &filepath_str, source, &tree, &search_rules, parser.language_support()
                                                 ));
                                             }
-                                            
+
                                             // Single-file taint mode findings (existing functionality)
                                             if has_taint_rules {
                                                 file_findings.extend(ScanningLogic::scan_file_with_taint_rules(
                                                     &filepath_str, source, &tree, &taint_rules, parser.language_support()
                                                 ));
                                             }
-                                            
+
                                             Ok(file_findings)
                                         }) {
                                             Ok(file_findings) => {
@@ -1230,7 +1252,7 @@ impl VulnerabilityScanner {
             if show_progress {
                 println!("🔍 Performing cross-file taint analysis...");
             }
-            
+
             let mut multi_file_analyzer = MultiFileTaintAnalyzer::new();
             match multi_file_analyzer.analyze_cross_file_flows(&files_by_language, &taint_rules) {
                 Ok(findings) => {
@@ -1251,35 +1273,35 @@ impl VulnerabilityScanner {
         if let Some(mut progress) = progress_manager {
             progress.stop();
         }
-        
+
         // Combine all findings
         let mut all_findings = single_file_findings;
         all_findings.extend(cross_file_findings);
-        
+
         if show_progress {
             let search_count = all_findings.iter().filter(|f| {
                 f.tags.as_ref().map_or(true, |tags| !tags.contains(&"taint_analysis".to_string()))
             }).count();
             let single_file_taint_count = all_findings.iter().filter(|f| {
-                f.tags.as_ref().map_or(false, |tags| 
+                f.tags.as_ref().map_or(false, |tags|
                     tags.contains(&"taint_analysis".to_string()) && !tags.contains(&"cross_file".to_string())
                 )
             }).count();
             let cross_file_taint_count = all_findings.iter().filter(|f| {
                 f.tags.as_ref().map_or(false, |tags| tags.contains(&"cross_file".to_string()))
             }).count();
-            
+
             if has_search_rules && has_taint_rules {
-                println!("Found {} search findings, {} single-file taint flows, {} cross-file taint flows", 
+                println!("Found {} search findings, {} single-file taint flows, {} cross-file taint flows",
                         search_count, single_file_taint_count, cross_file_taint_count);
             } else if has_search_rules {
                 println!("Found {} search findings", search_count);
             } else {
-                println!("Found {} single-file taint flows, {} cross-file taint flows", 
+                println!("Found {} single-file taint flows, {} cross-file taint flows",
                         single_file_taint_count, cross_file_taint_count);
             }
         }
-        
+
         Ok(all_findings)
     }
 }
@@ -1310,8 +1332,8 @@ pub fn print_summary(findings: &[Finding], duration: std::time::Duration) {
                 "low" => "\x1b[32m",       // Green
                 _ => "\x1b[0m",
             };
-            println!("  {}{}\x1b[0m {} findings", 
-                    color, 
+            println!("  {}{}\x1b[0m {} findings",
+                    color,
                     "●",
                     count);
         }
@@ -1353,19 +1375,19 @@ impl ProgressManager {
             bar.set_style(style.progress_chars("#>-"));
         }
         bar.set_draw_target(ProgressDrawTarget::stderr());
-        
+
         Self {
             bar,
             should_stop: Arc::new(AtomicBool::new(false)),
             handle: None,
         }
     }
-    
+
     /// Start tracking progress with counters
     pub fn start_tracking(&mut self, processed: Arc<AtomicUsize>, findings: Arc<AtomicUsize>) {
         let bar_clone = self.bar.clone();
         let stop_clone = Arc::clone(&self.should_stop);
-        
+
         self.handle = Some(std::thread::spawn(move || {
             while !stop_clone.load(Ordering::Relaxed) {
                 let val = processed.load(Ordering::Relaxed) as u64;
@@ -1376,12 +1398,12 @@ impl ProgressManager {
             }
         }));
     }
-    
+
     /// Update progress bar message
     pub fn set_message(&self, message: String) {
         self.bar.set_message(message);
     }
-    
+
     /// Stop progress tracking
     pub fn stop(&mut self) {
         self.should_stop.store(true, Ordering::Relaxed);
@@ -1409,7 +1431,7 @@ pub fn print_findings_csv(findings: &[Finding]) {
         let source_context = finding.source_info.as_ref().map(|s| s.context.as_str()).unwrap_or("");
         let sink_type = finding.sink_info.as_ref().map(|s| s.sink_type.as_str()).unwrap_or("");
         let sink_function = finding.sink_info.as_ref().map(|s| s.function_name.as_str()).unwrap_or("");
-        
+
         let traces = if let Some(traces) = &finding.traces {
             traces.iter()
                 .map(|t| format!("{}:{}:{}", t.line, t.variable, t.operation))
@@ -1418,9 +1440,9 @@ pub fn print_findings_csv(findings: &[Finding]) {
         } else {
             String::new()
         };
-        
-        println!("{},{},{},{},\"{}\",{},{},{},{},{},{},\"{}\"", 
-                finding.file, finding.line, finding.function, finding.finding_type, 
+
+        println!("{},{},{},{},\"{}\",{},{},{},{},{},{},\"{}\"",
+                finding.file, finding.line, finding.function, finding.finding_type,
                 code, finding.severity, finding.confidence, source_type, source_context, sink_type, sink_function, traces);
     }
 }
@@ -1456,12 +1478,12 @@ pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: b
                     Err(_) => continue,
                 };
                 lines = file_contents.lines().collect();
-                
-                
+
+
                 // Set up syntax highlighting for the new file
                 let syntax_name = crate::common::CommonUtils::detect_syntax(&finding.file);
                 syntax = ps.find_syntax_by_name(syntax_name);
-                
+
                 println!("\n\x1b[1;34m{}\x1b[0m", finding.file);
             }
 
@@ -1478,40 +1500,40 @@ pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: b
             let end_line = (line_num + 3).min(lines.len());
 
             println!("");
-            println!("    {}{}●\x1b[0m {} on line {}", 
-                    severity_color, 
-                    severity_color, 
-                    finding.finding_type, 
+            println!("    {}{}●\x1b[0m {} on line {}",
+                    severity_color,
+                    severity_color,
+                    finding.finding_type,
                     line_num);
-            
+
             // Display source and sink information if available
             if let Some(source_info) = &finding.source_info {
                 println!("    📍 Source: {} ({})", source_info.source_type, source_info.context);
             }
-            
+
             if let Some(sink_info) = &finding.sink_info {
                 println!("    🎯 Sink: {} ({})", sink_info.sink_type, sink_info.function_name);
                 if let Some(var) = &sink_info.variable {
                     println!("       Variable: {}", var);
                 }
             }
-            
+
             // Display traces if available
             if let Some(traces) = &finding.traces {
                 if !traces.is_empty() {
                     println!("    🔄 Data Flow Traces:");
                     for (i, trace) in traces.iter().enumerate() {
-                        println!("       {}. {}:{} - {} ({}) in {}", 
-                                i + 1, 
-                                trace.line, 
-                                trace.variable, 
-                                trace.operation, 
+                        println!("       {}. {}:{} - {} ({}) in {}",
+                                i + 1,
+                                trace.line,
+                                trace.variable,
+                                trace.operation,
                                 trace.code.chars().take(50).collect::<String>(),
                                 trace.function);
                     }
                 }
             }
-            
+
             println!();
 
             // Print surrounding context with syntax highlighting
@@ -1522,7 +1544,7 @@ pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: b
                     let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap_or_default();
                     let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
                     print!("    {}{:4} | ", prefix, i + 1);
-                    
+
                     for (style, text) in ranges {
                         let fg = style.foreground;
                         print!("\x1b[38;2;{};{};{}m{}\x1b[0m",
@@ -1573,18 +1595,18 @@ impl VariableFlowTracker {
             processed_flows: std::collections::HashSet::new(),
         }
     }
-    
+
     /// Record a variable as tainted from a source
     fn record_tainted_variable(&mut self, var_name: String, source_info: TaintVariableInfo) {
         self.tainted_variables.insert(var_name.clone(), source_info.clone());
-        
+
         // Add to function scope
         self.function_scopes
             .entry(source_info.source_function.clone())
             .or_insert_with(std::collections::HashSet::new)
             .insert(var_name);
     }
-    
+
     /// Check if a variable is tainted
     fn is_variable_tainted(&self, var_name: &str, function: &str) -> Option<&TaintVariableInfo> {
         // Check direct variable
@@ -1596,17 +1618,17 @@ impl VariableFlowTracker {
         }
         None
     }
-    
+
     /// Check if we've already processed this flow to prevent duplicates
     fn is_flow_processed(&self, line: usize, source_pattern: &str, sink_pattern: &str) -> bool {
         self.processed_flows.contains(&(line, source_pattern.to_string(), sink_pattern.to_string()))
     }
-    
+
     /// Mark a flow as processed
     fn mark_flow_processed(&mut self, line: usize, source_pattern: &str, sink_pattern: &str) {
         self.processed_flows.insert((line, source_pattern.to_string(), sink_pattern.to_string()));
     }
-    
+
     /// Record taint propagation through operations
     fn record_taint_propagation(&mut self, source_var: &str, dependent_vars: &[String]) {
         for dep_var in dependent_vars {
@@ -1616,7 +1638,7 @@ impl VariableFlowTracker {
                 .push(dep_var.clone());
         }
     }
-    
+
     /// Check if any variable in a list is tainted
     fn is_any_variable_tainted(&self, variables: &[String], function: &str) -> Option<&TaintVariableInfo> {
         for var in variables {
@@ -1626,7 +1648,7 @@ impl VariableFlowTracker {
         }
         None
     }
-    
+
     /// Check if variable is likely global/passed between functions (reusing existing logic)
     fn is_global_variable(var_name: &str) -> bool {
         // Simple heuristics for global variables
@@ -1642,7 +1664,7 @@ impl VariableFlowTracker {
 struct MultiFileTaintAnalyzer {
     /// Maps file paths to their exported functions/variables
     file_exports: std::collections::HashMap<String, FileExports>,
-    /// Maps file paths to their imported functions/variables  
+    /// Maps file paths to their imported functions/variables
     file_imports: std::collections::HashMap<String, FileImports>,
     /// Cross-file taint flows that span multiple files
     cross_file_flows: Vec<CrossFileTaintFlow>,
@@ -1708,7 +1730,7 @@ impl MultiFileTaintAnalyzer {
             processed_cross_file_flows: std::collections::HashSet::new(),
         }
     }
-    
+
     /// Analyze all files for cross-file taint flows
     fn analyze_cross_file_flows(
         &mut self,
@@ -1716,10 +1738,10 @@ impl MultiFileTaintAnalyzer {
         taint_rules: &[&crate::rules::UnifiedRule],
     ) -> Result<Vec<crate::models::Finding>> {
         let mut findings = Vec::new();
-        
+
         // Phase 1: Build import/export maps for all files
         self.build_import_export_maps(files_by_language, taint_rules)?;
-        
+
         // Phase 2: Use recursive tracing for cross-file taint flows
         let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
         for (sink_file, imports) in &self.file_imports {
@@ -1729,7 +1751,7 @@ impl MultiFileTaintAnalyzer {
                     let flow_key = (source_file.clone(), source_info.function.clone(), sink_file.clone(), sink_info.function.clone());
                     if !self.processed_cross_file_flows.contains(&flow_key) {
                         self.processed_cross_file_flows.insert(flow_key);
-                        
+
                         // Create the cross-file flow
                         let cross_file_flow = CrossFileTaintFlow {
                             source_file: source_file.clone(),
@@ -1742,17 +1764,17 @@ impl MultiFileTaintAnalyzer {
                             rule: rule_deduplicator.get_rule_for_combination(&source_info.pattern, &sink_info.pattern)
                                 .unwrap_or(&taint_rules[0]).clone(),
                         };
-                        
+
                         self.cross_file_flows.push(cross_file_flow.clone());
                         findings.push(self.create_cross_file_finding(&cross_file_flow));
                     }
                 }
             }
         }
-        
+
         Ok(findings)
     }
-    
+
     /// Build import/export maps for all files
     fn build_import_export_maps(
         &mut self,
@@ -1760,17 +1782,17 @@ impl MultiFileTaintAnalyzer {
         taint_rules: &[&crate::rules::UnifiedRule],
     ) -> Result<()> {
         let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
-        
+
         for (language, files) in files_by_language {
             if language == "python" {
                 for file_path in files {
                     let filepath = file_path.to_string_lossy();
                     let source = std::fs::read(file_path)?;
-                    
+
                     crate::scanner::core::with_local_parser(language, |parser| {
                         let tree = parser.parse(&source)?;
                         let language_support = crate::language::get_language_support(language)?;
-                        
+
                         self.analyze_file_imports_exports(
                             &filepath,
                             &source,
@@ -1778,16 +1800,16 @@ impl MultiFileTaintAnalyzer {
                             &rule_deduplicator,
                             language_support.as_ref(),
                         );
-                        
+
                         Ok(())
                     })?;
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Analyze a single file for imports, exports, and taint sources/sinks - ENHANCED with better debugging
     fn analyze_file_imports_exports(
         &mut self,
@@ -1802,35 +1824,35 @@ impl MultiFileTaintAnalyzer {
             variables: std::collections::HashSet::new(),
             taint_sources: Vec::new(),
         };
-        
+
         let mut imports = FileImports {
             functions: std::collections::HashMap::new(),
             variables: std::collections::HashMap::new(),
             taint_sinks: Vec::new(),
         };
-        
+
         // Collect all relevant nodes with error handling
         let mut all_nodes = Vec::new();
-        Self::collect_all_relevant_nodes(tree.root_node(), &mut all_nodes, source);
-        
+        ScanningLogic::collect_all_relevant_nodes(tree.root_node(), &mut all_nodes, Some(source));
+
         for node in all_nodes {
             // Safely extract node text to avoid panics
             let node_text = crate::parser::get_node_text(&node, source);
-            
+
             let line = node.start_position().row + 1;
             let func_name = ScanningLogic::get_containing_function_name(&node, source);
-            
+
             // Skip string literals and metadata
-            if node_text.trim().starts_with('"') || node_text.trim().starts_with("'") || 
+            if node_text.trim().starts_with('"') || node_text.trim().starts_with("'") ||
                node_text.contains("__all__") || node_text.contains("__version__") {
                 continue;
             }
-            
+
             // Check for function definitions
             if let Some(function_name) = Self::extract_function_definition(&node_text) {
                 exports.functions.insert(function_name.clone());
             }
-            
+
             // Check for imports
             if let Some(import_list) = Self::extract_import_info(&node_text) {
                 for (func_name, module_name) in import_list {
@@ -1843,11 +1865,11 @@ impl MultiFileTaintAnalyzer {
                         let module_file = format!("{}.py", module_name);
                         base_dir.join(module_file).to_string_lossy().to_string()
                     };
-                    
+
                     imports.functions.insert(func_name, module_file_path);
                 }
             }
-            
+
             // Check for taint sources (environment variables, command line args, etc.)
             if let Some(source_pattern) = Self::extract_taint_source_pattern(&node, source, rule_deduplicator) {
                 exports.taint_sources.push(TaintSourceInfo {
@@ -1857,7 +1879,7 @@ impl MultiFileTaintAnalyzer {
                     code: node_text.clone(),
                 });
             }
-            
+
             // ENHANCED: Check if this is a function definition that contains taint sources
             if node.kind() == "function_definition" {
                 if Self::function_contains_taint_sources(&node, source, rule_deduplicator) {
@@ -1870,7 +1892,7 @@ impl MultiFileTaintAnalyzer {
                     });
                 }
             }
-            
+
             // Check for taint sinks (eval, exec, os.system, etc.)
             if let Some(sink_pattern) = Self::extract_taint_sink_pattern(&node, source, rule_deduplicator) {
                 if let Some(used_var) = Self::extract_sink_variable(&node_text) {
@@ -1884,11 +1906,11 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         self.file_exports.insert(filepath.to_string(), exports);
         self.file_imports.insert(filepath.to_string(), imports);
     }
-    
+
     /// Extract taint source pattern by analyzing the node more intelligently - ENHANCED for better detection
     fn extract_taint_source_pattern(
         node: &tree_sitter::Node,
@@ -1896,49 +1918,39 @@ impl MultiFileTaintAnalyzer {
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Option<String> {
         let node_text = crate::parser::get_node_text(node, source);
-        
+
         // Skip string literals and other non-code nodes
         if node.kind() == "string" || node.kind() == "string_literal" {
             return None;
         }
-        
+
         // Check all source patterns against this node
         for pattern in &rule_deduplicator.source_patterns {
             // Direct pattern matching for simple cases
             if Self::matches_taint_pattern_in_context(pattern, &node_text, node.kind(), "") {
                 return Some(pattern.clone());
             }
-            
+
             // Enhanced pattern matching for complex expressions
             if Self::enhanced_taint_source_matching(pattern, &node_text, node, source) {
                 return Some(pattern.clone());
             }
         }
-        
+
         None
     }
-    
-    /// Context-aware pattern matching - NEW function
+
+    /// Context-aware pattern matching - delegates to CommonUtils
     fn matches_taint_pattern_in_context(
         pattern: &str,
         text: &str,
-        _node_kind: &str,
-        _context: &str,
+        node_kind: &str,
+        context: &str,
     ) -> bool {
-        // Skip string literals in any context
-        if text.starts_with('"') || text.starts_with("'") || text.starts_with("b\"") || text.starts_with("b'") {
-            return false;
-        }
-        
-        // Skip __all__ lists and other metadata
-        if text.contains("__all__") || text.contains("__version__") || text.contains("__author__") {
-            return false;
-        }
-        
-        // Use the unified pattern matching from CommonUtils
-        crate::common::CommonUtils::matches_unified_pattern(pattern, text)
+        // Use the context-aware taint pattern matching from CommonUtils
+        crate::common::CommonUtils::matches_taint_pattern_in_context(pattern, text, node_kind, context)
     }
-    
+
     /// Enhanced taint source matching for complex expressions - NEW function
     fn enhanced_taint_source_matching(
         pattern: &str,
@@ -1948,21 +1960,21 @@ impl MultiFileTaintAnalyzer {
     ) -> bool {
         // Handle os.environ patterns
         if pattern.contains("os.environ") || pattern.contains("os\\.environ") {
-            if node_text.contains("os.environ") || 
+            if node_text.contains("os.environ") ||
                node_text.contains("os.getenv") ||
                Self::contains_os_environ_call(node, source) {
                 return true;
             }
         }
-        
-        // Handle sys.argv patterns  
+
+        // Handle sys.argv patterns
         if pattern.contains("sys.argv") || pattern.contains("sys\\.argv") {
             if node_text.contains("sys.argv") ||
                Self::contains_sys_argv_access(node, source) {
                 return true;
             }
         }
-        
+
         // Handle request patterns (web frameworks)
         if pattern.contains("request") {
             if node_text.contains("request.") ||
@@ -1971,7 +1983,7 @@ impl MultiFileTaintAnalyzer {
                 return true;
             }
         }
-        
+
         // Handle input patterns
         if pattern.contains("input(") || pattern.contains("input\\(") {
             if node_text.contains("input(") ||
@@ -1979,10 +1991,10 @@ impl MultiFileTaintAnalyzer {
                 return true;
             }
         }
-        
+
         false
     }
-    
+
     /// Check if node contains os.environ access - NEW function
     fn contains_os_environ_call(node: &tree_sitter::Node, source: &[u8]) -> bool {
         // Check if this node or its children contain os.environ access
@@ -1992,19 +2004,19 @@ impl MultiFileTaintAnalyzer {
                 return true;
             }
         }
-        
+
         // Check for method calls like os.environ.get(), os.getenv()
         if node.kind() == "call" {
             if let Some(func_node) = node.child_by_field_name("function") {
                 let func_text = crate::parser::get_node_text(&func_node, source);
-                if func_text.contains("os.environ") || 
+                if func_text.contains("os.environ") ||
                    func_text.contains("os.getenv") ||
                    func_text == "getenv" {
                     return true;
                 }
             }
         }
-        
+
         // Recursively check children
         let mut cursor = node.walk();
         if cursor.goto_first_child() {
@@ -2017,11 +2029,11 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         false
     }
-    
-    /// Check if node contains sys.argv access - NEW function  
+
+    /// Check if node contains sys.argv access - NEW function
     fn contains_sys_argv_access(node: &tree_sitter::Node, source: &[u8]) -> bool {
         // Check if this node or its children contain sys.argv access
         if node.kind() == "attribute" || node.kind() == "subscript" {
@@ -2030,7 +2042,7 @@ impl MultiFileTaintAnalyzer {
                 return true;
             }
         }
-        
+
         // Recursively check children
         let mut cursor = node.walk();
         if cursor.goto_first_child() {
@@ -2043,10 +2055,10 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         false
     }
-    
+
     /// Extract taint sink pattern by analyzing the node more intelligently - FIXED for context awareness
     fn extract_taint_sink_pattern(
         node: &tree_sitter::Node,
@@ -2054,12 +2066,12 @@ impl MultiFileTaintAnalyzer {
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Option<String> {
         let node_text = crate::parser::get_node_text(node, source);
-        
+
         // Skip string literals and other non-code nodes
         if node.kind() == "string" || node.kind() == "string_literal" {
             return None;
         }
-        
+
         // For call nodes, extract the function name
         if node.kind() == "call" {
             if let Some(func_name) = Self::extract_function_name_from_call(node, source) {
@@ -2071,7 +2083,7 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         // For expression nodes, check the full expression
         if node.kind() == "expression_statement" || node.kind() == "binary_expression" {
             for pattern in &rule_deduplicator.sink_patterns {
@@ -2080,10 +2092,10 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Extract function name from a call node
     fn extract_function_name_from_call(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
         let mut cursor = node.walk();
@@ -2091,7 +2103,7 @@ impl MultiFileTaintAnalyzer {
             // The first child should be the function name/expression
             let func_node = cursor.node();
             let func_text = crate::parser::get_node_text(&func_node, source);
-            
+
             // Handle different types of function calls
             match func_node.kind() {
                 "identifier" => {
@@ -2110,25 +2122,25 @@ impl MultiFileTaintAnalyzer {
         }
         None
     }
-    
+
     /// Extract assignment value from assignment nodes
     fn extract_assignment_value(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
         let mut cursor = node.walk();
         let mut found_right_side = false;
-        
+
         while cursor.goto_next_sibling() {
             if found_right_side {
                 // This is the right side of the assignment
                 return Some(crate::parser::get_node_text(&cursor.node(), source));
             }
-            
+
             if cursor.node().kind() == "=" {
                 found_right_side = true;
             }
         }
         None
     }
-    
+
     /// Check if a function name matches a taint pattern
     fn function_matches_pattern(func_name: &str, pattern: &str) -> bool {
         // Clean up the pattern to extract just the function name
@@ -2137,32 +2149,32 @@ impl MultiFileTaintAnalyzer {
             .replace("\\)", "")
             .replace("\\.", ".")
             .replace("\\\\", "\\");
-        
+
         // Check if the function name matches the pattern
         if clean_pattern.contains(func_name) {
             return true;
         }
-        
+
         // Handle patterns like "os\\.system" -> "os.system"
         if clean_pattern.contains(".") && func_name.contains(".") {
             return clean_pattern == func_name;
         }
-        
+
         // Handle patterns like "eval\\(" -> "eval"
         if clean_pattern.ends_with(func_name) {
             return true;
         }
-        
+
         false
     }
-    
+
     /// Extract the variable/function being used in a sink call - ENHANCED for complex expressions
     fn extract_sink_variable(text: &str) -> Option<String> {
         // Skip string literals
         if text.trim().starts_with('"') || text.trim().starts_with("'") {
             return None;
         }
-        
+
         // Look for function calls like eval(var), exec(var), os.system(var)
         if let Some(paren_start) = text.find('(') {
             if let Some(paren_end) = text.rfind(')') {
@@ -2170,8 +2182,8 @@ impl MultiFileTaintAnalyzer {
                 if let Some(first_arg) = args.split(',').next() {
                     let cleaned = first_arg.trim();
                     // Only return if it looks like a variable (not a string literal)
-                    if !cleaned.is_empty() && 
-                       !cleaned.starts_with('"') && 
+                    if !cleaned.is_empty() &&
+                       !cleaned.starts_with('"') &&
                        !cleaned.starts_with('\'') &&
                        !cleaned.starts_with('/') &&
                        !cleaned.chars().all(|c| c.is_numeric()) &&
@@ -2181,7 +2193,7 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         // Handle method calls like obj.method(var)
         if let Some(dot_pos) = text.rfind('.') {
             if let Some(paren_start) = text.find('(') {
@@ -2191,8 +2203,8 @@ impl MultiFileTaintAnalyzer {
                         let arg_content = &args[..paren_end];
                         if let Some(first_arg) = arg_content.split(',').next() {
                             let cleaned = first_arg.trim();
-                            if !cleaned.is_empty() && 
-                               !cleaned.starts_with('"') && 
+                            if !cleaned.is_empty() &&
+                               !cleaned.starts_with('"') &&
                                !cleaned.starts_with('\'') {
                                 return Some(cleaned.to_string());
                             }
@@ -2201,10 +2213,10 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Create a finding from a cross-file taint flow
     fn create_cross_file_finding(&self, flow: &CrossFileTaintFlow) -> crate::models::Finding {
         let taint_source = crate::models::TaintSource {
@@ -2216,7 +2228,7 @@ impl MultiFileTaintAnalyzer {
             code: format!("Function exported from {}", flow.source_file),
             branch_id: None,
         };
-        
+
         let taint_sink = crate::models::TaintSink {
             file: flow.sink_file.clone(),
             line: flow.sink_line,
@@ -2226,7 +2238,7 @@ impl MultiFileTaintAnalyzer {
             code: format!("Imported function used in {}", flow.sink_file),
             branch_id: None,
         };
-        
+
         crate::models::Finding {
             file: flow.sink_file.clone(),
             line: flow.sink_line,
@@ -2262,31 +2274,31 @@ impl MultiFileTaintAnalyzer {
             ]),
         }
     }
-    
+
     /// Extract import information from node text - FIXED for multi-line imports and parentheses
     fn extract_import_info(text: &str) -> Option<Vec<(String, String)>> {
         let mut imports = Vec::new();
         let trimmed_text = text.trim();
-        
+
         // Only parse actual import statements, not string literals
         if trimmed_text.starts_with("from ") && trimmed_text.contains(" import ") {
             if let Some(from_start) = trimmed_text.find("from ") {
                 if let Some(import_start) = trimmed_text.find(" import ") {
                     let module_part = &trimmed_text[from_start + 5..import_start].trim();
                     let import_part = &trimmed_text[import_start + 8..].trim();
-                    
+
                     // Clean up import part - remove parentheses and newlines
                     let cleaned_import_part = import_part
                         .replace('(', "")
                         .replace(')', "")
                         .replace('\n', " ")
                         .replace('\r', " ");
-                    
+
                     // Handle multiple imports: "from module import func1, func2"
                     for import in cleaned_import_part.split(',') {
                         let func_name = import.trim();
-                        if !func_name.is_empty() && 
-                           !func_name.starts_with('"') && 
+                        if !func_name.is_empty() &&
+                           !func_name.starts_with('"') &&
                            !func_name.starts_with("'") &&
                            !func_name.contains("__") { // Skip __all__ etc
                             imports.push((func_name.to_string(), module_part.to_string()));
@@ -2295,7 +2307,7 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         // Handle "import module" pattern (for module-level imports)
         if trimmed_text.starts_with("import ") && !trimmed_text.contains(" from ") {
             let module_part = &trimmed_text[7..].trim();
@@ -2304,14 +2316,14 @@ impl MultiFileTaintAnalyzer {
                 imports.push((module_part.to_string(), module_part.to_string()));
             }
         }
-        
+
         if imports.is_empty() {
             None
         } else {
             Some(imports)
         }
     }
-    
+
     /// Extract function definition from node text
     fn extract_function_definition(text: &str) -> Option<String> {
         if text.contains("def ") {
@@ -2327,44 +2339,8 @@ impl MultiFileTaintAnalyzer {
         }
         None
     }
-    
-    /// Collect all relevant nodes for import/export analysis - FIXED to avoid string literals
-    fn collect_all_relevant_nodes<'a>(node: tree_sitter::Node<'a>, nodes: &mut Vec<tree_sitter::Node<'a>>, source: &[u8]) {
-        // Only collect actual code nodes, not string literals or metadata
-        match node.kind() {
-            "import_statement" | "import_from_statement" | "function_definition" | 
-            "call" | "expression_statement" | "assignment_expression" |
-            "return_statement" | "binary_expression" | "identifier" => {
-                nodes.push(node);
-            }
-            // Skip string literals, comments, and metadata
-            "string" | "string_literal" | "comment" | "module" => {
-                // Don't collect these
-            }
-            _ => {
-                // For other node types, check if they contain actual code
-                if let Some(node_text) = crate::common::CommonUtils::extract_node_text(&node, source) {
-                    if !node_text.trim().is_empty() && 
-                       !node_text.starts_with('"') && 
-                       !node_text.starts_with("'") &&
-                       !node_text.contains("__all__") {
-                        nodes.push(node);
-                    }
-                }
-            }
-        }
-        
-        // Recursively process children
-        let mut cursor = node.walk();
-        if cursor.goto_first_child() {
-            loop {
-                Self::collect_all_relevant_nodes(cursor.node(), nodes, source);
-                if !cursor.goto_next_sibling() {
-                    break;
-                }
-            }
-        }
-    }
+
+
 
     /// Recursively trace taint from a sink variable/function back to sources across files - COMPLETELY REWRITTEN
     fn trace_taint_to_source(
@@ -2388,7 +2364,7 @@ impl MultiFileTaintAnalyzer {
                 if &source_info.function == start_var {
                     return Some((start_file.to_string(), source_info.clone(), vec![start_file.to_string()]));
                 }
-                
+
                 // Check if the variable might be related to this taint source
                 if source_info.code.contains(start_var) || source_info.function.contains(start_var) {
                     return Some((start_file.to_string(), source_info.clone(), vec![start_file.to_string()]));
@@ -2401,13 +2377,13 @@ impl MultiFileTaintAnalyzer {
             // Look for imported functions that might be the source of this variable
             for (imported_func, source_file) in &imports.functions {
                 // Check if this imported function might be related to our variable
-                if imported_func == start_var || 
+                if imported_func == start_var ||
                    start_var.contains(imported_func) ||
                    imported_func.contains("get_") ||  // Common taint source pattern
                    imported_func.contains("propagate_") {  // Common propagation pattern
-                    
+
                     // Recursively trace in the source file
-                    if let Some((final_source_file, final_source_info, mut path)) = 
+                    if let Some((final_source_file, final_source_info, mut path)) =
                         self.trace_taint_to_source(source_file, imported_func, visited, max_hops, current_hops + 1) {
                         path.push(start_file.to_string());
                         return Some((final_source_file, final_source_info, path));
@@ -2423,11 +2399,11 @@ impl MultiFileTaintAnalyzer {
                 if let Some(source_exports) = self.file_exports.get(source_file) {
                     for source_info in &source_exports.taint_sources {
                         // If this imported function contains taint sources, trace it
-                        if &source_info.function == imported_func || 
+                        if &source_info.function == imported_func ||
                            source_info.function.contains("get_") ||
                            source_info.function.contains("env") ||
                            source_info.function.contains("arg") {
-                            
+
                             let path = vec![source_file.to_string(), start_file.to_string()];
                             return Some((source_file.to_string(), source_info.clone(), path));
                         }
@@ -2440,12 +2416,12 @@ impl MultiFileTaintAnalyzer {
         if let Some(imports) = self.file_imports.get(start_file) {
             for (imported_func, source_file) in &imports.functions {
                 // For functions that might be propagating taint
-                if imported_func.starts_with("propagate_") || 
+                if imported_func.starts_with("propagate_") ||
                    imported_func.starts_with("get_") ||
                    imported_func.contains("config") ||
                    imported_func.contains("data") ||
                    imported_func.contains("env") {
-                    
+
                     // Check if the source file has taint sources
                     if let Some(source_exports) = self.file_exports.get(source_file) {
                         if !source_exports.taint_sources.is_empty() {
@@ -2460,7 +2436,7 @@ impl MultiFileTaintAnalyzer {
                                    source_info.function.contains("arg") ||
                                    source_info.pattern.contains("os.environ") ||
                                    source_info.pattern.contains("sys.argv") {
-                                    
+
                                     let path = vec![source_file.to_string(), start_file.to_string()];
                                     return Some((source_file.to_string(), source_info.clone(), path));
                                 }
@@ -2470,7 +2446,7 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         // Strategy 5: Last resort - if we have any taint sources in imported files, use them
         if let Some(imports) = self.file_imports.get(start_file) {
             for (imported_func, source_file) in &imports.functions {
@@ -2484,10 +2460,10 @@ impl MultiFileTaintAnalyzer {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Check if a function definition contains taint sources in its body - NEW function
     fn function_contains_taint_sources(
         func_node: &tree_sitter::Node,
@@ -2499,23 +2475,23 @@ impl MultiFileTaintAnalyzer {
         if cursor.goto_first_child() {
             loop {
                 let node = cursor.node();
-                
+
                 // Check if this node is a taint source
                 if Self::extract_taint_source_pattern(&node, source, rule_deduplicator).is_some() {
                     return true;
                 }
-                
+
                 // Recursively check children
                 if Self::function_contains_taint_sources(&node, source, rule_deduplicator) {
                     return true;
                 }
-                
+
                 if !cursor.goto_next_sibling() {
                     break;
                 }
             }
         }
-        
+
         false
     }
 }

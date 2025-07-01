@@ -1,6 +1,6 @@
 use anyhow::Result;
 use tree_sitter::{Language, Node};
-use crate::common::CommonUtils;
+use crate::parser::get_node_text_slice;
 
 pub trait LanguageSupport: Send + Sync {
     fn name(&self) -> &'static str;
@@ -39,10 +39,10 @@ pub fn get_language_support(language_name: &str) -> Result<Box<dyn LanguageSuppo
             supported.push("html");
             #[cfg(feature = "django")]
             supported.push("django");
-            
+
             anyhow::bail!(
-                "Unsupported language: {}. Supported languages: {}", 
-                language_name, 
+                "Unsupported language: {}. Supported languages: {}",
+                language_name,
                 supported.join(", ")
             )
         }
@@ -59,12 +59,12 @@ impl LanguageSupport for PythonLanguage {
     fn file_extension(&self) -> &'static str { ".py" }
     fn tree_sitter_language(&self) -> Language { tree_sitter_python::LANGUAGE.into() }
     fn call_node_types(&self) -> &[&'static str] { &["call"] }
-    
+
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         node.child_by_field_name("function")
-            .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+            .map(|child| get_node_text_slice(&child, source))
     }
-    
+
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
         node.child_by_field_name("arguments")
     }
@@ -79,24 +79,24 @@ impl LanguageSupport for JavaLanguage {
     fn name(&self) -> &'static str { "java" }
     fn file_extension(&self) -> &'static str { ".java" }
     fn tree_sitter_language(&self) -> Language { tree_sitter_java::LANGUAGE.into() }
-    fn call_node_types(&self) -> &[&'static str] { 
+    fn call_node_types(&self) -> &[&'static str] {
         &["method_invocation", "object_creation_expression"]
     }
-    
+
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "method_invocation" => {
                 node.child_by_field_name("name")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             "object_creation_expression" => {
                 node.child_by_field_name("type")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             _ => None
         }
     }
-    
+
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
         node.child_by_field_name("arguments")
     }
@@ -111,24 +111,24 @@ impl LanguageSupport for JavaScriptLanguage {
     fn name(&self) -> &'static str { "javascript" }
     fn file_extension(&self) -> &'static str { ".js" }
     fn tree_sitter_language(&self) -> Language { tree_sitter_javascript::LANGUAGE.into() }
-    fn call_node_types(&self) -> &[&'static str] { 
+    fn call_node_types(&self) -> &[&'static str] {
         &["call_expression", "new_expression"]
     }
-    
+
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "call_expression" => {
                 node.child_by_field_name("function")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             "new_expression" => {
                 node.child_by_field_name("constructor")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             _ => None
         }
     }
-    
+
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
         node.child_by_field_name("arguments")
     }
@@ -146,25 +146,25 @@ impl LanguageSupport for TSXLanguage {
     fn call_node_types(&self) -> &[&'static str] {
         &["call_expression", "new_expression", "jsx_expression", "jsx_attribute"]
     }
-    
+
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "jsx_attribute" => {
                 node.child_by_field_name("name")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             "call_expression" => {
                 node.child_by_field_name("function")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             "new_expression" => {
                 node.child_by_field_name("constructor")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             _ => None
         }
     }
-    
+
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
         node.child_by_field_name("arguments")
             .or_else(|| node.child_by_field_name("value"))
@@ -183,16 +183,16 @@ impl LanguageSupport for HTMLLanguage {
     fn call_node_types(&self) -> &[&'static str] {
         &["attribute", "start_tag", "script_element", "element"]
     }
-    
+
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "attribute" => {
                 node.child_by_field_name("name")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             "start_tag" | "element" => {
                 node.child_by_field_name("name")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             "script_element" => {
                 Some("script")
@@ -200,13 +200,13 @@ impl LanguageSupport for HTMLLanguage {
             _ => None
         }
     }
-    
+
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
         if node.kind() == "attribute" {
             if let Some(value_node) = node.child_by_field_name("value") {
                 return Some(value_node);
             }
-            
+
             // Fallback: look for value-like children
             for i in 0..node.child_count() {
                 if let Some(child) = node.child(i) {
@@ -219,7 +219,7 @@ impl LanguageSupport for HTMLLanguage {
                 }
             }
         }
-        
+
         node.child_by_field_name("value")
     }
 }
@@ -236,12 +236,12 @@ impl LanguageSupport for DjangoTemplateLanguage {
     fn call_node_types(&self) -> &[&'static str] {
         &["attribute", "text", "script_element"]
     }
-    
+
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
             "text" => {
-                let text = CommonUtils::extract_node_text_slice(node, source)?;
-                
+                let text = get_node_text_slice(node, source);
+
                 // Check for Django template patterns (return static strings for consistent lifetimes)
                 if text.contains("|safe") {
                     Some("|safe")
@@ -261,7 +261,7 @@ impl LanguageSupport for DjangoTemplateLanguage {
             }
             "attribute" => {
                 node.child_by_field_name("name")
-                    .and_then(|child| CommonUtils::extract_node_text_slice(&child, source))
+                    .map(|child| get_node_text_slice(&child, source))
             }
             "script_element" => {
                 Some("script")
@@ -269,7 +269,7 @@ impl LanguageSupport for DjangoTemplateLanguage {
             _ => None
         }
     }
-    
+
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
         match node.kind() {
             "text" => Some(*node),
@@ -292,4 +292,4 @@ impl LanguageSupport for DjangoTemplateLanguage {
             _ => node.child_by_field_name("value")
         }
     }
-} 
+}
