@@ -1,10 +1,23 @@
 use anyhow::Result;
+use env_logger;
+use log::LevelFilter;
 use clap::Parser;
 use find_vulns::{Cli, CommonUtils, run_explicit_scan, run_auto_detection_scan, run_taint_analysis};
 use find_vulns::scanner::core::{print_findings_json, print_findings_csv, print_findings_text, print_summary};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Initialize logger (respect RUST_LOG or --verbose flag)
+    if cli.verbose {
+        env_logger::Builder::from_default_env()
+            .filter_level(LevelFilter::Debug)
+            .init();
+    } else {
+        let _ = env_logger::Builder::from_default_env()
+            .filter_level(LevelFilter::Info)
+            .try_init();
+    }
 
     // Configure threading if specified
     if let Some(threads) = cli.threads {

@@ -1,4 +1,7 @@
 use anyhow::Result;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tree_sitter::Node;
 
 pub use crate::models::LanguageInfo;
@@ -121,8 +124,6 @@ impl CommonUtils {
         Self::simple_glob_match(pattern, text)
     }
 
-
-
     /// Simple glob matching for basic wildcard patterns
     fn simple_glob_match(pattern: &str, text: &str) -> bool {
         let parts: Vec<&str> = pattern.split('*').collect();
@@ -181,11 +182,27 @@ impl CommonUtils {
         pattern.contains("\\.")
     }
 
-    /// Match regex patterns with error handling
+    /// Match regex patterns with caching for performance
     fn matches_regex(pattern: &str, text: &str) -> bool {
-        regex::Regex::new(pattern)
-            .map(|re| re.is_match(text))
-            .unwrap_or(false)
+        static REGEX_CACHE: Lazy<Mutex<HashMap<String, regex::Regex>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+        // Fast path: try cache first
+        if let Some(re) = REGEX_CACHE.lock().unwrap().get(pattern) {
+            return re.is_match(text);
+        }
+
+        match regex::Regex::new(pattern) {
+            Ok(re) => {
+                let is_match = re.is_match(text);
+                // Cache the compiled regex (keep cache small to avoid unbounded growth)
+                let mut cache = REGEX_CACHE.lock().unwrap();
+                if cache.len() < 256 {
+                    cache.insert(pattern.to_string(), re);
+                }
+                is_match
+            }
+            Err(_) => false,
+        }
     }
 
     /// Handle escaped patterns from taint rules (eval\(, os\.system, etc.)
@@ -199,8 +216,6 @@ impl CommonUtils {
 
         text.contains(&cleaned_pattern)
     }
-
-
 
     /// Match any pattern from a list (common use case)
     pub fn matches_any_pattern(patterns: &[String], text: &str) -> bool {
@@ -292,36 +307,49 @@ impl CommonUtils {
 
     /// Extract variables from F-strings
     pub fn extract_f_string_variables(expr: &str) -> Vec<String> {
-        println!("🔍 [F_STRING_EXTRACT] Processing: '{}'", expr);
-        
-        let mut variables = Vec::new();
-        let mut in_brace = false;
-        let mut var_start = 0;
+        log::debug!("[F_STRING_EXTRACT] Processing: '{}'", expr);
 
-        for (i, ch) in expr.chars().enumerate() {
-            match ch {
-                '{' if !in_brace => {
-                    println!("   Found opening brace at position {}", i);
-                    in_brace = true;
-                    var_start = i + 1;
+        let mut variables = Vec::new();
+        let mut brace_depth = 0usize;
+        let mut current_start: Option<usize> = None;
+        let chars: Vec<char> = expr.chars().collect();
+
+        let mut i = 0;
+        while i < chars.len() {
+            // Skip escaped braces `{{` or `}}`
+            if i + 1 < chars.len() && ((chars[i] == '{' && chars[i + 1] == '{') || (chars[i] == '}' && chars[i + 1] == '}')) {
+                i += 2;
+                continue;
+            }
+
+            match chars[i] {
+                '{' => {
+                    brace_depth += 1;
+                    if brace_depth == 1 {
+                        current_start = Some(i + 1);
+                    }
                 }
-                '}' if in_brace => {
-                    println!("   Found closing brace at position {}, extracting from {} to {}", i, var_start, i);
-                    in_brace = false;
-                    let var = &expr[var_start..i].trim();
-                    println!("   Extracted variable candidate: '{}'", var);
-                    if Self::is_valid_variable_name(var) {
-                        println!("   ✅ Valid variable name: '{}'", var);
-                        variables.push(var.to_string());
-                    } else {
-                        println!("   ❌ Invalid variable name: '{}'", var);
+                '}' => {
+                    if brace_depth > 0 {
+                        brace_depth -= 1;
+                        if brace_depth == 0 {
+                            if let Some(start) = current_start.take() {
+                                let raw_var = expr[start..i].trim();
+                                // Strip format specifiers after ':' or '!'
+                                let clean_var = raw_var.split([':', '!'].as_ref()).next().unwrap_or("").trim();
+                                if Self::is_valid_variable_name(clean_var) {
+                                    log::debug!("[F_STRING_EXTRACT] Found variable: {}", clean_var);
+                                    variables.push(clean_var.to_string());
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}
             }
+            i += 1;
         }
 
-        println!("🔍 [F_STRING_EXTRACT] Result: {:?}", variables);
         variables
     }
 

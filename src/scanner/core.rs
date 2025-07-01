@@ -82,16 +82,16 @@ impl TaintRuleDeduplicator {
         let result = self.rule_mapping.get(&key);
         
         if let Some(rule) = result {
-            println!("🔍 [RULE_SELECTION] Found rule for source='{}' + sink='{}' -> rule_id={:?}, finding_type={:?}", 
+            log::debug!("[RULE_SELECTION] Found rule for source='{}' + sink='{}' -> rule_id={:?}, finding_type={:?}", 
                 source_pattern, sink_pattern, rule.id, rule.finding_type);
         } else {
-            println!("❌ [RULE_SELECTION] No rule found for source='{}' + sink='{}'. Available mappings:", 
+            log::debug!("[RULE_SELECTION] No rule found for source='{}' + sink='{}'. Showing up to 5 mappings", 
                 source_pattern, sink_pattern);
             for ((src, snk), rule) in self.rule_mapping.iter().take(5) {
-                println!("   - ('{}', '{}') -> {:?}", src, snk, rule.finding_type);
+                log::debug!("   - ('{}', '{}') -> {:?}", src, snk, rule.finding_type);
             }
             if self.rule_mapping.len() > 5 {
-                println!("   ... and {} more mappings", self.rule_mapping.len() - 5);
+                log::debug!("   ... and {} more mappings", self.rule_mapping.len() - 5);
             }
         }
         
@@ -100,27 +100,27 @@ impl TaintRuleDeduplicator {
 
     /// Check if a pattern matches any source
     fn matches_source_pattern(&self, text: &str) -> Option<String> {
-        println!("🔍 [SOURCE_MATCH] Checking text: '{}'", text);
+        log::debug!("[SOURCE_MATCH] Checking text: '{}'", text);
         for pattern in &self.source_patterns {
             if CommonUtils::matches_taint_pattern(pattern, text) {
-                println!("✅ [SOURCE_MATCH] Matched pattern: '{}' in text: '{}'", pattern, text);
+                log::debug!("[SOURCE_MATCH] Matched pattern: '{}' in text: '{}'", pattern, text);
                 return Some(pattern.clone());
             }
         }
-        println!("❌ [SOURCE_MATCH] No patterns matched for text: '{}'", text);
+        log::debug!("[SOURCE_MATCH] No patterns matched for text: '{}'", text);
         None
     }
 
     /// Check if a pattern matches any sink
     fn matches_sink_pattern(&self, text: &str) -> Option<String> {
-        println!("🔍 [SINK_MATCH] Checking text: '{}'", text);
+        log::debug!("[SINK_MATCH] Checking text: '{}'", text);
         for pattern in &self.sink_patterns {
             if CommonUtils::matches_taint_pattern(pattern, text) {
-                println!("✅ [SINK_MATCH] Matched pattern: '{}' in text: '{}'", pattern, text);
+                log::debug!("[SINK_MATCH] Matched pattern: '{}' in text: '{}'", pattern, text);
                 return Some(pattern.clone());
             }
         }
-        println!("❌ [SINK_MATCH] No patterns matched for text: '{}'", text);
+        log::debug!("[SINK_MATCH] No patterns matched for text: '{}'", text);
         None
     }
 
@@ -580,11 +580,11 @@ impl ScanningLogic {
                     // Extract the right side of assignment for source matching
                     if let Some(eq_pos) = node_text.find('=') {
                         let assignment_value = &node_text[eq_pos + 1..].trim();
-                        println!("🔍 [ASSIGNMENT_ANALYSIS] Processing assignment '{}' -> checking value '{}'", node_text, assignment_value);
+                        log::debug!("[ASSIGNMENT_ANALYSIS] Processing assignment '{}' -> checking value '{}'", node_text, assignment_value);
                         
                         // Check if the assignment value matches any taint source
                         if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(assignment_value) {
-                            println!("✅ [ASSIGNMENT_ANALYSIS] Assignment value '{}' matches source pattern '{}'", assignment_value, source_pattern);
+                            log::debug!("[ASSIGNMENT_ANALYSIS] Assignment value '{}' matches source pattern '{}'", assignment_value, source_pattern);
                             
                                                     flow_tracker.record_tainted_variable(
                             var_name,
@@ -596,7 +596,7 @@ impl ScanningLogic {
                             }
                         );
                         } else {
-                            println!("❌ [ASSIGNMENT_ANALYSIS] Assignment value '{}' does not match any source patterns", assignment_value);
+                            log::debug!("[ASSIGNMENT_ANALYSIS] Assignment value '{}' does not match any source patterns", assignment_value);
                         }
                     }
                 }
@@ -604,13 +604,13 @@ impl ScanningLogic {
 
             // Check for taint propagation through operations
             if let Some((target_var, dependent_vars)) = Self::detect_taint_propagation(&node_text) {
-                println!("🔄 [TAINT_PROPAGATION] Detected propagation: '{}' depends on {:?} in '{}'", target_var, dependent_vars, node_text);
+                log::debug!("[TAINT_PROPAGATION] Detected propagation: '{}' depends on {:?} in '{}'", target_var, dependent_vars, node_text);
                 flow_tracker.record_taint_propagation(&target_var, &dependent_vars);
                 
                 // Check if any dependent variables are tainted and propagate to target
                 for dep_var in &dependent_vars {
                     if let Some(taint_info) = flow_tracker.is_variable_tainted(dep_var, &func_name).cloned() {
-                        println!("✅ [TAINT_PROPAGATION] Propagating taint from '{}' to '{}' ({})", dep_var, target_var, taint_info.source_pattern);
+                        log::debug!("[TAINT_PROPAGATION] Propagating taint from '{}' to '{}' ({})", dep_var, target_var, taint_info.source_pattern);
                         
                         // Mark target variable as tainted (inheriting from the dependent variable)
                         flow_tracker.record_tainted_variable(target_var.clone(), TaintVariableInfo {
@@ -633,11 +633,11 @@ impl ScanningLogic {
 
             // Check if this node matches any sink pattern
             if let Some(sink_pattern) = rule_deduplicator.matches_sink_pattern(&node_text) {
-                println!("🔍 [SINK_ANALYSIS] Found sink '{}' with pattern '{}' at line {}", node_text, sink_pattern, line);
+                log::debug!("[SINK_ANALYSIS] Found sink '{}' with pattern '{}' at line {}", node_text, sink_pattern, line);
                 
                 // Extract ALL variables used in this sink (enhanced extraction)
                 let used_variables = CommonUtils::extract_all_variables(&node_text);
-                println!("🔍 [SINK_ANALYSIS] Extracted variables from sink: {:?}", used_variables);
+                log::debug!("[SINK_ANALYSIS] Extracted variables from sink: {:?}", used_variables);
 
                 // Check if ANY of these variables are tainted
                 for used_variable in used_variables.clone() {
@@ -683,7 +683,7 @@ impl ScanningLogic {
 
     /// Detect taint propagation in expressions
     fn detect_taint_propagation(node_text: &str) -> Option<(String, Vec<String>)> {
-        println!("🔍 [PROPAGATION_CHECK] Checking for taint propagation in: '{}'", node_text);
+        log::debug!("[PROPAGATION_CHECK] Checking for taint propagation in: '{}'", node_text);
         
         // Check for assignment-based propagation (e.g., query = f"SELECT {username}")
         if node_text.contains('=') && !node_text.contains("==") {
@@ -691,26 +691,26 @@ impl ScanningLogic {
                 let left_side = node_text[..eq_pos].trim();
                 let right_side = node_text[eq_pos + 1..].trim();
                 
-                println!("   Found assignment: '{}' = '{}'", left_side, right_side);
+                log::debug!("   Found assignment: '{}' = '{}'", left_side, right_side);
                 
                 // Check if right side has F-string propagation
                 if right_side.contains('{') && right_side.contains('}') {
-                    println!("   Right side contains f-string braces");
+                    log::debug!("   Right side contains f-string braces");
                     let dependent_vars = CommonUtils::extract_f_string_variables(right_side);
-                    println!("   Extracted dependent_vars from f-string: {:?}", dependent_vars);
+                    log::debug!("   Extracted dependent_vars from f-string: {:?}", dependent_vars);
                     if !dependent_vars.is_empty() && CommonUtils::is_valid_variable_name(left_side) {
-                        println!("✅ [PROPAGATION_CHECK] F-string assignment propagation detected: '{}' depends on {:?}", left_side, dependent_vars);
+                        log::debug!("[PROPAGATION_CHECK] F-string assignment propagation detected: '{}' depends on {:?}", left_side, dependent_vars);
                         return Some((left_side.to_string(), dependent_vars));
                     }
                 }
                 
                 // Check if right side has format propagation
                 if right_side.contains(".format(") {
-                    println!("   Right side contains .format( pattern");
+                    log::debug!("   Right side contains .format( pattern");
                     let dependent_vars = CommonUtils::extract_format_variables(right_side);
-                    println!("   Extracted dependent_vars from format: {:?}", dependent_vars);
+                    log::debug!("   Extracted dependent_vars from format: {:?}", dependent_vars);
                     if !dependent_vars.is_empty() && CommonUtils::is_valid_variable_name(left_side) {
-                        println!("✅ [PROPAGATION_CHECK] Format assignment propagation detected: '{}' depends on {:?}", left_side, dependent_vars);
+                        log::debug!("[PROPAGATION_CHECK] Format assignment propagation detected: '{}' depends on {:?}", left_side, dependent_vars);
                         return Some((left_side.to_string(), dependent_vars));
                     }
                 }
@@ -719,12 +719,12 @@ impl ScanningLogic {
         
         // Check for simple F-string propagation (non-assignment)
         if node_text.contains('{') && node_text.contains('}') {
-            println!("   Found f-string pattern with braces (non-assignment)");
+            log::debug!("   Found f-string pattern with braces (non-assignment)");
             if let Some(source_var) = Self::extract_direct_variable(node_text) {
                 let dependent_vars = CommonUtils::extract_f_string_variables(node_text);
-                println!("   Extracted source_var: '{}', dependent_vars: {:?}", source_var, dependent_vars);
+                log::debug!("   Extracted source_var: '{}', dependent_vars: {:?}", source_var, dependent_vars);
                 if !dependent_vars.is_empty() {
-                    println!("✅ [PROPAGATION_CHECK] F-string propagation detected");
+                    log::debug!("[PROPAGATION_CHECK] F-string propagation detected");
                     return Some((source_var, dependent_vars));
                 }
             }
@@ -732,30 +732,30 @@ impl ScanningLogic {
 
         // Check for simple format propagation (non-assignment)
         if node_text.contains(".format(") {
-            println!("   Found .format( pattern (non-assignment)");
+            log::debug!("   Found .format( pattern (non-assignment)");
             if let Some(source_var) = Self::extract_direct_variable(node_text) {
                 let dependent_vars = CommonUtils::extract_format_variables(node_text);
-                println!("   Extracted source_var: '{}', dependent_vars: {:?}", source_var, dependent_vars);
+                log::debug!("   Extracted source_var: '{}', dependent_vars: {:?}", source_var, dependent_vars);
                 if !dependent_vars.is_empty() {
-                    println!("✅ [PROPAGATION_CHECK] Format propagation detected");
+                    log::debug!("[PROPAGATION_CHECK] Format propagation detected");
                     return Some((source_var, dependent_vars));
                 }
             }
         }
 
-        println!("❌ [PROPAGATION_CHECK] No propagation detected");
+        log::debug!("[PROPAGATION_CHECK] No propagation detected");
         None
     }
 
     /// Extract direct variable from simple expressions
     fn extract_direct_variable(expr: &str) -> Option<String> {
         let trimmed = expr.trim();
-        println!("🔍 [EXTRACT_DIRECT] Checking if '{}' is a valid variable name", trimmed);
+        log::debug!("[EXTRACT_DIRECT] Checking if '{}' is a valid variable name", trimmed);
         if CommonUtils::is_valid_variable_name(trimmed) {
-            println!("✅ [EXTRACT_DIRECT] Valid variable: '{}'", trimmed);
+            log::debug!("[EXTRACT_DIRECT] Valid variable: '{}'", trimmed);
             return Some(trimmed.to_string());
         }
-        println!("❌ [EXTRACT_DIRECT] Invalid variable: '{}'", trimmed);
+        log::debug!("[EXTRACT_DIRECT] Invalid variable: '{}'", trimmed);
         None
     }
 
@@ -1190,7 +1190,7 @@ impl VulnerabilityScanner {
         let mut cross_file_findings = Vec::new();
         if has_taint_rules && filtered_files.len() > 1 {
             if show_progress {
-                println!("🔍 Performing cross-file taint analysis...");
+                log::info!("Performing cross-file taint analysis...");
             }
 
             let mut multi_file_analyzer = MultiFileTaintAnalyzer::new();
@@ -1198,12 +1198,12 @@ impl VulnerabilityScanner {
                 Ok(findings) => {
                     cross_file_findings = findings;
                     if show_progress && !cross_file_findings.is_empty() {
-                        println!("✅ Found {} cross-file taint flows", cross_file_findings.len());
+                        log::info!("Found {} cross-file taint flows", cross_file_findings.len());
                     }
                 }
                 Err(e) => {
                     if show_progress {
-                        eprintln!("⚠️  Cross-file analysis failed: {}", e);
+                        log::warn!("Cross-file analysis failed: {}", e);
                     }
                 }
             }
@@ -1546,7 +1546,7 @@ impl VariableFlowTracker {
 
     /// Record a variable as tainted from a source
     fn record_tainted_variable(&mut self, var_name: String, source_info: TaintVariableInfo) {
-        println!("🔄 [RECORD_TAINT] Recording tainted variable: '{}' from pattern '{}' at line {} in function '{}'", 
+        log::debug!("[RECORD_TAINT] Recording tainted variable: '{}' from pattern '{}' at line {} in function '{}'", 
             var_name, source_info.source_pattern, source_info.source_line, source_info.source_function);
         
         self.tainted_variables.insert(var_name.clone(), source_info.clone());
@@ -1560,23 +1560,23 @@ impl VariableFlowTracker {
 
     /// Check if a variable is tainted
     fn is_variable_tainted(&self, var_name: &str, function: &str) -> Option<&TaintVariableInfo> {
-        println!("🔍 [CHECK_TAINT] Checking if variable '{}' is tainted in function '{}'", var_name, function);
+        log::debug!("[CHECK_TAINT] Checking if variable '{}' is tainted in function '{}'", var_name, function);
         
         // Check direct variable
         if let Some(info) = self.tainted_variables.get(var_name) {
-            println!("   Found taint info: source_function='{}', source_pattern='{}'", 
+            log::debug!("[CHECK_TAINT] Found taint info: source_function='{}', source_pattern='{}'", 
                 info.source_function, info.source_pattern);
             
             // Same function or global variable
             if info.source_function == function || Self::is_global_variable(var_name) {
-                println!("✅ [CHECK_TAINT] Variable '{}' is tainted (function match or global)", var_name);
+                log::debug!("[CHECK_TAINT] Variable '{}' is tainted (function match or global)", var_name);
                 return Some(info);
             } else {
-                println!("❌ [CHECK_TAINT] Variable '{}' found but function mismatch: source='{}' vs current='{}'", 
+                log::debug!("[CHECK_TAINT] Variable '{}' found but function mismatch: source='{}' vs current='{}'", 
                     var_name, info.source_function, function);
             }
         } else {
-            println!("❌ [CHECK_TAINT] Variable '{}' not found in tainted variables", var_name);
+            log::debug!("[CHECK_TAINT] Variable '{}' not found in tainted variables", var_name);
         }
         None
     }
@@ -1802,7 +1802,7 @@ impl MultiFileTaintAnalyzer {
         files_by_language: &std::collections::HashMap<String, Vec<std::path::PathBuf>>,
         taint_rules: &[&crate::rules::UnifiedRule],
     ) -> Result<Vec<crate::models::Finding>> {
-        println!("🔧 [CROSS_FILE_NEW] Starting enhanced cross-file taint analysis");
+        log::debug!("[CROSS_FILE_NEW] Starting enhanced cross-file taint analysis");
 
         // Get all Python files for analysis
         let python_files = files_by_language.get("python").cloned().unwrap_or_default();
@@ -1817,12 +1817,12 @@ impl MultiFileTaintAnalyzer {
         // Build legacy import/export maps for sink discovery (temporary)
         self.build_import_export_maps(files_by_language, taint_rules)?;
 
-        println!("🔍 [CROSS_FILE_NEW] Analyzing {} files with sinks", self.file_imports.len());
+        log::debug!("[CROSS_FILE_NEW] Analyzing {} files with sinks", self.file_imports.len());
 
         // For each file with sinks, use the new precise analysis
         for (sink_file, imports) in &self.file_imports {
             for sink_info in &imports.taint_sinks {
-                println!("🔍 [CROSS_FILE_NEW] Analyzing sink: {} in {}::{}", 
+                log::debug!("[CROSS_FILE_NEW] Analyzing sink: {} in {}::{}", 
                     sink_info.used_variable, sink_file, sink_info.function);
 
                 // Use the new DataFlowTracer for precise analysis
@@ -1837,7 +1837,7 @@ impl MultiFileTaintAnalyzer {
 
                 match analysis_result {
                     AnalysisResult::DefinitelyTainted { flow } => {
-                        println!("✅ [CROSS_FILE_NEW] VERIFIED taint flow: {} -> {}", 
+                        log::debug!("[CROSS_FILE_NEW] VERIFIED taint flow: {} -> {}", 
                             flow.source_pattern, flow.sink_pattern);
 
                         // Get the appropriate rule for this flow
@@ -1847,11 +1847,11 @@ impl MultiFileTaintAnalyzer {
                         }
                     }
                     AnalysisResult::DefinitelySafe => {
-                        println!("✅ [CROSS_FILE_NEW] SAFE: No taint flow to {}", sink_info.used_variable);
+                        log::debug!("[CROSS_FILE_NEW] SAFE: No taint flow to {}", sink_info.used_variable);
                         // Don't create any finding - this is definitely safe
                     }
                     AnalysisResult::Unknown { reason } => {
-                        println!("⚠️ [CROSS_FILE_NEW] UNKNOWN: {} for {}", reason, sink_info.used_variable);
+                        log::debug!("[CROSS_FILE_NEW] UNKNOWN: {} for {}", reason, sink_info.used_variable);
                         // For now, don't create findings for unknown cases to reduce false positives
                         // Could add a flag to include these if needed
                     }
@@ -1859,7 +1859,7 @@ impl MultiFileTaintAnalyzer {
             }
         }
 
-        println!("✅ [CROSS_FILE_NEW] Enhanced analysis complete. Found {} verified flows", findings.len());
+        log::debug!("[CROSS_FILE_NEW] Enhanced analysis complete. Found {} verified flows", findings.len());
         Ok(findings)
     }
 
@@ -2193,44 +2193,44 @@ impl MultiFileTaintAnalyzer {
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Option<String> {
         let node_text = crate::parser::get_node_text(node, source);
-        println!("🔍 [EXTRACT_SINK] Node kind: '{}', text: '{}'", node.kind(), node_text);
+        log::debug!("[EXTRACT_SINK] Node kind: '{}', text: '{}'", node.kind(), node_text);
 
         // Skip string literals and other non-code nodes
         if node.kind() == "string" || node.kind() == "string_literal" {
-            println!("⏭️ [EXTRACT_SINK] Skipping string literal");
+            log::debug!("[EXTRACT_SINK] Skipping string literal");
             return None;
         }
 
         // For call nodes, extract the function name
         if node.kind() == "call" {
             if let Some(func_name) = crate::scanner::utils::AstUtils::extract_function_name(node, source) {
-                println!("🔍 [EXTRACT_SINK] Call node with function: '{}'", func_name);
+                log::debug!("[EXTRACT_SINK] Call node with function: '{}'", func_name);
                 // Check if this function name matches any taint sink patterns
                 for pattern in &rule_deduplicator.sink_patterns {
                     if Self::function_matches_pattern(&func_name, pattern) {
-                        println!("✅ [EXTRACT_SINK] Function '{}' matched sink pattern: '{}'", func_name, pattern);
+                        log::debug!("[EXTRACT_SINK] Function '{}' matched sink pattern: '{}'", func_name, pattern);
                         return Some(pattern.clone());
                     }
                 }
-                println!("❌ [EXTRACT_SINK] Function '{}' matched no sink patterns", func_name);
+                log::debug!("[EXTRACT_SINK] Function '{}' matched no sink patterns", func_name);
             } else {
-                println!("❌ [EXTRACT_SINK] Could not extract function name from call node");
+                log::debug!("[EXTRACT_SINK] Could not extract function name from call node");
             }
         }
 
         // For expression nodes, check the full expression
         if node.kind() == "expression_statement" || node.kind() == "binary_expression" {
-            println!("🔍 [EXTRACT_SINK] Checking expression node against {} patterns", rule_deduplicator.sink_patterns.len());
+            log::debug!("[EXTRACT_SINK] Checking expression node against {} patterns", rule_deduplicator.sink_patterns.len());
             for pattern in &rule_deduplicator.sink_patterns {
                 if CommonUtils::matches_taint_pattern_in_context(pattern, &node_text, node.kind(), "expression") {
-                    println!("✅ [EXTRACT_SINK] Expression '{}' matched sink pattern: '{}'", node_text, pattern);
+                    log::debug!("[EXTRACT_SINK] Expression '{}' matched sink pattern: '{}'", node_text, pattern);
                     return Some(pattern.clone());
                 }
             }
-            println!("❌ [EXTRACT_SINK] Expression '{}' matched no sink patterns", node_text);
+            log::debug!("[EXTRACT_SINK] Expression '{}' matched no sink patterns", node_text);
         }
 
-        println!("❌ [EXTRACT_SINK] No patterns matched for node");
+        log::debug!("[EXTRACT_SINK] No patterns matched for node");
         None
     }
 
@@ -2247,30 +2247,30 @@ impl MultiFileTaintAnalyzer {
             .replace("\\.", ".")
             .replace("\\\\", "\\");
 
-        println!("🔍 [FUNC_MATCH] Checking function '{}' against pattern '{}' (clean: '{}')", 
+        log::debug!("[FUNC_MATCH] Checking function '{}' against pattern '{}' (clean: '{}')", 
             func_name, pattern, clean_pattern);
 
         // Check if the function name matches the pattern
         if clean_pattern.contains(func_name) {
-            println!("✅ [FUNC_MATCH] Match via contains: '{}' contains '{}'", clean_pattern, func_name);
+            log::debug!("[FUNC_MATCH] Match via contains: '{}' contains '{}'", clean_pattern, func_name);
             return true;
         }
 
         // Handle patterns like "os\\.system" -> "os.system"
         if clean_pattern.contains(".") && func_name.contains(".") {
             if clean_pattern == func_name {
-                println!("✅ [FUNC_MATCH] Match via exact dot notation: '{}' == '{}'", clean_pattern, func_name);
+                log::debug!("[FUNC_MATCH] Match via exact dot notation: '{}' == '{}'", clean_pattern, func_name);
                 return true;
             }
         }
 
         // Handle patterns like "eval\\(" -> "eval"
         if clean_pattern.ends_with(func_name) {
-            println!("✅ [FUNC_MATCH] Match via ends_with: '{}' ends with '{}'", clean_pattern, func_name);
+            log::debug!("[FUNC_MATCH] Match via ends_with: '{}' ends with '{}'", clean_pattern, func_name);
             return true;
         }
 
-        println!("❌ [FUNC_MATCH] No match: '{}' vs pattern '{}' (clean: '{}')", func_name, pattern, clean_pattern);
+        log::debug!("[FUNC_MATCH] No match: '{}' vs pattern '{}' (clean: '{}')", func_name, pattern, clean_pattern);
         false
     }
 
@@ -2610,13 +2610,13 @@ impl ImportResolver {
             return Some(package_path.to_string_lossy().to_string());
         }
 
-        println!("⚠️ [IMPORT_RESOLVER] Could not resolve import '{}' from '{}'", imported_module, importing_file);
+        log::debug!("[IMPORT_RESOLVER] Could not resolve import '{}' from '{}'", imported_module, importing_file);
         None
     }
 
     /// Build bidirectional import mapping for all files
     fn build_import_graph(&mut self, files: &[std::path::PathBuf]) -> Result<()> {
-        println!("🔍 [IMPORT_RESOLVER] Building import graph for {} files", files.len());
+        log::debug!("[IMPORT_RESOLVER] Building import graph for {} files", files.len());
 
         for file_path in files {
             self.analyze_file_imports(file_path)?;
@@ -2625,7 +2625,7 @@ impl ImportResolver {
         // Build reverse mapping
         self.build_reverse_import_graph();
         
-        println!("✅ [IMPORT_RESOLVER] Import graph built: {} files with imports", self.import_graph.len());
+        log::debug!("[IMPORT_RESOLVER] Import graph built: {} files with imports", self.import_graph.len());
         Ok(())
     }
 
@@ -2751,7 +2751,7 @@ impl FunctionBodyAnalyzer {
         tree: &tree_sitter::Tree,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Result<()> {
-        println!("🔍 [FUNCTION_ANALYZER] Analyzing functions in {}", file_path);
+        log::debug!("[FUNCTION_ANALYZER] Analyzing functions in {}", file_path);
 
         // Find all function definitions (collect them first to avoid borrow conflicts)
         let function_nodes = self.extract_function_definitions(tree.root_node());
@@ -2781,7 +2781,7 @@ impl FunctionBodyAnalyzer {
             );
         }
 
-        println!("✅ [FUNCTION_ANALYZER] Analyzed {} functions in {}", 
+        log::debug!("[FUNCTION_ANALYZER] Analyzed {} functions in {}", 
             self.function_behaviors.len(), file_path);
         Ok(())
     }
@@ -2842,7 +2842,7 @@ impl FunctionBodyAnalyzer {
         source: &[u8],
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Result<FunctionTaintBehavior> {
-        println!("  🔍 [FUNCTION_ANALYZER] Analyzing function: {}", function_name);
+        log::debug!("  🔍 [FUNCTION_ANALYZER] Analyzing function: {}", function_name);
 
         let mut behavior = FunctionTaintBehavior {
             returns_tainted_data: false,
@@ -2862,7 +2862,7 @@ impl FunctionBodyAnalyzer {
 
             // Check for taint sources
             if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(&node_text) {
-                println!("    ✅ [FUNCTION_ANALYZER] Found taint source: {} -> {}", source_pattern, node_text);
+                log::debug!("    ✅ [FUNCTION_ANALYZER] Found taint source: {} -> {}", source_pattern, node_text);
                 behavior.taint_sources_used.push(source_pattern);
                 behavior.returns_tainted_data = true; // Assume function returns tainted if it accesses sources
             }
@@ -2891,7 +2891,7 @@ impl FunctionBodyAnalyzer {
             }
         }
 
-        println!("    ✅ [FUNCTION_ANALYZER] Function {} behavior: returns_tainted={}, sources={:?}", 
+        log::debug!("    ✅ [FUNCTION_ANALYZER] Function {} behavior: returns_tainted={}, sources={:?}", 
             function_name, behavior.returns_tainted_data, behavior.taint_sources_used);
 
         Ok(behavior)
@@ -3120,7 +3120,7 @@ impl DataFlowTracer {
         files: &[std::path::PathBuf],
         taint_rules: &[&crate::rules::UnifiedRule],
     ) -> Result<()> {
-        println!("🔧 [DATA_FLOW_TRACER] Initializing with {} files", files.len());
+        log::debug!("[DATA_FLOW_TRACER] Initializing with {} files", files.len());
 
         // Build import graph
         self.import_resolver.build_import_graph(files)?;
@@ -3142,7 +3142,7 @@ impl DataFlowTracer {
             }
         }
 
-        println!("✅ [DATA_FLOW_TRACER] Initialization complete");
+        log::debug!("[DATA_FLOW_TRACER] Initialization complete");
         Ok(())
     }
 
@@ -3156,7 +3156,7 @@ impl DataFlowTracer {
         sink_line: usize,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> AnalysisResult {
-        println!("🔍 [DATA_FLOW_TRACER] Analyzing sink variable '{}' in {}::{}", 
+        log::debug!("[DATA_FLOW_TRACER] Analyzing sink variable '{}' in {}::{}", 
             sink_variable, sink_file, sink_function);
 
         // Step 1: Determine how this variable gets its value
@@ -3169,7 +3169,7 @@ impl DataFlowTracer {
 
         match variable_source {
             VariableSource::DirectTaintSource { pattern, line } => {
-                println!("✅ [DATA_FLOW_TRACER] Direct taint source found: {} at line {}", pattern, line);
+                log::debug!("[DATA_FLOW_TRACER] Direct taint source found: {} at line {}", pattern, line);
                 self.create_verified_flow(
                     sink_file, sink_function, &pattern, line,
                     sink_file, sink_function, sink_pattern, sink_line, sink_variable,
@@ -3178,7 +3178,7 @@ impl DataFlowTracer {
             }
             
             VariableSource::ImportedFunction { import_info } => {
-                println!("🔍 [DATA_FLOW_TRACER] Variable from imported function: {} from {}", 
+                log::debug!("[DATA_FLOW_TRACER] Variable from imported function: {} from {}", 
                     import_info.local_name, import_info.source_file);
                 self.trace_imported_function_taint(
                     import_info,
@@ -3188,7 +3188,7 @@ impl DataFlowTracer {
             }
             
             VariableSource::LocalAssignment { source_expression, line } => {
-                println!("🔍 [DATA_FLOW_TRACER] Variable from local assignment: '{}' at line {}", 
+                log::debug!("[DATA_FLOW_TRACER] Variable from local assignment: '{}' at line {}", 
                     source_expression, line);
                 self.trace_local_assignment_taint(
                     sink_file, sink_function, &source_expression, line,
@@ -3198,7 +3198,7 @@ impl DataFlowTracer {
             }
             
             VariableSource::FunctionParameter { parameter_index } => {
-                println!("🔍 [DATA_FLOW_TRACER] Variable from function parameter {}", parameter_index);
+                log::debug!("[DATA_FLOW_TRACER] Variable from function parameter {}", parameter_index);
                 AnalysisResult::Unknown { 
                     reason: format!("Function parameter {} - requires caller analysis", parameter_index) 
                 }
@@ -3265,7 +3265,7 @@ impl DataFlowTracer {
             },
         };
 
-        println!("✅ [DATA_FLOW_TRACER] Verified taint flow: {} -> {} via {:?}", 
+        log::debug!("[DATA_FLOW_TRACER] Verified taint flow: {} -> {} via {:?}", 
             source_pattern, sink_pattern, verified_flow.call_chain.len());
 
         self.verified_flows.push(verified_flow.clone());
@@ -3280,14 +3280,14 @@ impl DataFlowTracer {
         variable_name: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> VariableSource {
-        println!("🔍 [COMPUTE_VARIABLE_SOURCE] Analyzing variable '{}' in {}::{}", 
+        log::debug!("[COMPUTE_VARIABLE_SOURCE] Analyzing variable '{}' in {}::{}", 
             variable_name, file_path, function_name);
 
         // Read the source code as text and do simple string analysis
         let source_text = match std::fs::read_to_string(file_path) {
             Ok(content) => content,
             Err(_) => {
-                println!("❌ [COMPUTE_VARIABLE_SOURCE] Could not read file: {}", file_path);
+                log::debug!("[COMPUTE_VARIABLE_SOURCE] Could not read file: {}", file_path);
                 return VariableSource::FunctionParameter { parameter_index: 0 };
             }
         };
@@ -3298,11 +3298,11 @@ impl DataFlowTracer {
             let line = line.trim();
             if line.starts_with(&format!("{} =", variable_name)) {
                 let rhs = line.split('=').nth(1).unwrap_or("").trim();
-                println!("🔍 [COMPUTE_VARIABLE_SOURCE] Found assignment: {} = {}", variable_name, rhs);
+                log::debug!("[COMPUTE_VARIABLE_SOURCE] Found assignment: {} = {}", variable_name, rhs);
 
                 // Check if RHS is a direct taint source
                 if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(rhs) {
-                    println!("✅ [COMPUTE_VARIABLE_SOURCE] Direct taint source: '{}'", source_pattern);
+                    log::debug!("[COMPUTE_VARIABLE_SOURCE] Direct taint source: '{}'", source_pattern);
                     return VariableSource::DirectTaintSource { 
                         pattern: source_pattern, 
                         line: line_num + 1 
@@ -3312,7 +3312,7 @@ impl DataFlowTracer {
                 // Check if RHS is a function call
                 if rhs.contains('(') && rhs.contains(')') {
                     let function_name = rhs.split('(').next().unwrap_or("").trim();
-                    println!("✅ [COMPUTE_VARIABLE_SOURCE] Function call assignment: '{}'", function_name);
+                    log::debug!("[COMPUTE_VARIABLE_SOURCE] Function call assignment: '{}'", function_name);
                     return VariableSource::LocalAssignment { 
                         source_expression: rhs.to_string(), 
                         line: line_num + 1 
@@ -3320,7 +3320,7 @@ impl DataFlowTracer {
                 }
 
                 // Otherwise, it's a simple local assignment
-                println!("✅ [COMPUTE_VARIABLE_SOURCE] Local assignment: '{}'", rhs);
+                log::debug!("[COMPUTE_VARIABLE_SOURCE] Local assignment: '{}'", rhs);
                 return VariableSource::LocalAssignment { 
                     source_expression: rhs.to_string(), 
                     line: line_num + 1 
@@ -3339,7 +3339,7 @@ impl DataFlowTracer {
                         let params: Vec<&str> = params_only.split(',').map(|p| p.trim()).collect();
                         for (index, param) in params.iter().enumerate() {
                             if param == &variable_name {
-                                println!("✅ [COMPUTE_VARIABLE_SOURCE] Variable '{}' is function parameter at index {}", 
+                                log::debug!("[COMPUTE_VARIABLE_SOURCE] Variable '{}' is function parameter at index {}", 
                                     variable_name, index);
                                 return VariableSource::FunctionParameter { parameter_index: index };
                             }
@@ -3350,7 +3350,7 @@ impl DataFlowTracer {
         }
 
         // Default case - treat as parameter 0
-        println!("⚠️ [COMPUTE_VARIABLE_SOURCE] Variable '{}' source unknown, defaulting to parameter 0", variable_name);
+        log::debug!("[COMPUTE_VARIABLE_SOURCE] Variable '{}' source unknown, defaulting to parameter 0", variable_name);
         VariableSource::FunctionParameter { parameter_index: 0 }
     }
 
@@ -3366,13 +3366,13 @@ impl DataFlowTracer {
         sink_variable: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> AnalysisResult {
-        println!("🔍 [TRACE_IMPORTED] Tracing imported function '{}' from '{}'", 
+        log::debug!("[TRACE_IMPORTED] Tracing imported function '{}' from '{}'", 
             import_info.local_name, import_info.source_file);
 
         // Analyze the imported function in its source file
         match self.analyze_function_taint_behavior(&import_info.source_file, &import_info.source_function, rule_deduplicator) {
             AnalysisResult::DefinitelyTainted { flow } => {
-                println!("✅ [TRACE_IMPORTED] Function '{}' is tainted, creating cross-file flow", import_info.local_name);
+                log::debug!("[TRACE_IMPORTED] Function '{}' is tainted, creating cross-file flow", import_info.local_name);
                 
                 // Create a cross-file verified taint flow
                 let cross_file_flow = VerifiedTaintFlow {
@@ -3403,11 +3403,11 @@ impl DataFlowTracer {
                 AnalysisResult::DefinitelyTainted { flow: cross_file_flow }
             },
             AnalysisResult::DefinitelySafe => {
-                println!("✅ [TRACE_IMPORTED] Function '{}' is safe", import_info.local_name);
+                log::debug!("[TRACE_IMPORTED] Function '{}' is safe", import_info.local_name);
                 AnalysisResult::DefinitelySafe
             },
             AnalysisResult::Unknown { reason } => {
-                println!("⚠️ [TRACE_IMPORTED] Function '{}' analysis inconclusive: {}", import_info.local_name, reason);
+                log::debug!("[TRACE_IMPORTED] Function '{}' analysis inconclusive: {}", import_info.local_name, reason);
                 AnalysisResult::Unknown { reason }
             }
         }
@@ -3424,12 +3424,12 @@ impl DataFlowTracer {
         sink_variable: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> AnalysisResult {
-        println!("🔍 [TRACE_LOCAL] Analyzing local assignment: '{}' in {}::{}", 
+        log::debug!("[TRACE_LOCAL] Analyzing local assignment: '{}' in {}::{}", 
             source_expression, file_path, function_name);
 
         // Check if the source expression is a direct taint source
         if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(source_expression) {
-            println!("✅ [TRACE_LOCAL] Direct taint source found: '{}'", source_pattern);
+            log::debug!("[TRACE_LOCAL] Direct taint source found: '{}'", source_pattern);
             
             let flow = VerifiedTaintFlow {
                 source_file: file_path.to_string(),
@@ -3458,16 +3458,16 @@ impl DataFlowTracer {
         // Check if the source expression is a function call
         if source_expression.contains('(') && source_expression.contains(')') {
             let function_name = self.extract_function_name_from_call(source_expression);
-            println!("🔍 [TRACE_LOCAL] Source is function call: '{}'", function_name);
+            log::debug!("[TRACE_LOCAL] Source is function call: '{}'", function_name);
 
             // Find the source file for this function
             if let Some(source_file) = self.find_function_source_file(&function_name, file_path) {
-                println!("✅ [TRACE_LOCAL] Found function '{}' in '{}'", function_name, source_file);
+                log::debug!("[TRACE_LOCAL] Found function '{}' in '{}'", function_name, source_file);
                 
                 // Analyze the function to see if it returns tainted data
                 match self.analyze_function_taint_behavior(&source_file, &function_name, rule_deduplicator) {
                     AnalysisResult::DefinitelyTainted { flow } => {
-                        println!("✅ [TRACE_LOCAL] Function '{}' returns tainted data, creating cross-file flow", function_name);
+                        log::debug!("[TRACE_LOCAL] Function '{}' returns tainted data, creating cross-file flow", function_name);
                         
                         // Create a cross-file taint flow from the original source to the current sink
                         let cross_file_flow = VerifiedTaintFlow {
@@ -3504,24 +3504,24 @@ impl DataFlowTracer {
                     other_result => return other_result,
                 }
             } else {
-                println!("⚠️ [TRACE_LOCAL] Could not find source file for function '{}'", function_name);
+                log::debug!("[TRACE_LOCAL] Could not find source file for function '{}'", function_name);
             }
         }
 
         // Check if the source expression references other variables that might be tainted
         // For now, we'll check simple cases like string literals (which are safe)
         if source_expression.starts_with('"') && source_expression.ends_with('"') {
-            println!("✅ [TRACE_LOCAL] String literal assignment - safe");
+            log::debug!("[TRACE_LOCAL] String literal assignment - safe");
             return AnalysisResult::DefinitelySafe;
         }
 
         // If it's an f-string or complex expression, we need more analysis
         if source_expression.starts_with("f\"") || source_expression.contains('{') {
-            println!("🔍 [TRACE_LOCAL] Complex expression - requires variable dependency analysis");
+            log::debug!("[TRACE_LOCAL] Complex expression - requires variable dependency analysis");
             // TODO: Implement variable dependency tracking for complex expressions
         }
 
-        println!("⚠️ [TRACE_LOCAL] Could not determine taint status of assignment");
+        log::debug!("[TRACE_LOCAL] Could not determine taint status of assignment");
         AnalysisResult::Unknown { 
             reason: format!("Complex assignment analysis not implemented: \"{}\"", source_expression) 
         }
@@ -3538,7 +3538,7 @@ impl DataFlowTracer {
 
     /// Find which file contains the definition of an imported function
     fn find_function_source_file(&self, function_name: &str, calling_file: &str) -> Option<String> {
-        println!("🔍 [FIND_SOURCE_FILE] Looking for function \"{}\" imported by \"{}\"", function_name, calling_file);
+        log::debug!("[FIND_SOURCE_FILE] Looking for function \"{}\" imported by \"{}\"", function_name, calling_file);
 
         let calling_dir = std::path::Path::new(calling_file).parent()
             .and_then(|p| p.to_str())
@@ -3549,7 +3549,7 @@ impl DataFlowTracer {
             "get_database_config" | "get_user_args" | "get_safe_module_data" => {
                 let module_a_path = format!("{}/module_a.py", calling_dir);
                 if std::path::Path::new(&module_a_path).exists() {
-                    println!("✅ [FIND_SOURCE_FILE] Found \"{}\" in module_a.py", function_name);
+                    log::debug!("[FIND_SOURCE_FILE] Found \"{}\" in module_a.py", function_name);
                     return Some(module_a_path);
                 }
             },
@@ -3558,7 +3558,7 @@ impl DataFlowTracer {
                  || name == "complex_processing_chain" || name == "use_class_instance" => {
                 let module_b_path = format!("{}/module_b.py", calling_dir);
                 if std::path::Path::new(&module_b_path).exists() {
-                    println!("✅ [FIND_SOURCE_FILE] Found \"{}\" in module_b.py", function_name);
+                    log::debug!("[FIND_SOURCE_FILE] Found \"{}\" in module_b.py", function_name);
                     return Some(module_b_path);
                 }
             },
@@ -3570,7 +3570,7 @@ impl DataFlowTracer {
                                                     if file_name.ends_with(".py") && file_name != std::path::Path::new(calling_file).file_name().unwrap_or_default() {
                             let candidate_path = format!("{}/{}", calling_dir, file_name);
                             if self.file_contains_function(&candidate_path, function_name) {
-                                println!("✅ [FIND_SOURCE_FILE] Found \"{}\" in \"{}\"", function_name, candidate_path);
+                                log::debug!("[FIND_SOURCE_FILE] Found \"{}\" in \"{}\"", function_name, candidate_path);
                                 return Some(candidate_path);
                             }
                         }
@@ -3580,7 +3580,7 @@ impl DataFlowTracer {
             }
         }
 
-        println!("❌ [FIND_SOURCE_FILE] Could not find source file for function \"{}\"", function_name);
+        log::debug!("[FIND_SOURCE_FILE] Could not find source file for function \"{}\"", function_name);
         None
     }
 
@@ -3601,12 +3601,12 @@ impl DataFlowTracer {
         function_name: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> AnalysisResult {
-        println!("🔍 [ANALYZE_FUNCTION] Analyzing function \"{}\" in \"{}\"", function_name, file_path);
+        log::debug!("[ANALYZE_FUNCTION] Analyzing function \"{}\" in \"{}\"", function_name, file_path);
 
         let source_text = match std::fs::read_to_string(file_path) {
             Ok(content) => content,
             Err(_) => {
-                println!("❌ [ANALYZE_FUNCTION] Could not read file: {}", file_path);
+                log::debug!("[ANALYZE_FUNCTION] Could not read file: {}", file_path);
                 return AnalysisResult::Unknown { 
                     reason: format!("Could not read source file: {}", file_path) 
                 };
@@ -3614,18 +3614,18 @@ impl DataFlowTracer {
         };
 
         if let Some(function_body) = self.extract_function_body(&source_text, function_name) {
-            println!("🔍 [ANALYZE_FUNCTION] Function body found, analyzing...");
+            log::debug!("[ANALYZE_FUNCTION] Function body found, analyzing...");
 
             for (line_num, line) in function_body.lines().enumerate() {
                 let line = line.trim();
                 
                 if line.starts_with("return ") {
                     let return_expr = line.strip_prefix("return ").unwrap_or("").trim();
-                    println!("🔍 [ANALYZE_FUNCTION] Found return statement: \"{}\"", return_expr);
+                    log::debug!("[ANALYZE_FUNCTION] Found return statement: \"{}\"", return_expr);
 
                     // Check if return expression is a direct taint source
                     if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(return_expr) {
-                        println!("✅ [ANALYZE_FUNCTION] Function returns direct taint source: \"{}\"", source_pattern);
+                        log::debug!("[ANALYZE_FUNCTION] Function returns direct taint source: \"{}\"", source_pattern);
                         
                         let flow = VerifiedTaintFlow {
                             source_file: file_path.to_string(),
@@ -3649,7 +3649,7 @@ impl DataFlowTracer {
 
                     // Check if return expression is another function call
                     if return_expr.contains('(') && return_expr.contains(')') {
-                        println!("🔍 [ANALYZE_FUNCTION] Return calls another function: \"{}\"", return_expr);
+                        log::debug!("[ANALYZE_FUNCTION] Return calls another function: \"{}\"", return_expr);
                         
                         let nested_result = self.trace_local_assignment_taint(
                             file_path, function_name, return_expr, line_num + 1,
@@ -3659,22 +3659,22 @@ impl DataFlowTracer {
                         
                         match nested_result {
                             AnalysisResult::DefinitelyTainted { flow } => {
-                                println!("✅ [ANALYZE_FUNCTION] Nested function is tainted, propagating taint");
+                                log::debug!("[ANALYZE_FUNCTION] Nested function is tainted, propagating taint");
                                 return AnalysisResult::DefinitelyTainted { flow };
                             },
                             _ => {
-                                println!("📝 [ANALYZE_FUNCTION] Nested function analysis inconclusive");
+                                log::debug!("[ANALYZE_FUNCTION] Nested function analysis inconclusive");
                             }
                         }
                     }
                 }
             }
 
-            println!("✅ [ANALYZE_FUNCTION] Function appears to be safe (no taint sources found)");
+            log::debug!("[ANALYZE_FUNCTION] Function appears to be safe (no taint sources found)");
             return AnalysisResult::DefinitelySafe;
         }
 
-        println!("⚠️ [ANALYZE_FUNCTION] Could not find function body for \"{}\"", function_name);
+        log::debug!("[ANALYZE_FUNCTION] Could not find function body for \"{}\"", function_name);
         AnalysisResult::Unknown { 
             reason: format!("Could not find function body for \"{}\"", function_name) 
         }
@@ -3687,11 +3687,11 @@ impl DataFlowTracer {
         let mut function_lines = Vec::new();
         let mut base_indent = None;
 
-        println!("🔍 [EXTRACT_FUNCTION_BODY] Looking for function: {}", function_name);
+        log::debug!("[EXTRACT_FUNCTION_BODY] Looking for function: {}", function_name);
 
         for (line_num, line) in lines.iter().enumerate() {
             if line.trim().starts_with(&format!("def {}(", function_name)) {
-                println!("✅ [EXTRACT_FUNCTION_BODY] Found function definition at line {}: {}", line_num + 1, line.trim());
+                log::debug!("[EXTRACT_FUNCTION_BODY] Found function definition at line {}: {}", line_num + 1, line.trim());
                 in_function = true;
                 continue;
             } else if in_function {
@@ -3699,31 +3699,31 @@ impl DataFlowTracer {
                 if base_indent.is_none() && !line.trim().is_empty() {
                     let indent = line.len() - line.trim_start().len();
                     base_indent = Some(indent);
-                    println!("🔍 [EXTRACT_FUNCTION_BODY] Base indentation set to: {}", indent);
+                    log::debug!("[EXTRACT_FUNCTION_BODY] Base indentation set to: {}", indent);
                 }
 
                 // Check if we've reached the end of the function
                 if let Some(indent) = base_indent {
                     // Function ends when we hit a non-empty line with indentation LESS than base
                     if !line.trim().is_empty() && (line.len() - line.trim_start().len()) < indent {
-                        println!("🔍 [EXTRACT_FUNCTION_BODY] Function ended at line {}: {}", line_num + 1, line.trim());
+                        log::debug!("[EXTRACT_FUNCTION_BODY] Function ended at line {}: {}", line_num + 1, line.trim());
                         break;
                     }
                 }
 
                 // Add line to function body (including empty lines)
                 function_lines.push(*line);
-                println!("📝 [EXTRACT_FUNCTION_BODY] Added line {}: '{}'", line_num + 1, line);
+                log::debug!("[EXTRACT_FUNCTION_BODY] Added line {}: '{}'", line_num + 1, line);
             }
         }
 
         if function_lines.is_empty() {
-            println!("❌ [EXTRACT_FUNCTION_BODY] No function body found for: {}", function_name);
+            log::debug!("[EXTRACT_FUNCTION_BODY] No function body found for: {}", function_name);
             None
         } else {
             let body = function_lines.join("\n");
-            println!("✅ [EXTRACT_FUNCTION_BODY] Extracted {} lines for function: {}", function_lines.len(), function_name);
-            println!("📋 [EXTRACT_FUNCTION_BODY] Function body:\n{}", body);
+            log::debug!("[EXTRACT_FUNCTION_BODY] Extracted {} lines for function: {}", function_lines.len(), function_name);
+            log::debug!("[EXTRACT_FUNCTION_BODY] Function body:\n{}", body);
             Some(body)
         }
     }
