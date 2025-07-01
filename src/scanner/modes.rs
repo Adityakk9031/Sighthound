@@ -271,14 +271,16 @@ pub fn run_taint_analysis(cli: &Cli) -> Result<Vec<Finding>> {
     // Use the unified VulnerabilityScanner infrastructure for massive speedup!
     // This reuses ALL existing optimizations: parallel processing, prefiltering, 
     // memory mapping, thread-local parsers, progress tracking, etc.
+    // Respect CLI language parameter for proper prefiltering (especially minified file skipping)
+    let language = cli.language.as_deref().unwrap_or("");
     let scanner = VulnerabilityScanner::with_skip_minified(
-        "", // Language will be auto-detected per file
+        language,
         rules, 
         context.skip_minified
     )?;
     
     // Use unified scanner that processes both search and taint rules efficiently
-    let all_findings = scanner.find_vulnerabilities_unified(&cli.root_dir, "", true)?;
+    let all_findings = scanner.find_vulnerabilities_unified(&cli.root_dir, language, true)?;
         
     // Filter to only taint analysis findings 
     let taint_findings: Vec<Finding> = all_findings.into_iter()
