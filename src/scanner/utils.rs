@@ -333,19 +333,22 @@ impl AstUtils {
     /// Domain-specific sanitization pattern checking
     pub fn check_for_sanitization(code: &str, language: &str) -> bool {
         match language {
-            "javascript" | "typescript" => Self::check_javascript_sanitization(code),
+            "javascript" | "typescript" => Self::check_html_sanitization(code),
             "python" => Self::check_python_sanitization(code),
             "java" => Self::check_java_sanitization(code),
             _ => Self::check_generic_sanitization(code),
         }
     }
 
-    fn check_javascript_sanitization(code: &str) -> bool {
-        let js_sanitizers = [
-            "DOMPurify.sanitize", "sanitize(", ".textContent", ".innerText",
-            "encodeURIComponent", "encodeURI", "escape(", "validator.escape", "xss(",
+    fn check_html_sanitization(code: &str) -> bool {
+        let html_sanitizers = [
+            "DOMPurify.sanitize(",
+            "validator.escape(",
+            "xss(",
+            "escapeHtml(",
+            "encodeHTML(",
         ];
-        js_sanitizers.iter().any(|pattern| code.contains(pattern))
+        html_sanitizers.iter().any(|pat| code.contains(pat))
     }
 
     fn check_python_sanitization(code: &str) -> bool {

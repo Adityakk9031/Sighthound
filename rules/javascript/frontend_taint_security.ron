@@ -82,8 +82,6 @@
                 // HTML encoding
                 "encodeHTML",
                 "escapeHTML", 
-                "*.textContent",
-                "document.createTextNode",
                 
                 // Validation
                 "DOMPurify.sanitize",
@@ -91,10 +89,6 @@
                 "sanitize(",
                 "validate(",
                 "clean(",
-                
-                // Safe DOM methods
-                "document.createElement",
-                "document.createTextNode"
             ]),
             
             finding_type: Some("DOM-based XSS"),
@@ -179,10 +173,7 @@
                 "validator.escape",
                 "encodeHTML",
                 "escapeHTML",
-                "sanitizeHTML",
-                "*.textContent",
-                "document.createTextNode",
-                "encodeURIComponent"
+                "sanitizeHTML"
             ]),
             
             finding_type: Some("Cross-Site Scripting"),

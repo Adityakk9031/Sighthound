@@ -195,7 +195,10 @@ pub fn run_auto_detection_scan(cli: &Cli) -> Result<Vec<Finding>> {
     
     // Process languages sequentially to avoid nested parallelism deadlocks
     for (language, files) in lang_jobs {
-        let rules_dir = format!("rules/{}", language);
+        let rules_dir = match language.as_str() {
+            "tsx" => "rules/javascript".to_string(),
+            _ => format!("rules/{}", language),
+        };
         match Rules::load_from_directory(&rules_dir) {
             Ok(rules) => {
                 let rule_count = ScanningLogic::count_total_rules(&rules);

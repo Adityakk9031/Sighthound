@@ -471,10 +471,6 @@ impl ScanningLogic {
         }
     }
 
-
-
-
-
     // Public utility methods for rule access
     pub fn has_matching_rules(rules: &crate::rules::Rules, func_name: &str) -> bool {
         rules.get_search_rules().iter().any(|rule| crate::rules::rule_matches_pattern_unified(rule, func_name))
@@ -634,7 +630,6 @@ impl ScanningLogic {
             // Check if this node matches any sink pattern
             if let Some(sink_pattern) = rule_deduplicator.matches_sink_pattern(&node_text) {
                 log::debug!("[SINK_ANALYSIS] Found sink '{}' with pattern '{}' at line {}", node_text, sink_pattern, line);
-                
                 // Extract ALL variables used in this sink (enhanced extraction)
                 let used_variables = CommonUtils::extract_all_variables(&node_text);
                 log::debug!("[SINK_ANALYSIS] Extracted variables from sink: {:?}", used_variables);
