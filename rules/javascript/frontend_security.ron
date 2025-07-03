@@ -94,7 +94,17 @@
             category: Some("prototype-pollution"),
             mode: "search",
             patterns: Some([
-                "*.__proto__*=*", "*['__proto__']*=*", "*[\"__proto__\"]*=*"
+                // Much more specific patterns to avoid false positives
+                ".__proto__=",
+                "['__proto__']=",
+                "[\"__proto__\"]=",
+                ".__proto__ =",
+                "['__proto__'] =",
+                "[\"__proto__\"] =",
+                // Constructor pollution
+                ".constructor.prototype",
+                // Object.prototype pollution  
+                "Object.prototype"
             ]),
             finding_type: Some("Prototype Pollution"),
             severity: Some("High"),

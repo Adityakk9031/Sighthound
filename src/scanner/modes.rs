@@ -118,7 +118,7 @@ pub fn run_explicit_scan(cli: &Cli) -> Result<Vec<Finding>> {
     
     let rules = Rules::load_from_path(rules_path)?;
     let total_rules = ScanningLogic::count_total_rules(&rules);
-    
+    println!("🔢 Total number of rules: {}", total_rules);
     // Configure minified file skipping
     let skip_minified = cli.skip_minified.unwrap_or(true);
     let scanner = VulnerabilityScanner::with_skip_minified(
@@ -153,7 +153,18 @@ pub fn run_explicit_scan(cli: &Cli) -> Result<Vec<Finding>> {
     println!("🔍 Running scan with {} rules", total_rules);
     println!();
 
-    scanner.find_vulnerabilities_parallel(&cli.root_dir, language, true)
+    // Use the new filtering method if filters are specified
+    if cli.code_type.is_some() || cli.language_filter.is_some() {
+        scanner.find_vulnerabilities_unified_with_filters(
+            &cli.root_dir, 
+            language, 
+            true,
+            cli.code_type.as_deref(),
+            cli.language_filter.as_deref()
+        )
+    } else {
+        scanner.find_vulnerabilities_parallel(&cli.root_dir, language, true)
+    }
 }
 
 /// Run auto-detection scan mode (automatically detect languages and load rules)
@@ -214,7 +225,19 @@ pub fn run_auto_detection_scan(cli: &Cli) -> Result<Vec<Finding>> {
                     context.skip_minified
                 ).expect("scanner");
                 
-                match scanner.find_vulnerabilities_parallel(&cli.root_dir, &language, false) {
+                let findings_result = if cli.code_type.is_some() || cli.language_filter.is_some() {
+                    scanner.find_vulnerabilities_unified_with_filters(
+                        &cli.root_dir, 
+                        &language, 
+                        false,
+                        cli.code_type.as_deref(),
+                        cli.language_filter.as_deref()
+                    )
+                } else {
+                    scanner.find_vulnerabilities_parallel(&cli.root_dir, &language, false)
+                };
+                
+                match findings_result {
                     Ok(fnds) => {
                         processed_files.fetch_add(files.len(), Ordering::Relaxed);
                         if !fnds.is_empty() {
@@ -263,14 +286,12 @@ pub fn run_taint_analysis(cli: &Cli) -> Result<Vec<Finding>> {
     if taint_rules_count == 0 {
         return Err(anyhow::anyhow!("No taint flow rules found. Please ensure your rules contain rules with mode='taint'."));
     }
-    
     println!("🔍 Starting Optimized Taint Analysis Mode");
     println!("📂 Target directory: {}", cli.root_dir);
     println!("🔧 Loaded {} taint flow rules", taint_rules_count);
     println!("📁 Total files to analyze: {}", context.total_files);
     println!("⚡ Using parallel processing for maximum performance");
     println!();
-    
     // Use the unified VulnerabilityScanner infrastructure for massive speedup!
     // This reuses ALL existing optimizations: parallel processing, prefiltering, 
     // memory mapping, thread-local parsers, progress tracking, etc.
@@ -282,8 +303,17 @@ pub fn run_taint_analysis(cli: &Cli) -> Result<Vec<Finding>> {
         context.skip_minified
     )?;
     
-    // Use unified scanner that processes both search and taint rules efficiently
-    let all_findings = scanner.find_vulnerabilities_unified(&cli.root_dir, language, true)?;
+    let all_findings = if cli.code_type.is_some() || cli.language_filter.is_some() {
+        scanner.find_vulnerabilities_unified_with_filters(
+            &cli.root_dir, 
+            language, 
+            true,
+            cli.code_type.as_deref(),
+            cli.language_filter.as_deref()
+        )?
+    } else {
+        scanner.find_vulnerabilities_unified(&cli.root_dir, language, true)?
+    };
         
     // Filter to only taint analysis findings 
     let taint_findings: Vec<Finding> = all_findings.into_iter()

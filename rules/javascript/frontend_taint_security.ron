@@ -900,19 +900,19 @@
             ]),
             
             sinks: Some([
-                // Regex operations
+                // Regex operations 
                 "new RegExp(",
                 "RegExp(",
-                "*.match(",
-                "*.replace(",
-                "*.search(",
-                "*.split(",
+                "*.match(*",  // Only match when there's an argument
+                "*.replace(*",  // Only match when there's an argument
+                "*.search(*",  // Only match when there's an argument
+                "*.split(*",  // Only match when there's an argument
                 "*.test(",
                 "*.exec(",
                 
-                // String methods that use regex
-                "*.matchAll(",
-                "*.replaceAll("
+                // String methods that use regex - made more specific
+                "*.matchAll(*",
+                "*.replaceAll(*"
             ]),
             
             sanitizers: Some([

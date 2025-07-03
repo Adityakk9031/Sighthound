@@ -581,7 +581,6 @@ impl ScanningLogic {
                         // Check if the assignment value matches any taint source
                         if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(assignment_value) {
                             log::debug!("[ASSIGNMENT_ANALYSIS] Assignment value '{}' matches source pattern '{}'", assignment_value, source_pattern);
-                            
                                                     flow_tracker.record_tainted_variable(
                             var_name,
                             TaintVariableInfo {
@@ -830,6 +829,7 @@ impl ScanningLogic {
         _tree: &tree_sitter::Tree,
         _source_bytes: &[u8],
     ) -> crate::models::Finding {
+
         crate::models::Finding {
             file: sink.file.clone(),
             line: sink.line,
@@ -1054,6 +1054,18 @@ impl VulnerabilityScanner {
     }
 
     pub fn find_vulnerabilities_unified(&self, root_dir: &str, language_name: &str, show_progress: bool) -> Result<Vec<Finding>> {
+        self.find_vulnerabilities_unified_with_filters(root_dir, language_name, show_progress, None, None)
+    }
+
+    pub fn find_vulnerabilities_unified_with_filters(
+        &self, 
+        root_dir: &str, 
+        language_name: &str, 
+        show_progress: bool,
+        code_type_filter: Option<&str>,
+        language_filter: Option<&str>
+    ) -> Result<Vec<Finding>> {
+        println!("running find_vulnerabilities_unified");
         let files_by_language = if self.language.is_empty() {
             crate::scanner::utils::discover_files_by_language(root_dir, true)?
         } else {
@@ -1084,10 +1096,48 @@ impl VulnerabilityScanner {
         let prefilter = crate::scanner::prefilter::PreFilter::with_options(
             &self.rules, language_name, self.skip_minified, Vec::new()
         );
-        let (filtered_files, filter_stats) = prefilter.filter_files(all_files);
+        let (mut filtered_files, filter_stats) = prefilter.filter_files(all_files);
 
         if show_progress {
             println!("{}", filter_stats);
+        }
+
+        // Apply additional filters if specified
+        if code_type_filter.is_some() || language_filter.is_some() {
+            let code_type_detector = crate::code_type_detector::CodeTypeDetector::new();
+            let target_code_type = code_type_filter.and_then(|ct| crate::code_type_detector::CodeType::from_string(ct));
+            let original_count = filtered_files.len();
+            
+            filtered_files = filtered_files.into_iter().filter(|path| {
+                let path_str = path.to_string_lossy();
+                
+                // Language filter
+                if let Some(lang_filter) = language_filter {
+                    if let Some(detected_lang) = crate::scanner::utils::detect_language_from_path(path) {
+                        if !detected_lang.to_lowercase().contains(&lang_filter.to_lowercase()) {
+                            return false;
+                        }
+                    }
+                }
+                
+                // Code type filter
+                if let Some(target_type) = &target_code_type {
+                    if let Ok(content) = std::fs::read_to_string(path) {
+                        if let Some(detected_lang) = crate::scanner::utils::detect_language_from_path(path) {
+                            let detected_type = code_type_detector.detect_code_type(&path_str, &content, &detected_lang);
+                            if !detected_type.matches_filter(target_type) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                
+                true
+            }).collect();
+            
+            if show_progress && filtered_files.len() != original_count {
+                println!("Additional filtering reduced files from {} to {}", original_count, filtered_files.len());
+            }
         }
 
         if filtered_files.is_empty() {
@@ -1102,14 +1152,12 @@ impl VulnerabilityScanner {
 
         let has_search_rules = !search_rules.is_empty();
         let has_taint_rules = !taint_rules.is_empty();
-
         if !has_search_rules && !has_taint_rules {
             if show_progress {
                 println!("No applicable rules found");
             }
             return Ok(Vec::new());
         }
-
         let mut progress_manager = if show_progress {
             Some(ProgressManager::new(filtered_files.len()))
         } else {
@@ -1143,11 +1191,11 @@ impl VulnerabilityScanner {
                                             let tree = parser.parse(source)?;
 
                                             let mut file_findings = Vec::new();
-
-                                            // Search mode findings (existing functionality)
+                                            // Enhanced search mode with taint context (ALWAYS enabled for search rules)
                                             if has_search_rules {
-                                                file_findings.extend(ScanningLogic::scan_file_with_rules(
-                                                    &filepath_str, source, &tree, &search_rules, parser.language_support()
+                                                // Use enhanced search mode that leverages taint context
+                                                file_findings.extend(ScanningLogic::scan_file_with_rules_and_taint_context(
+                                                    &filepath_str, source, &tree, &search_rules, &taint_rules, parser.language_support()
                                                 ));
                                             }
 
@@ -1238,6 +1286,222 @@ impl VulnerabilityScanner {
         }
 
         Ok(all_findings)
+    }
+}
+
+// ============================================================================
+// OUTPUT & REPORTING - Progress tracking and result formatting
+// ============================================================================
+
+impl ScanningLogic {
+    /// Enhanced search mode that leverages taint context for sophisticated analysis
+    /// This function allows search mode rules to benefit from the same contextual analysis as taint mode
+    pub fn scan_file_with_rules_and_taint_context(
+        filepath: &str,
+        source: &[u8],
+        tree: &tree_sitter::Tree,
+        search_rules: &[&crate::rules::UnifiedRule],
+        taint_rules: &[&crate::rules::UnifiedRule],
+        language_support: &dyn crate::language::LanguageSupport,
+    ) -> Vec<crate::models::Finding> {
+        let mut findings = Vec::new();
+        let mut processed_lines = std::collections::HashSet::new();
+
+        // Create taint rule deduplicator to leverage taint context
+        let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
+
+        // Create variable flow tracker for sophisticated analysis
+        let mut flow_tracker = VariableFlowTracker::new();
+
+        // Use broader traversal to include assignment statements (like taint mode)
+        let mut all_nodes = Vec::new();
+        Self::collect_all_relevant_nodes(tree.root_node(), &mut all_nodes, None);
+
+        // Phase 1: Build taint context by tracking variable assignments from taint sources (only if taint rules exist)
+        let has_taint_rules = !taint_rules.is_empty();
+        
+        if has_taint_rules {
+            for node in all_nodes.iter() {
+                let node_text = crate::parser::get_node_text(node, source);
+                let line = node.start_position().row + 1;
+                let func_name = crate::scanner::utils::AstUtils::get_function_context(node, source);
+
+                // Look for assignment patterns: var = source_call()
+                if CommonUtils::is_valid_assignment_text(&node_text) {
+                    if let Some(var_name) = CommonUtils::extract_variable_from_assignment(&node_text, false) {
+                        // Extract the right side of assignment for source matching
+                        if let Some(eq_pos) = node_text.find('=') {
+                            let assignment_value = &node_text[eq_pos + 1..].trim();
+                            
+                            // Check if the assignment value matches any taint source
+                            if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(assignment_value) {
+                                flow_tracker.record_tainted_variable(
+                                    var_name,
+                                    TaintVariableInfo {
+                                        source_line: line,
+                                        source_pattern,
+                                        source_function: func_name.clone(),
+                                        assignment_code: node_text.clone(),
+                                    }
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Check for taint propagation through operations
+                if let Some((target_var, dependent_vars)) = ScanningLogic::detect_taint_propagation(&node_text) {
+                    flow_tracker.record_taint_propagation(&target_var, &dependent_vars);
+                    
+                    // Check if any dependent variables are tainted and propagate to target
+                    for dep_var in &dependent_vars {
+                        if let Some(taint_info) = flow_tracker.is_variable_tainted(dep_var, &func_name).cloned() {
+                            // Mark target variable as tainted (inheriting from the dependent variable)
+                            flow_tracker.record_tainted_variable(target_var.to_string(), TaintVariableInfo {
+                                source_line: taint_info.source_line,
+                                source_pattern: taint_info.source_pattern.clone(),
+                                source_function: taint_info.source_function.clone(),
+                                assignment_code: format!("Propagated from {} via: {}", dep_var, node_text),
+                            });
+                            break; // Only need one tainted dependency to taint the target
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 2: Apply search rules with enhanced context awareness
+        let call_nodes: Vec<tree_sitter::Node> = crate::parser::traverse_calls_only(tree.root_node(), language_support).collect();
+
+        for node in call_nodes.iter() {
+            if let Some(func_name) = language_support.get_function_name(node, source) {
+                let relevant_rules: Vec<(usize, &crate::rules::UnifiedRule)> = search_rules.iter().enumerate()
+                    .filter(|(_, rule)| ScanningLogic::rule_might_match_function(*rule, &func_name))
+                    .map(|(idx, rule)| (idx, *rule))
+                    .collect();
+
+                for (_, rule) in relevant_rules {
+                    // Enhanced rule checking with taint context
+                    if let Some(mut finding) = ScanningLogic::check_rule_against_node_with_taint_context(
+                        rule,
+                        node,
+                        source,
+                        filepath,
+                        &func_name,
+                        language_support,
+                        &flow_tracker,
+                        &rule_deduplicator,
+                    ) {
+                        let line_key = (finding.line, finding.function.clone(), finding.finding_type.clone());
+                        if !processed_lines.contains(&line_key) {
+                            processed_lines.insert(line_key);
+                            
+                            // Add taint context tags to distinguish from basic search findings
+                            if finding.tags.is_none() {
+                                finding.tags = Some(Vec::new());
+                            }
+                            if let Some(ref mut tags) = finding.tags {
+                                tags.push("enhanced_search".to_string());
+                                if has_taint_rules {
+                                    tags.push("taint_context_available".to_string());
+                                } else {
+                                    tags.push("taint_context_unavailable".to_string());
+                                }
+                            }
+                            
+                            findings.push(finding);
+                        }
+                    }
+                }
+            }
+        }
+
+        findings
+    }
+
+    /// Enhanced rule checking that leverages taint context for more accurate analysis
+    fn check_rule_against_node_with_taint_context(
+        rule: &crate::rules::UnifiedRule,
+        node: &tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        func_name: &str,
+        language_support: &dyn crate::language::LanguageSupport,
+        flow_tracker: &VariableFlowTracker,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<crate::models::Finding> {
+        let node_text = crate::parser::get_node_text(node, source);
+        
+        // First check if the rule pattern matches
+        let pattern_matches = if let Some(patterns) = &rule.patterns {
+            patterns.iter().any(|pattern| CommonUtils::matches_rule_pattern(pattern, &node_text))
+        } else if let Some(pattern) = &rule.pattern {
+            CommonUtils::matches_rule_pattern(pattern, &node_text)
+        } else {
+            false
+        };
+
+        if !pattern_matches {
+            return None;
+        }
+
+        // Extract variables used in this node
+        let used_variables = CommonUtils::extract_all_variables(&node_text);
+        let line = node.start_position().row + 1;
+        let function_context = crate::scanner::utils::AstUtils::get_function_context(node, source);
+
+        // Check if any used variables are tainted (enhanced context)
+        let mut taint_context_info = None;
+        for var in &used_variables {
+            if let Some(taint_info) = flow_tracker.is_variable_tainted(var, &function_context) {
+                taint_context_info = Some((var.clone(), taint_info));
+                break;
+            }
+        }
+
+        // Create enhanced finding with taint context
+        let mut finding = crate::models::Finding {
+            file: filepath.to_string(),
+            line,
+            column: node.start_position().column,
+            end_line: node.end_position().row + 1,
+            end_column: node.end_position().column,
+            function: func_name.to_string(),
+            finding_type: rule.get_finding_type().to_string(),
+            snippet: node_text.clone(),
+            severity: rule.get_severity().to_string(),
+            confidence: rule.get_confidence().to_string(),
+            description: rule.description.clone(),
+            source_info: None,
+            sink_info: None,
+            traces: None,
+            tags: rule.tags.clone(),
+        };
+
+        // Add enhanced source and sink information if taint context is available
+        if let Some((tainted_var, taint_info)) = taint_context_info {
+            finding.source_info = Some(crate::models::SourceInfo {
+                source_type: format!("{} (Taint Context)", taint_info.source_pattern),
+                location: format!("Line {} ({})", taint_info.source_line, taint_info.source_function),
+                context: taint_info.assignment_code.clone(),
+            });
+
+            finding.sink_info = Some(crate::models::SinkInfo {
+                sink_type: rule.get_finding_type().to_string(),
+                function_name: func_name.to_string(),
+                location: format!("Line {}", line),
+                variable: Some(tainted_var),
+            });
+
+            // Increase confidence when we have taint context
+            finding.confidence = "High".to_string();
+        } else {
+            // Regular source/sink detection for non-taint context
+            finding.source_info = ScanningLogic::detect_source_pattern(node, source, language_support);
+            finding.sink_info = ScanningLogic::detect_sink_pattern(node, source, func_name, &rule.get_finding_type());
+        }
+
+        Some(finding)
     }
 }
 

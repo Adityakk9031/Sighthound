@@ -321,6 +321,14 @@ pub struct Cli {
     /// Skip minified JavaScript files (default: true)
     #[arg(long, help = "Skip minified JavaScript files during scanning")]
     pub skip_minified: Option<bool>,
+
+    /// Filter by code type (frontend, backend, or both)
+    #[arg(long, help = "Filter by code type: frontend, backend, or both (default: both)")]
+    pub code_type: Option<String>,
+
+    /// Filter by programming language
+    #[arg(long, help = "Filter by programming language: javascript, typescript, python, java, etc.")]
+    pub language_filter: Option<String>,
 }
 
 // Helper function for default search mode

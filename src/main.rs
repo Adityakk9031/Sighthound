@@ -9,16 +9,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logger (respect RUST_LOG or --verbose flag)
-    if cli.verbose {
-        env_logger::Builder::from_default_env()
-            .filter_level(LevelFilter::Debug)
-            .init();
-    } else {
-        let _ = env_logger::Builder::from_default_env()
-            .filter_level(LevelFilter::Info)
-            .try_init();
-    }
-
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(if cli.verbose { "debug" } else { "info" }))
+        .init();
     // Configure threading if specified
     if let Some(threads) = cli.threads {
         rayon::ThreadPoolBuilder::new()

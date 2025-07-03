@@ -25,7 +25,7 @@
             )),
             tags: Some(["sql", "dangerous", "injection", "keywords"])
         ),
-        
+
         // === COMPREHENSIVE TAINT RULE (General SQL injection data flows) ===
         (
             id: Some("python-sql-injection-comprehensive-taint"),
@@ -52,7 +52,6 @@
             )),
             tags: Some(["sql", "injection", "taint", "database", "critical", "data-flow"])
         ),
-        
 
     ]
 )
