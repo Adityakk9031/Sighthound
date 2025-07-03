@@ -286,6 +286,15 @@ impl CommonUtils {
             return expr.split('[').next().map(|s| s.trim().to_string());
         }
 
+        // Handle JavaScript declarations: const/let/var variable_name
+        let tokens: Vec<&str> = expr.split_whitespace().collect();
+        if tokens.len() >= 2 && matches!(tokens[0], "const" | "let" | "var") {
+            // Return the variable name after the declaration keyword
+            if Self::is_valid_variable_name(tokens[1]) {
+                return Some(tokens[1].to_string());
+            }
+        }
+
         // Extract final identifier from whitespace-separated expression
         expr.split_whitespace()
             .last()

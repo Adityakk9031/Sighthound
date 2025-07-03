@@ -93,7 +93,10 @@ fn load_rules(cli: &Cli, context: &ScanContext) -> Result<Rules> {
             let mut all_rules = Vec::new();
             
             for language in &context.detected_languages {
-                let rules_dir = format!("rules/{}", language);
+                let rules_dir = match language.as_str() {
+                    "tsx" => "rules/javascript".to_string(),
+                    _ => format!("rules/{}", language),
+                };
                 if let Ok(rules) = Rules::load_from_directory(&rules_dir) {
                     all_rules.push(rules);
                 }

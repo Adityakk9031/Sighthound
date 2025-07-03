@@ -764,7 +764,8 @@ impl ScanningLogic {
     fn collect_all_relevant_nodes<'a>(node: tree_sitter::Node<'a>, nodes: &mut Vec<tree_sitter::Node<'a>>, source: Option<&[u8]>) {
         // Include assignment and call nodes
         match node.kind() {
-            "assignment" | "call" | "expression_statement" | "assignment_expression" => {
+            "assignment" | "call" | "expression_statement" | "assignment_expression" |
+            "variable_declaration" | "lexical_declaration" | "variable_declarator" => {
                 // Apply source filtering if provided
                 if let Some(source_bytes) = source {
                     let node_text = crate::parser::get_node_text(&node, source_bytes);
