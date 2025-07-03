@@ -18,7 +18,7 @@ pub fn get_language_support(language_name: &str) -> Result<Box<dyn LanguageSuppo
         #[cfg(feature = "java")]
         "java" => Ok(Box::new(JavaLanguage)),
         #[cfg(feature = "javascript")]
-        "javascript" | "js" => Ok(Box::new(JavaScriptLanguage)),
+        "javascript" | "js" | "jsx" => Ok(Box::new(JavaScriptLanguage)),
         #[cfg(feature = "tsx")]
         "tsx" | "typescript-jsx" => Ok(Box::new(TSXLanguage)),
         #[cfg(feature = "html")]
@@ -141,7 +141,7 @@ pub struct TSXLanguage;
 #[cfg(feature = "tsx")]
 impl LanguageSupport for TSXLanguage {
     fn name(&self) -> &'static str { "tsx" }
-    fn file_extension(&self) -> &'static str { ".tsx" }
+    fn file_extension(&self) -> &'static str { ".tsx" } // Primary extension, but handles both .ts and .tsx
     fn tree_sitter_language(&self) -> Language { tree_sitter_typescript::LANGUAGE_TSX.into() }
     fn call_node_types(&self) -> &[&'static str] {
         &["call_expression", "new_expression", "jsx_expression", "jsx_attribute"]

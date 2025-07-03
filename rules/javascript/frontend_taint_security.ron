@@ -50,7 +50,38 @@
                 // Storage (could contain user data)
                 "localStorage.getItem",
                 "sessionStorage.getItem",
-                "*.cookie"
+                "*.cookie",
+                
+                // Function parameters that commonly contain user input
+                "userInput",
+                "user_input", 
+                "input",
+                "data",
+                "content",
+                "htmlContent",
+                "html",
+                "text",
+                "value",
+                "param",
+                "parameter",
+                "args",
+                "arguments",
+                "lyrics",
+                "message",
+                "msg",
+                "comment",
+                "description",
+                "title",
+                "name",
+                
+                // Common variable names for user data
+                "req.body",
+                "req.query",
+                "req.params",
+                "request.*",
+                "params.*",
+                "query.*",
+                "body.*"
             ]),
             
             sinks: Some([
@@ -1346,8 +1377,7 @@
                 
                 // PostMessage
                 "event.data",
-                "e.data",
-                "message.data"
+                "e.data"
             ]),
             
             sinks: Some([
@@ -1455,11 +1485,9 @@
                 // Storage
                 "localStorage.getItem",
                 "sessionStorage.getItem",
-                "*.cookie",
                 
                 // PostMessage
-                "event.data",
-                "e.data"
+                "event.data"
             ]),
             
             sinks: Some([

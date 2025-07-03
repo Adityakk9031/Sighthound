@@ -250,7 +250,7 @@ impl ScanningLogic {
             }
         }
 
-        if language_support.name() == "javascript" || language_support.name() == "typescript" {
+        if language_support.name() == "javascript" || language_support.name() == "typescript" || language_support.name() == "tsx" {
             Self::scan_assignments(tree.root_node(), source, filepath, rules, language_support, &mut findings, &mut processed_lines);
         }
 
@@ -285,11 +285,13 @@ impl ScanningLogic {
         findings: &mut Vec<crate::models::Finding>,
         processed_lines: &mut std::collections::HashSet<(usize, String, String)>,
     ) {
-        if matches!(node.kind(), "assignment_expression" | "expression_statement") {
+        if matches!(node.kind(), "assignment_expression" | "expression_statement" | "member_expression") {
             let node_text = crate::parser::get_node_text(&node, source);
 
-            if CommonUtils::is_valid_assignment_text(&node_text) {
-                let assignment_target = CommonUtils::extract_variable_from_assignment(&node_text, true).unwrap_or_default();
+            // Check for direct assignment patterns (e.g., element.innerHTML = value)
+            if CommonUtils::is_valid_assignment_text(&node_text) || Self::is_dom_assignment(&node_text) {
+                let assignment_target = CommonUtils::extract_variable_from_assignment(&node_text, true)
+                    .unwrap_or_else(|| Self::extract_assignment_target(&node_text));
 
                 for rule in assignment_rules {
                     if Self::rule_might_match_assignment(rule, &node_text) {
@@ -321,26 +323,32 @@ impl ScanningLogic {
     fn rule_has_assignment_patterns(rule: &crate::rules::UnifiedRule) -> bool {
         const ASSIGNMENT_INDICATORS: &[&str] = &[
             "innerHTML", "outerHTML", "location", "localStorage", 
-            "sessionStorage", "__proto__", "=", "prototype"
+            "sessionStorage", "__proto__", "=", "prototype",
+            "src", "href", "textContent", "setAttribute",
+            "document.write", "insertAdjacentHTML"
         ];
 
         let check_pattern = |pattern: &str| {
             ASSIGNMENT_INDICATORS.iter().any(|indicator| pattern.contains(indicator))
         };
 
+        // Also check if this is a taint rule with sinks
+        let has_taint_sinks = rule.sinks.as_ref().map_or(false, |sinks| !sinks.is_empty());
+        
         if let Some(patterns) = &rule.patterns {
-            patterns.iter().any(|p| check_pattern(p))
+            patterns.iter().any(|p| check_pattern(p)) || has_taint_sinks
         } else if let Some(pattern) = &rule.pattern {
-            check_pattern(pattern)
+            check_pattern(pattern) || has_taint_sinks
         } else {
-            false
+            has_taint_sinks
         }
     }
 
     fn rule_might_match_assignment(rule: &crate::rules::UnifiedRule, node_text: &str) -> bool {
         const ASSIGNMENT_INDICATORS: &[&str] = &[
             "innerHTML", "outerHTML", "location", "localStorage", 
-            "sessionStorage", "__proto__", "="
+            "sessionStorage", "__proto__", "=", "src", "href", 
+            "textContent", "setAttribute"
         ];
 
         let check_and_match = |pattern: &str| {
@@ -348,12 +356,50 @@ impl ScanningLogic {
             CommonUtils::matches_rule_pattern(pattern, node_text)
         };
 
+        // Check if this is a taint rule with sinks that match the assignment
+        if let Some(sinks) = &rule.sinks {
+            for sink in sinks {
+                if CommonUtils::matches_rule_pattern(sink, node_text) {
+                    return true;
+                }
+            }
+        }
+
         if let Some(patterns) = &rule.patterns {
             patterns.iter().any(|p| check_and_match(p))
         } else if let Some(pattern) = &rule.pattern {
             check_and_match(pattern)
         } else {
             false
+        }
+    }
+
+    /// Check if the text represents a DOM assignment (innerHTML, outerHTML, etc.)
+    fn is_dom_assignment(text: &str) -> bool {
+        const DOM_ASSIGNMENT_PATTERNS: &[&str] = &[
+            ".innerHTML", ".outerHTML", ".textContent", ".innerText",
+            ".src", ".href", ".setAttribute", ".insertAdjacentHTML"
+        ];
+        
+        // Check for direct assignment or TypeScript casting assignment
+        let has_assignment = text.contains('=') && !text.contains("==") && !text.contains("!=");
+        let has_dom_property = DOM_ASSIGNMENT_PATTERNS.iter().any(|pattern| text.contains(pattern));
+        
+        has_assignment && has_dom_property
+    }
+
+    /// Extract assignment target from complex assignment expressions
+    fn extract_assignment_target(text: &str) -> String {
+        if let Some(eq_pos) = text.find('=') {
+            let left_side = text[..eq_pos].trim();
+            // For expressions like "element.innerHTML", extract "element"
+            if let Some(dot_pos) = left_side.rfind('.') {
+                left_side[..dot_pos].trim().to_string()
+            } else {
+                left_side.to_string()
+            }
+        } else {
+            text.trim().to_string()
         }
     }
 
@@ -570,6 +616,38 @@ impl ScanningLogic {
             let line = node.start_position().row + 1;
             let func_name = crate::scanner::utils::AstUtils::get_function_context(node, source);
 
+            // Check for function definitions and mark parameters as potential taint sources
+            log::debug!("[FUNCTION_CHECK] Checking node kind '{}' for function definitions", node.kind());
+            if matches!(node.kind(), 
+                "function_definition" | "function_declaration" | "method_definition" |
+                "arrow_function" | "function_expression" | "generator_function" |
+                "async_function" | "constructor_definition") {
+                log::debug!("[FUNCTION_PARAM_ANALYSIS] Found function definition: {}", node.kind());
+                if let Some(params) = Self::extract_function_parameters(node, source) {
+                    log::debug!("[FUNCTION_PARAM_ANALYSIS] Extracted parameters: {:?}", params);
+                    for param in params {
+                        // Check if parameter name matches any taint source pattern
+                        log::debug!("[FUNCTION_PARAM_ANALYSIS] Checking parameter '{}' against source patterns", param);
+                        if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(&param) {
+                            log::debug!("[FUNCTION_PARAM_ANALYSIS] Function parameter '{}' matches source pattern '{}'", param, source_pattern);
+                            flow_tracker.record_tainted_variable(
+                                param.clone(),
+                                TaintVariableInfo {
+                                    source_line: line,
+                                    source_pattern,
+                                    source_function: func_name.clone(),
+                                    assignment_code: format!("function parameter: {}", param),
+                                }
+                            );
+                        } else {
+                            log::debug!("[FUNCTION_PARAM_ANALYSIS] Function parameter '{}' does not match any source pattern", param);
+                        }
+                    }
+                } else {
+                    log::debug!("[FUNCTION_PARAM_ANALYSIS] No parameters extracted from function");
+                }
+            }
+
             // Look for assignment patterns: var = source_call()
             if CommonUtils::is_valid_assignment_text(&node_text) {
                 if let Some(var_name) = CommonUtils::extract_variable_from_assignment(&node_text, false) {
@@ -690,10 +768,17 @@ impl ScanningLogic {
                 // Check if right side has F-string propagation
                 if right_side.contains('{') && right_side.contains('}') {
                     log::debug!("   Right side contains f-string braces");
-                    let dependent_vars = CommonUtils::extract_f_string_variables(right_side);
-                    log::debug!("   Extracted dependent_vars from f-string: {:?}", dependent_vars);
+                    let mut dependent_vars = CommonUtils::extract_f_string_variables(right_side);
+                    
+                    // Also check for JavaScript/TypeScript template literals
+                    if right_side.contains("${") {
+                        log::debug!("   Right side contains template literal interpolation");
+                        dependent_vars.extend(CommonUtils::extract_template_literal_variables(right_side));
+                    }
+                    
+                    log::debug!("   Extracted dependent_vars from interpolation: {:?}", dependent_vars);
                     if !dependent_vars.is_empty() && CommonUtils::is_valid_variable_name(left_side) {
-                        log::debug!("[PROPAGATION_CHECK] F-string assignment propagation detected: '{}' depends on {:?}", left_side, dependent_vars);
+                        log::debug!("[PROPAGATION_CHECK] Template/F-string assignment propagation detected: '{}' depends on {:?}", left_side, dependent_vars);
                         return Some((left_side.to_string(), dependent_vars));
                     }
                 }
@@ -753,6 +838,102 @@ impl ScanningLogic {
         None
     }
 
+    /// Extract function parameters from function definition node
+    fn extract_function_parameters(func_node: &tree_sitter::Node, source: &[u8]) -> Option<Vec<String>> {
+        let mut parameters = Vec::new();
+        let mut cursor = func_node.walk();
+        
+        // Look for parameter list in function definition
+        if cursor.goto_first_child() {
+            loop {
+                let node = cursor.node();
+                
+                // Check for formal_parameters, parameter_list, or arguments
+                if node.kind() == "formal_parameters" || node.kind() == "parameter_list" || node.kind() == "arguments" {
+                    let mut param_cursor = node.walk();
+                    if param_cursor.goto_first_child() {
+                        loop {
+                            let param_node = param_cursor.node();
+                            
+                            // Skip punctuation like parentheses and commas
+                            if param_node.kind() != "(" && param_node.kind() != ")" && param_node.kind() != "," {
+                                // Handle different parameter node types
+                                let param_text = match param_node.kind() {
+                                    "identifier" => {
+                                        // Simple parameter: function(param)
+                                        crate::parser::get_node_text(&param_node, source)
+                                    }
+                                    "parameter" => {
+                                        // TypeScript parameter: function(param: type)
+                                        Self::extract_parameter_name(&param_node, source)
+                                    }
+                                    "required_parameter" | "optional_parameter" => {
+                                        // TypeScript parameter variants
+                                        Self::extract_parameter_name(&param_node, source)
+                                    }
+                                    _ => {
+                                        // Try to extract identifier from complex parameter
+                                        Self::extract_parameter_name(&param_node, source)
+                                    }
+                                };
+                                
+                                if !param_text.is_empty() && CommonUtils::is_valid_variable_name(&param_text) {
+                                    parameters.push(param_text);
+                                }
+                            }
+                            
+                            if !param_cursor.goto_next_sibling() {
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+                
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        
+        if parameters.is_empty() {
+            None
+        } else {
+            Some(parameters)
+        }
+    }
+
+    /// Extract parameter name from complex parameter node
+    fn extract_parameter_name(param_node: &tree_sitter::Node, source: &[u8]) -> String {
+        let mut cursor = param_node.walk();
+        
+        // Look for identifier child node
+        if cursor.goto_first_child() {
+            loop {
+                let node = cursor.node();
+                if node.kind() == "identifier" {
+                    return crate::parser::get_node_text(&node, source);
+                }
+                
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        
+        // Fallback: use the whole node text and try to extract identifier
+        let full_text = crate::parser::get_node_text(param_node, source);
+        if let Some(colon_pos) = full_text.find(':') {
+            // TypeScript parameter with type annotation: "param: string"
+            full_text[..colon_pos].trim().to_string()
+        } else if let Some(equals_pos) = full_text.find('=') {
+            // Parameter with default value: "param = default"
+            full_text[..equals_pos].trim().to_string()
+        } else {
+            full_text.trim().to_string()
+        }
+    }
+
 
 
 
@@ -765,7 +946,11 @@ impl ScanningLogic {
         // Include assignment and call nodes
         match node.kind() {
             "assignment" | "call" | "expression_statement" | "assignment_expression" |
-            "variable_declaration" | "lexical_declaration" | "variable_declarator" => {
+            "variable_declaration" | "lexical_declaration" | "variable_declarator" |
+            "function_definition" | "function_declaration" | "method_definition" |
+            "arrow_function" | "function_expression" | "generator_function" |
+            "async_function" | "constructor_definition" | "template_literal" | 
+            "template_string" | "template_substitution" => {
                 // Apply source filtering if provided
                 if let Some(source_bytes) = source {
                     let node_text = crate::parser::get_node_text(&node, source_bytes);
@@ -779,8 +964,8 @@ impl ScanningLogic {
                     nodes.push(node);
                 }
             }
-            "import_statement" | "import_from_statement" | "function_definition" |
-            "return_statement" | "binary_expression" | "identifier" => {
+            "import_statement" | "import_from_statement" | "return_statement" | 
+            "binary_expression" | "identifier" => {
                 if source.is_some() {
                     // Only collect these additional types when doing source filtering
                     let node_text = crate::parser::get_node_text(&node, source.unwrap());
@@ -945,7 +1130,28 @@ impl VulnerabilityScanner {
             let path = entry.path();
             if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if format!(".{}", ext) == target_extension {
+                    let file_extension = format!(".{}", ext);
+                    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    
+                    // Enhanced extension matching for each language
+                    let should_include = match self.language.as_str() {
+                        "python" => matches!(ext, "py" | "pyw" | "pyi" | "pyx") ||
+                                   (file_name.ends_with("file") && (file_name.contains("requirements") || file_name.contains("Pipfile"))),
+                        "java" => matches!(ext, "java" | "jav"),
+                        "javascript" => matches!(ext, "js" | "mjs" | "cjs" | "jsx") ||
+                                       matches!(ext, "vue" | "svelte") ||
+                                       (file_name.contains("webpack") || file_name.contains("rollup") || file_name.contains("vite")) &&
+                                       (file_name.ends_with(".config.js") || file_name.ends_with(".config.mjs") || file_name.ends_with(".config.cjs")),
+                        "tsx" => matches!(ext, "ts" | "tsx" | "mts" | "cts") ||
+                                file_name.ends_with(".d.ts") || file_name.ends_with(".d.mts") || file_name.ends_with(".d.cts") ||
+                                ((file_name.contains("webpack") || file_name.contains("rollup") || file_name.contains("vite")) &&
+                                 (file_name.ends_with(".config.ts"))),
+                        "html" => matches!(ext, "html" | "htm" | "xhtml" | "shtml" | "dhtml" | "hbs" | "handlebars" | "mustache" | "twig" | "njk" | "nunjucks" | "ejs" | "pug" | "jade"),
+                        "django" => matches!(ext, "html" | "htm"),
+                        _ => file_extension == target_extension,
+                    };
+                    
+                    if should_include {
                         files.push(path.to_path_buf());
                     }
                 }
@@ -3459,6 +3665,36 @@ impl DataFlowTracer {
             
             VariableSource::FunctionParameter { parameter_index } => {
                 log::debug!("[DATA_FLOW_TRACER] Variable from function parameter {}", parameter_index);
+                
+                // Check if the parameter name matches any taint source patterns
+                if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(sink_variable) {
+                    log::debug!("[DATA_FLOW_TRACER] Function parameter '{}' matches source pattern '{}'", sink_variable, source_pattern);
+                    
+                    // Treat function parameters that match source patterns as taint sources
+                    let flow = VerifiedTaintFlow {
+                        source_file: sink_file.to_string(),
+                        source_function: sink_function.to_string(),
+                        source_pattern: source_pattern.clone(),
+                        source_line: 1, // Function definition line (approximate)
+                        
+                        sink_file: sink_file.to_string(),
+                        sink_function: sink_function.to_string(),
+                        sink_pattern: sink_pattern.to_string(),
+                        sink_line,
+                        sink_variable: sink_variable.to_string(),
+                        
+                        call_chain: Vec::new(),
+                        data_flow_evidence: DataFlowEvidence {
+                            variable_assignments: vec![(sink_variable.to_string(), format!("function parameter {}", parameter_index), 1)],
+                            function_calls: Vec::new(),
+                            return_statements: Vec::new(),
+                        },
+                    };
+
+                    self.verified_flows.push(flow.clone());
+                    return AnalysisResult::DefinitelyTainted { flow };
+                }
+                
                 AnalysisResult::Unknown { 
                     reason: format!("Function parameter {} - requires caller analysis", parameter_index) 
                 }
