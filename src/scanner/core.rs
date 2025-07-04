@@ -598,8 +598,19 @@ impl ScanningLogic {
     ) -> Vec<crate::models::Finding> {
         let mut findings = Vec::new();
 
+        // Filter out rules that don't apply to this file (same as search rules)
+        let applicable_rules: Vec<&crate::rules::UnifiedRule> = taint_rules.iter()
+            .filter(|rule| crate::scanner::utils::rule_applies_to_file(rule.file_types.as_ref(), filepath))
+            .copied()
+            .collect();
+
+        // If no rules apply to this file, return empty findings
+        if applicable_rules.is_empty() {
+            return findings;
+        }
+
         // Create rule deduplicator to prevent cartesian product problems
-        let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
+        let rule_deduplicator = TaintRuleDeduplicator::new(&applicable_rules);
 
         // Create variable flow tracker for legitimate flows only
         let mut flow_tracker = VariableFlowTracker::new();
@@ -1440,13 +1451,17 @@ impl VulnerabilityScanner {
 
         // Phase 2: Multi-file taint analysis (NEW functionality)
         let mut cross_file_findings = Vec::new();
-        if has_taint_rules && filtered_files.len() > 1 {
+        // FIXED: Skip cross-file analysis for frontend scans as it's primarily designed for Backend projects
+        // and causes major performance issues with JavaScript/TypeScript projects
+        let should_skip_cross_file = code_type_filter == Some("frontend");
+        
+        if has_taint_rules && filtered_files.len() > 1 && !should_skip_cross_file {
             if show_progress {
                 log::info!("Performing cross-file taint analysis...");
             }
 
             let mut multi_file_analyzer = MultiFileTaintAnalyzer::new();
-            match multi_file_analyzer.analyze_cross_file_flows(&files_by_language, &taint_rules) {
+            match multi_file_analyzer.analyze_cross_file_flows(&files_by_language, &taint_rules, language_filter) {
                 Ok(findings) => {
                     cross_file_findings = findings;
                     if show_progress && !cross_file_findings.is_empty() {
@@ -1459,6 +1474,8 @@ impl VulnerabilityScanner {
                     }
                 }
             }
+        } else if should_skip_cross_file && show_progress {
+            log::info!("Skipping cross-file taint analysis for frontend scan (performance optimization)");
         }
 
         // Stop progress tracking (reuse existing infrastructure)
@@ -1515,6 +1532,17 @@ impl ScanningLogic {
     ) -> Vec<crate::models::Finding> {
         let mut findings = Vec::new();
         let mut processed_lines = std::collections::HashSet::new();
+
+        // Filter search rules that don't apply to this file (same as taint rules)
+        let applicable_search_rules: Vec<&crate::rules::UnifiedRule> = search_rules.iter()
+            .filter(|rule| crate::scanner::utils::rule_applies_to_file(rule.file_types.as_ref(), filepath))
+            .copied()
+            .collect();
+
+        // If no search rules apply to this file, return empty findings
+        if applicable_search_rules.is_empty() {
+            return findings;
+        }
 
         // Create taint rule deduplicator to leverage taint context
         let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
@@ -1584,7 +1612,7 @@ impl ScanningLogic {
 
         for node in call_nodes.iter() {
             if let Some(func_name) = language_support.get_function_name(node, source) {
-                let relevant_rules: Vec<(usize, &crate::rules::UnifiedRule)> = search_rules.iter().enumerate()
+                let relevant_rules: Vec<(usize, &crate::rules::UnifiedRule)> = applicable_search_rules.iter().enumerate()
                     .filter(|(_, rule)| ScanningLogic::rule_might_match_function(*rule, &func_name))
                     .map(|(idx, rule)| (idx, *rule))
                     .collect();
@@ -2269,21 +2297,51 @@ impl MultiFileTaintAnalyzer {
         &mut self,
         files_by_language: &std::collections::HashMap<String, Vec<std::path::PathBuf>>,
         taint_rules: &[&crate::rules::UnifiedRule],
+        language_filter: Option<&str>,
     ) -> Result<Vec<crate::models::Finding>> {
         log::debug!("[CROSS_FILE_NEW] Starting enhanced cross-file taint analysis");
 
-        // Get all Python files for analysis
-        let python_files = files_by_language.get("python").cloned().unwrap_or_default();
+        // UPDATED: Check language_filter first, then fall back to original logic
+        let mut target_files = Vec::new();
+        let mut target_language = None;
         
-        // Initialize the new DataFlowTracer
+        // If language_filter is specified, use that language exclusively
+        if let Some(filter_lang) = language_filter {
+            if let Some(filtered_files) = files_by_language.get(filter_lang) {
+                if !filtered_files.is_empty() {
+                    target_files.extend(filtered_files.clone());
+                    target_language = Some(filter_lang);
+                    log::debug!("[CROSS_FILE_NEW] Using language_filter: {} ({} files)", filter_lang, filtered_files.len());
+                }
+            }
+        } else {
+            
+            if let Some(python_files) = files_by_language.get("python") {
+                if !python_files.is_empty() {
+                    target_files.extend(python_files.clone());
+                    target_language = Some("python");
+                }
+            }
+        }
+        // If still no files, skip cross-file analysis
+        if target_files.is_empty() {
+            log::debug!("[CROSS_FILE_NEW] No suitable files found for cross-file analysis");
+            return Ok(Vec::new());
+        }
+        
+        let language = target_language.unwrap();
+        log::debug!("[CROSS_FILE_NEW] Analyzing {} {} files for cross-file taint flows", 
+            target_files.len(), language);
+        
+        // Initialize the new DataFlowTracer with the appropriate language files
         let mut data_flow_tracer = DataFlowTracer::new();
-        data_flow_tracer.initialize(&python_files, taint_rules)?;
+        data_flow_tracer.initialize(&target_files, taint_rules)?;
 
         let mut findings = Vec::new();
         let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
 
         // Build legacy import/export maps for sink discovery (temporary)
-        self.build_import_export_maps(files_by_language, taint_rules)?;
+        self.build_import_export_maps(files_by_language, taint_rules, language_filter)?;
 
         log::debug!("[CROSS_FILE_NEW] Analyzing {} files with sinks", self.file_imports.len());
 
@@ -2380,18 +2438,21 @@ impl MultiFileTaintAnalyzer {
         &mut self,
         files_by_language: &std::collections::HashMap<String, Vec<std::path::PathBuf>>,
         taint_rules: &[&crate::rules::UnifiedRule],
+        language_filter: Option<&str>,
     ) -> Result<()> {
         let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
 
-        for (language, files) in files_by_language {
-            if language == "python" {
+        // UPDATED: Use same logic as analyze_cross_file_flows
+        if let Some(filter_lang) = language_filter {
+            // If language_filter is specified, use that language exclusively
+            if let Some(files) = files_by_language.get(filter_lang) {
                 for file_path in files {
                     let filepath = file_path.to_string_lossy();
                     let source = std::fs::read(file_path)?;
 
-                    crate::scanner::core::with_local_parser(language, |parser| {
+                    crate::scanner::core::with_local_parser(filter_lang, |parser| {
                         let tree = parser.parse(&source)?;
-                        let language_support = crate::language::get_language_support(language)?;
+                        let language_support = crate::language::get_language_support(filter_lang)?;
 
                         self.analyze_file_imports_exports(
                             &filepath,
@@ -2403,6 +2464,31 @@ impl MultiFileTaintAnalyzer {
 
                         Ok(())
                     })?;
+                }
+            }
+        } else {
+            // Original fallback logic: process JavaScript and Python files
+            for (language, files) in files_by_language {
+                if language == "javascript" || language == "python" {
+                    for file_path in files {
+                        let filepath = file_path.to_string_lossy();
+                        let source = std::fs::read(file_path)?;
+
+                        crate::scanner::core::with_local_parser(language, |parser| {
+                            let tree = parser.parse(&source)?;
+                            let language_support = crate::language::get_language_support(language)?;
+
+                            self.analyze_file_imports_exports(
+                                &filepath,
+                                &source,
+                                &tree,
+                                &rule_deduplicator,
+                                language_support.as_ref(),
+                            );
+
+                            Ok(())
+                        })?;
+                    }
                 }
             }
         }
@@ -3597,7 +3683,20 @@ impl DataFlowTracer {
         let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
         for file_path in files {
             if let Ok(source) = std::fs::read(file_path) {
-                with_local_parser("python", |parser| {
+                // FIXED: Determine language from file extension instead of hardcoding Python
+                let language = if file_path.extension().and_then(|ext| ext.to_str()) == Some("py") {
+                    "python"
+                } else if let Some(ext) = file_path.extension().and_then(|ext| ext.to_str()) {
+                    if ext == "js" || ext == "jsx" || ext == "ts" || ext == "tsx" {
+                        "javascript"
+                    } else {
+                        continue; // Skip unsupported file types
+                    }
+                } else {
+                    continue; // Skip files without extensions
+                };
+
+                with_local_parser(language, |parser| {
                     let tree = parser.parse(&source)?;
                     self.function_analyzer.analyze_file_functions(
                         &file_path.to_string_lossy(),

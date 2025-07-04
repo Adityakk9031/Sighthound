@@ -111,13 +111,7 @@
             confidence: Some("High"),
             description: Some("Direct prototype manipulation can poison objects"),
             file_types: Some((
-                extensions: Some([".js", ".jsx", ".ts", ".tsx"]),
-                exclude_patterns: Some([
-                    "*node_modules/core-js/*",
-                    "*node_modules/es5-shim/*",
-                    "*vendor/prototypal.js*"
-                ])
-            )),
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
             tags: Some(["prototype-pollution", "frontend"])
         ),
         (

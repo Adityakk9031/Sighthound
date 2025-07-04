@@ -98,12 +98,25 @@ fn load_rules(cli: &Cli, context: &ScanContext) -> Result<Rules> {
             // Auto-detect and merge rules from all languages
             let mut all_rules = Vec::new();
             
+            // Determine exclusion pattern type based on code_type
+            let pattern_type = if let Some(code_type) = &cli.code_type {
+                if code_type == "backend" {
+                    "backend"
+                } else if code_type == "frontend" {
+                    "frontend"
+                } else {
+                    "frontend" // default for "both" or other values
+                }
+            } else {
+                "frontend" // default when no code_type specified
+            };
+            
             for language in &context.detected_languages {
                 let rules_dir = match language.as_str() {
                     "tsx" => "rules/javascript".to_string(),
                     _ => format!("rules/{}", language),
                 };
-                if let Ok(rules) = Rules::load_from_directory(&rules_dir) {
+                if let Ok(rules) = Rules::load_from_directory_with_exclusions(&rules_dir, pattern_type) {
                     all_rules.push(rules);
                 }
                 
@@ -142,7 +155,7 @@ pub fn run_explicit_scan(cli: &Cli, show_progress: bool) -> Result<Vec<Finding>>
     // Load additional backend rules for JavaScript/TypeScript if code_type is backend or both
     if matches!(language.as_str(), "javascript" | "tsx") {
         if let Some(code_type) = &cli.code_type {
-            if code_type == "backend" || code_type == "both" {
+            if code_type != "frontend"{
                 let backend_rules_file = "rules/javascript/backend_security.ron";
                 if let Ok(backend_rules) = Rules::load_from_file(backend_rules_file) {
                     all_rules.push(backend_rules);
@@ -258,16 +271,30 @@ pub fn run_auto_detection_scan(cli: &Cli, show_progress: bool) -> Result<Vec<Fin
             _ => format!("rules/{}", language),
         };
         
-        // Load base rules for the language
+        // Load base rules for the language with centralized exclusions
         let mut all_rules = Vec::new();
-        if let Ok(base_rules) = Rules::load_from_directory(&rules_dir) {
+        
+        // Determine exclusion pattern type based on code_type
+        let pattern_type = if let Some(code_type) = &cli.code_type {
+            if code_type == "backend" {
+                "backend"
+            } else if code_type == "frontend" {
+                "frontend"
+            } else {
+                "frontend" // default for "both" or other values
+            }
+        } else {
+            "frontend" // default when no code_type specified
+        };
+        
+        if let Ok(base_rules) = Rules::load_from_directory_with_exclusions(&rules_dir, pattern_type) {
             all_rules.push(base_rules);
         }
         
         // Load additional backend rules for JavaScript/TypeScript if code_type is backend or both
         if matches!(language.as_str(), "javascript" | "tsx") {
             if let Some(code_type) = &cli.code_type {
-                if code_type == "backend" || code_type == "both" {
+                if code_type != "frontend" {
                     let backend_rules_dir = "rules/javascript/backend_security.ron";
                     if let Ok(backend_rules) = Rules::load_from_file(backend_rules_dir) {
                         all_rules.push(backend_rules);

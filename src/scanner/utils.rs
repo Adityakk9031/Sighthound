@@ -70,6 +70,9 @@ pub fn rule_applies_to_file_path(file_types: Option<&FileTypes>, file_path: &Pat
 
 /// Detect programming language from file path
 pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
+    let file_name = file_path.file_name()?.to_str()?;
+    
+    // Handle standard extensions
     match file_path.extension()?.to_str()? {
         // Python extensions
         "py" | "pyw" | "pyi" | "pyx" => Some("python"),
@@ -81,17 +84,10 @@ pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
         "js" | "mjs" | "cjs" | "jsx" => Some("javascript"),
         
         // TypeScript extensions (including all variants)
-        "ts" | "tsx" | "mts" | "cts" | "d.ts" => Some("tsx"),
+        "ts" | "tsx" | "mts" | "cts" => Some("tsx"),
         
         // HTML and template extensions
-        "html" | "htm" | "xhtml" | "shtml" | "dhtml" => {
-            let path_str = file_path.to_string_lossy().to_lowercase();
-            if path_str.contains("template") || path_str.contains("django") {
-                Some("html")
-            } else {
-                Some("html")
-            }
-        },
+        "html" | "htm" | "xhtml" | "shtml" | "dhtml" => Some("html"),
         
         // Template file extensions that should be treated as HTML
         "hbs" | "handlebars" | "mustache" | "twig" | "njk" | "nunjucks" | "ejs" | "pug" | "jade" => Some("html"),
@@ -102,20 +98,15 @@ pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
         // Svelte components 
         "svelte" => Some("javascript"),
         
-        // React/JSX files that might not have .jsx extension
+        // Handle config files and other special cases
         _ => {
-            let file_name = file_path.file_name()?.to_str()?;
-            
-            // Check for special TypeScript declaration files
-            if file_name.ends_with(".d.ts") || file_name.ends_with(".d.mts") || file_name.ends_with(".d.cts") {
-                return Some("tsx");
-            }
-            
-            // Check for JavaScript files with unusual extensions but clear JS content indicators
+            // Check for JavaScript/TypeScript config files
             if file_name.contains("webpack") || file_name.contains("rollup") || file_name.contains("vite") {
-                if file_name.ends_with(".config.js") || file_name.ends_with(".config.ts") || 
-                   file_name.ends_with(".config.mjs") || file_name.ends_with(".config.cjs") {
-                    return if file_name.contains(".ts") { Some("tsx") } else { Some("javascript") };
+                if file_name.ends_with(".config.js") || file_name.ends_with(".config.mjs") || file_name.ends_with(".config.cjs") {
+                    return Some("javascript");
+                }
+                if file_name.ends_with(".config.ts") || file_name.ends_with(".config.mts") || file_name.ends_with(".config.cts") {
+                    return Some("tsx");
                 }
             }
             
