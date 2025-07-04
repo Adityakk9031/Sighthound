@@ -948,6 +948,11 @@ impl VulnerabilityScanner {
         {
             let path = entry.path();
             if path.is_file() {
+                // Skip files that are ignored by Git
+                if crate::scanner::utils::is_git_ignored(path) {
+                    continue;
+                }
+                
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                     if format!(".{}", ext) == target_extension {
                         files.push(path.to_path_buf());

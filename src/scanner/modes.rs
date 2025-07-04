@@ -168,7 +168,7 @@ pub fn run_auto_detection_scan(cli: &Cli) -> Result<Vec<Finding>> {
     println!("📂 Target directory: {}", cli.root_dir);
     
     // Rediscover files by language for actual processing (context only used for validation)
-    let files_by_language = if cli.single_threaded {
+    let files_by_language: std::collections::HashMap<String, Vec<PathBuf>> = if cli.single_threaded {
         discover_files_by_language_sequential(&cli.root_dir)?
     } else {
         discover_files_by_language_parallel(&cli.root_dir)?
