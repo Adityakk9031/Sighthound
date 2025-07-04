@@ -1272,9 +1272,11 @@ impl VulnerabilityScanner {
         code_type_filter: Option<&str>,
         language_filter: Option<&str>
     ) -> Result<Vec<Finding>> {
-        println!("running find_vulnerabilities_unified");
+        if show_progress {
+            println!("running find_vulnerabilities_unified");
+        }
         let files_by_language = if self.language.is_empty() {
-            crate::scanner::utils::discover_files_by_language(root_dir, true)?
+            crate::scanner::utils::discover_files_by_language_with_progress(root_dir, true, show_progress)?
         } else {
             let files = self.discover_files(root_dir)?;
             let mut result = std::collections::HashMap::new();

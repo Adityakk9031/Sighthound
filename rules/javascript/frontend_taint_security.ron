@@ -1242,23 +1242,138 @@
             mode: "taint",
             
             sources: Some([
-                // Sensitive data
-                "password",
-                "token",
-                "apiKey",
-                "secret",
-                "privateKey",
-                "sessionId",
-                "authToken",
-                "accessToken",
-                "credentials",
+                // Actual DOM element value access
+                "document.getElementById('password').value",
+                "document.getElementById('token').value",
+                "document.getElementById('apiKey').value",
+                "document.getElementById('secret').value",
+                "document.getElementById('privateKey').value",
+                "document.getElementById('sessionId').value",
+                "document.getElementById('authToken').value",
+                "document.getElementById('accessToken').value",
+                "document.getElementById('credentials').value",
                 
-                // Sensitive form fields
-                "*[type=password]*",
-                "*[name*=password]*",
-                "*[name*=token]*",
-                "*[name*=key]*",
-                "*[name*=secret]*"
+                // Query selector for sensitive form fields
+                "document.querySelector('input[type=password]').value",
+                "document.querySelector('input[name*=password]').value",
+                "document.querySelector('input[name*=token]').value",
+                "document.querySelector('input[name*=key]').value",
+                "document.querySelector('input[name*=secret]').value",
+                "document.querySelector('input[name*=apikey]').value",
+                "document.querySelector('input[name*=sessionid]').value",
+                "document.querySelector('input[name*=authtoken]').value",
+                "document.querySelector('input[name*=accesstoken]').value",
+                "document.querySelector('input[name*=credentials]').value",
+                
+                // getElementsByName for sensitive fields
+                "document.getElementsByName('password')[0].value",
+                "document.getElementsByName('token')[0].value",
+                "document.getElementsByName('apiKey')[0].value",
+                "document.getElementsByName('secret')[0].value",
+                "document.getElementsByName('privateKey')[0].value",
+                "document.getElementsByName('sessionId')[0].value",
+                "document.getElementsByName('authToken')[0].value",
+                "document.getElementsByName('accessToken')[0].value",
+                "document.getElementsByName('credentials')[0].value",
+                
+                // Form access patterns
+                "document.forms.*.password.value",
+                "document.forms.*.token.value",
+                "document.forms.*.apiKey.value",
+                "document.forms.*.secret.value",
+                "document.forms.*.privateKey.value",
+                "document.forms.*.sessionId.value",
+                "document.forms.*.authToken.value",
+                "document.forms.*.accessToken.value",
+                "document.forms.*.credentials.value",
+                
+                // FormData with sensitive field names
+                "FormData().get('password')",
+                "FormData().get('token')",
+                "FormData().get('apiKey')",
+                "FormData().get('secret')",
+                "FormData().get('privateKey')",
+                "FormData().get('sessionId')",
+                "FormData().get('authToken')",
+                "FormData().get('accessToken')",
+                "FormData().get('credentials')",
+                
+                // Local storage of sensitive data
+                "localStorage.getItem('password')",
+                "localStorage.getItem('token')",
+                "localStorage.getItem('apiKey')",
+                "localStorage.getItem('secret')",
+                "localStorage.getItem('privateKey')",
+                "localStorage.getItem('sessionId')",
+                "localStorage.getItem('authToken')",
+                "localStorage.getItem('accessToken')",
+                "localStorage.getItem('credentials')",
+                
+                // Session storage of sensitive data
+                "sessionStorage.getItem('password')",
+                "sessionStorage.getItem('token')",
+                "sessionStorage.getItem('apiKey')",
+                "sessionStorage.getItem('secret')",
+                "sessionStorage.getItem('privateKey')",
+                "sessionStorage.getItem('sessionId')",
+                "sessionStorage.getItem('authToken')",
+                "sessionStorage.getItem('accessToken')",
+                "sessionStorage.getItem('credentials')",
+                
+                // URL parameters containing sensitive data
+                "new URLSearchParams().get('password')",
+                "new URLSearchParams().get('token')",
+                "new URLSearchParams().get('key')",
+                "new URLSearchParams().get('secret')",
+                "new URLSearchParams().get('apiKey')",
+                "new URLSearchParams().get('privateKey')",
+                "new URLSearchParams().get('sessionId')",
+                "new URLSearchParams().get('authToken')",
+                "new URLSearchParams().get('accessToken')",
+                "new URLSearchParams().get('credentials')",
+                
+                // URLSearchParams with window.location
+                "new URLSearchParams(window.location.search).get('password')",
+                "new URLSearchParams(window.location.search).get('token')",
+                "new URLSearchParams(window.location.search).get('key')",
+                "new URLSearchParams(window.location.search).get('secret')",
+                "new URLSearchParams(window.location.search).get('apiKey')",
+                "new URLSearchParams(window.location.search).get('privateKey')",
+                "new URLSearchParams(window.location.search).get('sessionId')",
+                "new URLSearchParams(window.location.search).get('authToken')",
+                "new URLSearchParams(window.location.search).get('accessToken')",
+                "new URLSearchParams(window.location.search).get('credentials')",
+                
+                // Cookie values with sensitive names
+                "document.cookie.match(/password=/)",
+                "document.cookie.match(/token=/)",
+                "document.cookie.match(/session=/)",
+                "document.cookie.match(/apikey=/)",
+                "document.cookie.match(/secret=/)",
+                "document.cookie.match(/privatekey=/)",
+                "document.cookie.match(/authtoken=/)",
+                "document.cookie.match(/accesstoken=/)",
+                "document.cookie.match(/credentials=/)",
+                
+                // Authentication responses
+                "*.responseJSON.token",
+                "*.responseJSON.accessToken",
+                "*.responseJSON.refreshToken",
+                "*.responseJSON.apiKey",
+                "*.responseJSON.sessionId",
+                "*.responseJSON.authToken",
+                "*.responseJSON.privateKey",
+                "*.responseJSON.secret",
+                "*.responseJSON.credentials",
+                "*.response.data.token",
+                "*.response.data.accessToken",
+                "*.response.data.refreshToken",
+                "*.response.data.apiKey",
+                "*.response.data.sessionId",
+                "*.response.data.authToken",
+                "*.response.data.privateKey",
+                "*.response.data.secret",
+                "*.response.data.credentials"
             ]),
             
             sinks: Some([
@@ -1564,6 +1679,7 @@
             
             tags: Some(["open-redirect", "cwe-601", "navigation"])
         ),
+
 
         // ==================== CWE-95: Dynamic Code Loading ====================
         (
