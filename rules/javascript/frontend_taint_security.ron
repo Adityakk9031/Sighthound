@@ -8,128 +8,170 @@
             mode: "taint",
             
             sources: Some([
-                // URL and location sources
+                // External/untrusted sources only - be more specific
                 "window.location.hash",
                 "window.location.search", 
-                "window.location.href",
-                "location.hash",
-                "location.search",
-                "location.href",
                 "document.URL",
                 "document.documentURI",
                 "document.baseURI",
                 
-                // URL parameter parsing
-                "URLSearchParams",
-                "new URL",
-                "decodeURIComponent",
-                "decodeURI",
+                // URL parameter parsing - actual user input
+                "URLSearchParams(*window.location*",
+                "new URLSearchParams(*window.location*",
+                "decodeURIComponent(*location.*",
+                "decodeURI(*location.*",
                 
-                // DOM input sources
-                "*.value",
-                "*.textContent", 
-                "*.innerText",
-                "*.innerHTML",
-                "*.getAttribute",
-                "*.dataset",
-                
-                // Form data
-                "FormData",
-                "*.files",
-                "*.selectedOptions",
+                // Form inputs (actual user input)
+                "document.querySelector('input').value",
+                "document.querySelector('textarea').value",
+                "document.getElementById(*).value",
+                "input.value",
+                "textarea.value",
                 
                 // User interaction
                 "prompt(",
                 "confirm(",
                 
-                // PostMessage
+                // PostMessage (external data)
                 "event.data",
                 "e.data",
                 "message.data",
                 
-                // Storage (could contain user data)
+                // Network responses (external data)
+                "*.responseText",
+                "*.response",
+                "fetch(*).then",
+                "XMLHttpRequest.responseText",
+                
+                // External storage (could be manipulated)
                 "localStorage.getItem",
                 "sessionStorage.getItem",
-                "*.cookie",
-                
-                // Function parameters that commonly contain user input
-                "userInput",
-                "user_input", 
-                "input",
-                "data",
-                "content",
-                "htmlContent",
-                "html",
-                "text",
-                "value",
-                "param",
-                "parameter",
-                "args",
-                "arguments",
-                "lyrics",
-                "message",
-                "msg",
-                "comment",
-                "description",
-                "title",
-                "name",
-                
-                // Common variable names for user data
-                "req.body",
-                "req.query",
-                "req.params",
-                "request.*",
-                "params.*",
-                "query.*",
-                "body.*"
+                "document.cookie"
             ]),
             
             sinks: Some([
-                // Direct DOM manipulation
+                // Dangerous HTML manipulation only
                 "*.innerHTML",
                 "*.outerHTML", 
                 "document.write",
                 "document.writeln",
                 "*.insertAdjacentHTML",
                 
-                // Script injection
-                "*.src",
-                "*.href",
-                "document.createElement",
+                // Script injection points - be more specific
+                "script.src",
+                "iframe.src",
                 
-                // Eval-like functions
+                // Code execution
                 "eval(",
                 "Function(",
-                "setTimeout(",
-                "setInterval(",
+                "setTimeout(",  // With string argument
+                "setInterval(",  // With string argument
                 
                 // Dynamic script loading
                 "import(",
-                "*.appendChild",
-                "*.insertBefore"
+                "document.createElement(\"script\").src"
             ]),
             
             sanitizers: Some([
-                // HTML encoding
+                // HTML sanitization
+                "DOMPurify.sanitize",
                 "encodeHTML",
                 "escapeHTML", 
+                "validator.escape",
+                
+                // Safe DOM methods
+                "*.textContent",  // Safe text assignment
+                "document.createTextNode",
+                
+                // Framework auto-escaping
+                "React.createElement",
+                "Vue.createTextVNode",
                 
                 // Validation
-                "DOMPurify.sanitize",
-                "validator.escape",
                 "sanitize(",
                 "validate(",
                 "clean(",
+                "escape("
             ]),
             
             finding_type: Some("DOM-based XSS"),
-            severity: Some("Critical"),
+            severity: Some("High"),
             confidence: Some("High"),
             
-            description: Some("User-controlled data flows to DOM manipulation without proper sanitization, enabling XSS attacks"),
+            description: Some("User input flows to dangerous DOM manipulation without sanitization"),
             
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            
+            conditions: Some([
+                // Exclude safe operations that commonly cause false positives
+                (
+                    field: "pattern",
+                    operator: "not_contains", 
+                    value: "addEventListener",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "querySelector",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "getElementById",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains", 
+                    value: "textContent",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "className",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "style.",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "console.",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "window.location.href",
+                    condition_type: Some("exclude_safe_location_reads")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "history.",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "createTextNode",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "DOMPurify.sanitize",
+                    condition_type: Some("exclude_safe_operations")
+                )
+            ]),
             
             tags: Some(["xss", "dom", "cwe-79", "frontend"])
         ),
@@ -142,77 +184,131 @@
             mode: "taint",
             
             sources: Some([
-                // All DOM-based sources plus additional
-                "window.location.*",
-                "location.*",
+                // External/untrusted sources - be more specific
+                "window.location.hash",
+                "window.location.search",
                 "document.URL",
                 "document.referrer",
-                "*.value",
-                "*.textContent",
-                "*.innerText", 
-                "*.getAttribute",
-                "FormData",
-                "URLSearchParams",
-                "prompt(",
-                "event.data",
-                "localStorage.*",
-                "sessionStorage.*",
-                "*.cookie",
+                "URLSearchParams(*window.location*",
+                "decodeURIComponent(*location.*",
+                "decodeURI(*location.*",
                 
-                // Network sources
-                "fetch(",
-                "XMLHttpRequest",
+                // Form inputs (actual user input)
+                "document.querySelector('input').value",
+                "document.querySelector('textarea').value",
+                "document.getElementById(*).value",
+                "input.value",
+                "textarea.value",
+                
+                // User interaction
+                "prompt(",
+                "confirm(",
+                
+                // PostMessage (external data)
+                "event.data",
+                
+                // Network responses (external data)
                 "*.responseText",
                 "*.response",
-                "axios.*",
-                "$.get",
-                "$.post",
-                "$.ajax"
+                "fetch(*).then",
+                "XMLHttpRequest.responseText",
+                "axios.*.then",
+                "$.get(*).done",
+                "$.post(*).done",
+                "$.ajax(*).done",
+                
+                // External storage
+                "localStorage.getItem",
+                "sessionStorage.getItem",
+                "document.cookie"
             ]),
             
             sinks: Some([
-                // DOM sinks
+                // Dangerous HTML manipulation
                 "*.innerHTML",
                 "*.outerHTML",
                 "document.write",
                 "document.writeln",
                 "*.insertAdjacentHTML",
                 
-                // Attribute sinks
-                "*.src",
-                "*.href", 
+                // Script injection points
+                "*.src",  // For script elements
+                "*.href", // For dangerous contexts
                 "*.action",
                 "*.formAction",
                 "*.setAttribute",
                 
-                // Event handler sinks
+                // Event handlers
                 "*.onclick",
                 "*.onload",
                 "*.onerror",
                 "addEventListener",
                 
-                // Template/rendering
+                // Template/rendering (dangerous)
                 "template.innerHTML",
                 "*.render",
                 "*.compile"
             ]),
             
             sanitizers: Some([
+                // HTML sanitization
                 "DOMPurify.sanitize",
                 "validator.escape",
                 "encodeHTML",
                 "escapeHTML",
-                "sanitizeHTML"
+                "sanitizeHTML",
+                
+                // Safe DOM methods
+                "*.textContent",
+                "document.createTextNode",
+                
+                // Framework auto-escaping
+                "React.createElement",
+                "Vue.createTextVNode"
             ]),
             
             finding_type: Some("Cross-Site Scripting"),
             severity: Some("High"),
             confidence: Some("High"),
             
-            description: Some("User input flows to output context without proper encoding, enabling XSS attacks"),
+            description: Some("User input flows to output context without proper encoding"),
             
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            
+            conditions: Some([
+                // Exclude safe DOM operations
+                (
+                    field: "pattern",
+                    operator: "not_contains", 
+                    value: "textContent",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "className", 
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "querySelector(",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "getElementById(",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "getAttribute(",
+                    condition_type: Some("exclude_safe_operations")
+                )
+            ]),
             
             tags: Some(["xss", "cwe-80", "frontend"])
         ),
@@ -472,65 +568,76 @@
             mode: "taint",
             
             sources: Some([
-                // URL parameters
-                "window.location.search",
-                "location.search",
-                "window.location.hash",
-                "location.hash",
-                "URLSearchParams",
-                "new URL",
+                // External/untrusted sources only
+                "event.data",              // PostMessage from external sources
+                "*.responseText",          // Network responses
+                "*.response",              // Network responses  
+                "prompt(",                 // User prompts
+                "*.value",                 // Form inputs (filtered by conditions)
                 
-                // User input
-                "*.value",
-                "prompt(",
-                "event.data",
+                // URL parameters - but only when accessed for external use
+                "new URLSearchParams(window.location.search).get",  // Specific parameter access
+                "decodeURIComponent",      // Decoded URL components
+                "decodeURI",              // Decoded URLs
                 
-                // Network responses
-                "*.responseText",
-                "*.response",
-                "*.location",
-                
-                // Storage
-                "localStorage.getItem",
-                "sessionStorage.getItem"
+                // External storage (could be manipulated)
+                "localStorage.getItem",    // Only if from external sources
+                "sessionStorage.getItem"   // Only if from external sources
             ]),
             
             sinks: Some([
-                // Direct navigation
-                "window.location",
+                // Direct navigation (high risk)
                 "window.location.href",
+                "window.location.assign", 
+                "window.location.replace",
                 "location.href",
                 "location.assign",
                 "location.replace",
                 "window.open",
                 
-                // Form actions
-                "*.action",
-                "*.formAction",
+                // External redirects
+                "*.href",                  // Link href attributes
+                "*.src",                   // Resource sources
+                "*.action",                // Form actions
+                "*.formAction",            // Form actions
                 
-                // Link modification
-                "*.href",
-                
-                // Meta refresh
-                "*.setAttribute(\"http-equiv\"",
-                "*.content"
+                // Meta refresh (high risk)
+                "*.setAttribute(\"http-equiv\", \"refresh\")"
             ]),
             
             sanitizers: Some([
-                // URL validation
-                "validateURL",
+                // URL validation functions
                 "isValidURL",
-                "sanitizeURL",
+                "validateURL", 
+                "isAllowedURL",
                 "whitelistURL",
+                "sanitizeURL",
                 
-                // Domain checking
-                "checkDomain",
-                "validateDomain",
+                // Domain validation
                 "isAllowedDomain",
+                "validateDomain",
+                "isSameDomain",
+                "allowedHosts.includes",
+                "whitelist.includes",
                 
-                // URL parsing for validation
-                "new URL(",
-                "URL.parse"
+                // URL construction with validation
+                "new URL(",               // URL constructor validates format
+                "URL.parse",
+                
+                // Relative URL enforcement
+                "startsWith(\"/\")",       // Relative URLs
+                "startsWith(\"./\")",      // Relative URLs
+                "isRelativeURL",
+                "makeRelative",
+                
+                // Same-origin checks
+                "location.origin",
+                "window.location.origin",
+                "document.domain",
+                
+                // Encoding (safe when used properly)
+                "encodeURIComponent",
+                "encodeURI"
             ]),
             
             finding_type: Some("Open Redirect"),
@@ -541,6 +648,58 @@
             
             file_types: Some((
                 extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            
+            conditions: Some([
+                // Exclude safe internal URL operations
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "window.location.search",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern", 
+                    operator: "not_contains",
+                    value: "location.search",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains", 
+                    value: "location.pathname",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "history.pushState",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "history.replaceState", 
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "URLSearchParams(window.location.search)",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "urlParams.toString()",
+                    condition_type: Some("exclude_safe_operations")
+                ),
+                (
+                    field: "pattern",
+                    operator: "not_contains",
+                    value: "encodeURIComponent(",
+                    condition_type: Some("exclude_safe_operations")
+                )
+            ]),
             
             tags: Some(["open-redirect", "cwe-601", "redirect"])
         ),
@@ -1298,8 +1457,12 @@
                 
                 // Script creation and execution
                 "document.createElement",
-                "*.src",
-                "*.appendChild"
+                "*.appendChild",
+                "*.insertBefore",
+                
+                // WebAssembly
+                "WebAssembly.compile",
+                "WebAssembly.instantiate"
             ]),
             
             sanitizers: Some([

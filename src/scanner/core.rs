@@ -727,6 +727,23 @@ impl ScanningLogic {
                     if let Some(taint_info) = flow_tracker.is_variable_tainted(&used_variable, &func_name).cloned() {
                         // Check if we have a legitimate rule for this source-sink combination
                         if let Some(rule) = rule_deduplicator.get_rule_for_combination(&taint_info.source_pattern, &sink_pattern) {
+                            // Check if the sink expression contains sanitizers before creating finding
+                            if let Some(sanitizers) = &rule.sanitizers {
+                                let mut is_sanitized = false;
+                                for sanitizer in sanitizers {
+                                    if node_text.contains(sanitizer) {
+                                        log::debug!("[SANITIZER_CHECK] Found sanitizer '{}' in sink: '{}'", sanitizer, node_text);
+                                        is_sanitized = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if is_sanitized {
+                                    log::debug!("[SANITIZER_CHECK] Skipping finding due to sanitization: '{}'", node_text);
+                                    continue; // Skip this finding as it's sanitized
+                                }
+                            }
+                            
                             // Ensure we haven't already processed this exact flow
                             if !flow_tracker.is_flow_processed(line, &taint_info.source_pattern, &sink_pattern) {
                                 flow_tracker.mark_flow_processed(line, &taint_info.source_pattern, &sink_pattern);
