@@ -9,16 +9,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logger (respect RUST_LOG or --verbose flag)
-    if cli.verbose {
-        env_logger::Builder::from_default_env()
-            .filter_level(LevelFilter::Debug)
-            .init();
-    } else {
-        let _ = env_logger::Builder::from_default_env()
-            .filter_level(LevelFilter::Info)
-            .try_init();
-    }
-
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(if cli.verbose { "debug" } else { "info" }))
+        .init();
     // Configure threading if specified
     if let Some(threads) = cli.threads {
         rayon::ThreadPoolBuilder::new()
@@ -29,9 +21,12 @@ fn main() -> Result<()> {
 
     let start_time = std::time::Instant::now();
     
+    // Determine if we should show progress (suppress for structured output formats)
+    let show_progress = !matches!(cli.output_format.as_str(), "json" | "csv");
+    
     // Handle all vulnerability scanning modes with unified flow
     let findings = if cli.taint_analysis {
-        run_taint_analysis(&cli)?
+        run_taint_analysis(&cli, show_progress)?
     } else {
         // Validate CLI parameters using CommonUtils
         CommonUtils::validate_cli_params(&cli.language, &cli.rules_path)
@@ -44,17 +39,21 @@ fn main() -> Result<()> {
             ))?;
 
         match (&cli.language, &cli.rules_path) {
-            (Some(_), Some(_)) => run_explicit_scan(&cli)?,
-            (None, None) => run_auto_detection_scan(&cli)?,
+            (Some(_), Some(_)) => run_explicit_scan(&cli, show_progress)?,
+            (None, None) => run_auto_detection_scan(&cli, show_progress)?,
             _ => unreachable!(), // Validation above ensures this won't happen
         }
     };
 
     // Output results
     let duration = start_time.elapsed();
-    println!();
-    println!("⏱️  Scan completed in {:.2?}", duration);
-    println!();
+    
+    // Only show completion message for text output
+    if show_progress {
+        println!();
+        println!("⏱️  Scan completed in {:.2?}", duration);
+        println!();
+    }
 
     match cli.output_format.as_str() {
         "json" => print_findings_json(&findings),

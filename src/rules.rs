@@ -3,13 +3,58 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
 use crate::language::LanguageSupport;
 use crate::common::CommonUtils;
 
 // Re-export for backward compatibility
 pub use crate::models::{UnifiedRule, FileTypes, Condition};
 
+// Structure for centralized exclusion patterns
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExclusionPatterns {
+    pub frontend_exclusions: Option<Vec<String>>,
+    pub backend_exclusions: Option<Vec<String>>,
+    pub common_exclusions: Option<Vec<String>>,
+}
 
+impl ExclusionPatterns {
+    pub fn load_from_file(file_path: &str) -> Result<Self> {
+        let content = fs::read_to_string(file_path)
+            .context(format!("Failed to read exclusion patterns file: {}", file_path))?;
+        
+        ron::from_str(&content).context("Failed to parse exclusion patterns RON")
+    }
+    
+    pub fn get_patterns(&self, pattern_type: &str) -> Vec<String> {
+        match pattern_type {
+            "frontend" => {
+                let mut patterns = Vec::new();
+                if let Some(common) = &self.common_exclusions {
+                    patterns.extend(common.clone());
+                }
+                if let Some(frontend) = &self.frontend_exclusions {
+                    patterns.extend(frontend.clone());
+                }
+                patterns
+            }
+            "backend" => {
+                let mut patterns = Vec::new();
+                if let Some(common) = &self.common_exclusions {
+                    patterns.extend(common.clone());
+                }
+                if let Some(backend) = &self.backend_exclusions {
+                    patterns.extend(backend.clone());
+                }
+                patterns
+            }
+            "common" => {
+                self.common_exclusions.clone().unwrap_or_default()
+            }
+            _ => Vec::new()
+        }
+    }
+}
 
 // Simple injection pattern checking for basic patterns
 pub fn check_for_injection_pattern(text: &str, _language_support: &dyn LanguageSupport) -> bool {
@@ -155,6 +200,59 @@ impl Rules {
         self.rules.iter().filter(|rule| {
             rule.category.as_ref().map(|c| c == category).unwrap_or(false)
         }).collect()
+    }
+
+    /// Apply centralized exclusion patterns to all rules
+    pub fn apply_centralized_exclusions(&mut self, exclusion_patterns: &ExclusionPatterns, pattern_type: &str) {
+        let patterns = exclusion_patterns.get_patterns(pattern_type);
+        
+        for rule in &mut self.rules {
+            if let Some(file_types) = &mut rule.file_types {
+                // If rule doesn't have exclusion patterns, add the centralized ones
+                if file_types.exclude_patterns.is_none() {
+                    file_types.exclude_patterns = Some(patterns.clone());
+                } else {
+                    // If rule has exclusion patterns, merge with centralized ones
+                    if let Some(existing_patterns) = &mut file_types.exclude_patterns {
+                        let mut merged_patterns = patterns.clone();
+                        merged_patterns.extend(existing_patterns.clone());
+                        *existing_patterns = merged_patterns;
+                    }
+                }
+            } else {
+                // If rule doesn't have file_types, create one with centralized exclusions
+                rule.file_types = Some(FileTypes {
+                    python: None,
+                    java: None,
+                    javascript: None,
+                    tsx: None,
+                    html: None,
+                    extensions: Some(vec![".js".to_string(), ".jsx".to_string(), ".ts".to_string(), ".tsx".to_string()]),
+                    include_patterns: None,
+                    exclude_patterns: Some(patterns.clone()),
+                });
+            }
+        }
+    }
+
+    /// Load rules from directory with centralized exclusions applied
+    pub fn load_from_directory_with_exclusions(rules_dir: &str, pattern_type: &str) -> Result<Self> {
+        let mut rules = Self::load_from_directory(rules_dir)?;
+        
+        // Try to load exclusion patterns from the same directory
+        let exclusion_file = format!("{}/exclusion_patterns.ron", rules_dir);
+        if Path::new(&exclusion_file).exists() {
+            match ExclusionPatterns::load_from_file(&exclusion_file) {
+                Ok(exclusion_patterns) => {
+                    rules.apply_centralized_exclusions(&exclusion_patterns, pattern_type);
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to load exclusion patterns from {}: {}", exclusion_file, e);
+                }
+            }
+        }
+        
+        Ok(rules)
     }
 }
 
