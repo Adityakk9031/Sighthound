@@ -128,36 +128,73 @@ pub fn rule_applies_to_file_path(file_types: Option<&FileTypes>, file_path: &Pat
 
 /// Detect programming language from file path
 pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
+    let file_name = file_path.file_name()?.to_str()?;
+    
+    // Handle standard extensions
     match file_path.extension()?.to_str()? {
-        "py" => Some("python"),
-        "java" => Some("java"),
-        "js" | "mjs" => Some("javascript"),
-        "tsx" => Some("tsx"),
-        "html" => {
-            let path_str = file_path.to_string_lossy().to_lowercase();
-            if path_str.contains("template") || path_str.contains("django") {
-                Some("html")
-            } else {
-                Some("html")
+        // Python extensions
+        "py" | "pyw" | "pyi" | "pyx" => Some("python"),
+        
+        // Java extensions  
+        "java" | "jav" => Some("java"),
+        
+        // JavaScript extensions (including modern variants)
+        "js" | "mjs" | "cjs" | "jsx" => Some("javascript"),
+        
+        // TypeScript extensions (including all variants)
+        "ts" | "tsx" | "mts" | "cts" => Some("tsx"),
+        
+        // HTML and template extensions
+        "html" | "htm" | "xhtml" | "shtml" | "dhtml" => Some("html"),
+        
+        // Template file extensions that should be treated as HTML
+        "hbs" | "handlebars" | "mustache" | "twig" | "njk" | "nunjucks" | "ejs" | "pug" | "jade" => Some("html"),
+        
+        // Vue.js single file components (contain HTML, JS, and CSS)
+        "vue" => Some("javascript"),
+        
+        // Svelte components 
+        "svelte" => Some("javascript"),
+        
+        // Handle config files and other special cases
+        _ => {
+            // Check for JavaScript/TypeScript config files
+            if file_name.contains("webpack") || file_name.contains("rollup") || file_name.contains("vite") {
+                if file_name.ends_with(".config.js") || file_name.ends_with(".config.mjs") || file_name.ends_with(".config.cjs") {
+                    return Some("javascript");
+                }
+                if file_name.ends_with(".config.ts") || file_name.ends_with(".config.mts") || file_name.ends_with(".config.cts") {
+                    return Some("tsx");
+                }
             }
-        },
-        _ => None,
+            
+            // Check for Python files with unusual extensions
+            if file_name.ends_with("file") && (file_name.contains("requirements") || file_name.contains("Pipfile")) {
+                return Some("python");
+            }
+            
+            None
+        }
     }
 }
 
 /// Discover files by language with configurable parallelism
 pub fn discover_files_by_language(root_dir: &str, parallel: bool) -> Result<HashMap<String, Vec<PathBuf>>> {
+    discover_files_by_language_with_progress(root_dir, parallel, true)
+}
+
+pub fn discover_files_by_language_with_progress(root_dir: &str, parallel: bool, show_progress: bool) -> Result<HashMap<String, Vec<PathBuf>>> {
     let estimated_languages = crate::config::ScanDefaults::ESTIMATED_LANGUAGES;
 
     if parallel {
-        discover_files_parallel(root_dir, estimated_languages)
+        discover_files_parallel(root_dir, estimated_languages, show_progress)
     } else {
-        discover_files_sequential(root_dir, estimated_languages)
+        discover_files_sequential(root_dir, estimated_languages, show_progress)
     }
 }
 
 /// Internal parallel file discovery implementation
-fn discover_files_parallel(root_dir: &str, estimated_languages: usize) -> Result<HashMap<String, Vec<PathBuf>>> {
+fn discover_files_parallel(root_dir: &str, estimated_languages: usize, show_progress: bool) -> Result<HashMap<String, Vec<PathBuf>>> {
     let all_paths: Vec<PathBuf> = WalkDir::new(root_dir)
         .follow_links(false)
         .into_iter()
@@ -190,8 +227,10 @@ fn discover_files_parallel(root_dir: &str, estimated_languages: usize) -> Result
         (all_paths.len() / estimated_languages).max(crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG)
     };
 
-    println!("📂 Discovered {} files total, estimating {} files per language",
-             all_paths.len(), estimated_files_per_lang);
+    if show_progress {
+        println!("📂 Discovered {} files total, estimating {} files per language",
+                 all_paths.len(), estimated_files_per_lang);
+    }
 
     let files_by_language = Arc::new(Mutex::new(
         HashMap::<String, Vec<PathBuf>>::with_capacity(estimated_languages)
@@ -213,7 +252,7 @@ fn discover_files_parallel(root_dir: &str, estimated_languages: usize) -> Result
 }
 
 /// Internal sequential file discovery implementation
-fn discover_files_sequential(root_dir: &str, estimated_languages: usize) -> Result<HashMap<String, Vec<PathBuf>>> {
+fn discover_files_sequential(root_dir: &str, estimated_languages: usize, _show_progress: bool) -> Result<HashMap<String, Vec<PathBuf>>> {
     let mut files_by_language = HashMap::with_capacity(estimated_languages);
 
     for entry in WalkDir::new(root_dir)
@@ -253,6 +292,16 @@ pub fn discover_files_by_language_parallel(root_dir: &str) -> Result<HashMap<Str
 /// Sequential file discovery (replaces legacy wrapper)
 pub fn discover_files_by_language_sequential(root_dir: &str) -> Result<HashMap<String, Vec<PathBuf>>> {
     discover_files_by_language(root_dir, false)
+}
+
+/// Parallel file discovery with progress control
+pub fn discover_files_by_language_parallel_with_progress(root_dir: &str, show_progress: bool) -> Result<HashMap<String, Vec<PathBuf>>> {
+    discover_files_by_language_with_progress(root_dir, true, show_progress)
+}
+
+/// Sequential file discovery with progress control
+pub fn discover_files_by_language_sequential_with_progress(root_dir: &str, show_progress: bool) -> Result<HashMap<String, Vec<PathBuf>>> {
+    discover_files_by_language_with_progress(root_dir, false, show_progress)
 }
 
 // =========================================================================
@@ -399,19 +448,22 @@ impl AstUtils {
     /// Domain-specific sanitization pattern checking
     pub fn check_for_sanitization(code: &str, language: &str) -> bool {
         match language {
-            "javascript" | "typescript" => Self::check_javascript_sanitization(code),
+            "javascript" | "typescript" => Self::check_html_sanitization(code),
             "python" => Self::check_python_sanitization(code),
             "java" => Self::check_java_sanitization(code),
             _ => Self::check_generic_sanitization(code),
         }
     }
 
-    fn check_javascript_sanitization(code: &str) -> bool {
-        let js_sanitizers = [
-            "DOMPurify.sanitize", "sanitize(", ".textContent", ".innerText",
-            "encodeURIComponent", "encodeURI", "escape(", "validator.escape", "xss(",
+    fn check_html_sanitization(code: &str) -> bool {
+        let html_sanitizers = [
+            "DOMPurify.sanitize(",
+            "validator.escape(",
+            "xss(",
+            "escapeHtml(",
+            "encodeHTML(",
         ];
-        js_sanitizers.iter().any(|pattern| code.contains(pattern))
+        html_sanitizers.iter().any(|pat| code.contains(pat))
     }
 
     fn check_python_sanitization(code: &str) -> bool {

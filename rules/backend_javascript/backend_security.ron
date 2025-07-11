@@ -1,0 +1,530 @@
+(
+    rules: [
+        // ==================== CWE-601: Server-side Open Redirect ====================
+        (
+            id: Some("js-server-open-redirect-001"),
+            name: Some("Server-side Open Redirect"),
+            category: Some("redirect"),
+            mode: "taint",
+            
+            sources: Some([
+                // Express.js request parameters
+                "req.query.*",
+                "req.params.*",
+                "req.body.*",
+                "request.query.*",
+                "request.params.*",
+                "request.body.*",
+                
+                // Fastify request parameters
+                "request.query.*",
+                "request.params.*",
+                "request.body.*",
+                
+                // Koa request parameters
+                "ctx.query.*",
+                "ctx.params.*",
+                "ctx.request.body.*",
+                "context.query.*",
+                "context.params.*",
+                "context.request.body.*",
+                
+                // URL parsing
+                "URLSearchParams",
+                "new URL",
+                "url.parse",
+                "decodeURIComponent",
+                "decodeURI",
+                
+                // Function parameters (common in redirect functions)
+                "options.location",
+                "options.url",
+                "options.redirect",
+                "redirectUrl",
+                "targetUrl",
+                "returnUrl",
+                "url",
+                "location",
+                
+                // Generic user input
+                "userInput",
+                "input",
+                "data",
+                
+                // HTTP headers
+                "req.headers.*",
+                "request.headers.*",
+                "ctx.headers.*"
+            ]),
+            
+            sinks: Some([
+                // Node.js HTTP response headers - more specific patterns
+                "res.writeHead(*,*Location*",
+                "response.writeHead(*,*Location*",
+                "res.setHeader(*Location*",
+                "response.setHeader(*Location*",
+                "res.setHeader('Location'*",
+                "res.setHeader(\"Location\"*",
+                "response.setHeader('Location'*",
+                "response.setHeader(\"Location\"*",
+                
+                // Express.js style redirects
+                "res.redirect",
+                "response.redirect",
+                
+                // Fastify style redirects
+                "reply.redirect",
+                
+                // Koa style redirects
+                "ctx.redirect",
+                "context.redirect",
+                
+                // Direct header manipulation
+                "*.headers.location",
+                "*.headers.Location"
+            ]),
+            
+            sanitizers: Some([
+                // URL validation
+                "isValidURL",
+                "validateURL",
+                "URL.parse",
+                "new URL(",
+                
+                // Domain validation
+                "isAllowedDomain",
+                "isSameDomain",
+                "allowedHosts.includes",
+                "whitelist.includes",
+                "ALLOWED_DOMAINS.includes",
+                
+                // Relative URL enforcement
+                "startsWith(\"/\")",
+                "isRelativeURL",
+                "makeRelative",
+                
+                // URL sanitization
+                "sanitizeURL",
+                "validateRedirectURL"
+            ]),
+            
+            finding_type: Some("Open Redirect"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-601"),
+            
+            description: Some("User-controlled data flows to HTTP redirect headers without validation"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"]),
+                exclude_patterns: Some([
+                    // Minified files
+                    "*.min.js", "*.min.jsx", "*.min.ts", "*.min.tsx",
+                    "*.bundle.js", "*.chunk.js", "*.vendor.js", 
+                    "*-min.js", "*-bundle.js", "*-compiled.js",
+                    
+                    // Frontend directories (exclude from backend analysis)
+                    "*/public/*", "*/static/*", "*/assets/*", "*/dist/*",
+                    "*/build/*", "*/frontend/*", "*/client/*",
+                    
+                    // Third-party library directories
+                    "*/node_modules/*", "*/lib/*", "*/vendor/*",
+                    "*/libraries/*", "*/deps/*", "*/dependencies/*"
+                    
+                    // Note: Removed test file exclusions for backend analysis
+                    // Backend code can legitimately be in test files
+                ])
+            )),
+            
+            tags: Some(["open-redirect", "cwe-601", "server-side", "backend"])
+        ),
+
+        // ==================== CWE-78: Server-side Command Injection ====================
+        (
+            id: Some("js-server-command-injection-001"),
+            name: Some("Server-side Command Injection"),
+            category: Some("command-injection"),
+            mode: "taint",
+            
+            sources: Some([
+                // Request parameters
+                "req.query.*",
+                "req.params.*",
+                "req.body.*",
+                "request.query.*",
+                "request.params.*",
+                "request.body.*",
+                "ctx.query.*",
+                "ctx.params.*",
+                "ctx.request.body.*",
+                
+                // File uploads
+                "req.files.*",
+                "req.file.*",
+                
+                // Headers
+                "req.headers.*",
+                "request.headers.*",
+                
+                // Function parameters
+                "command",
+                "cmd",
+                "shellCommand",
+                "userInput",
+                "input"
+            ]),
+            
+            sinks: Some([
+                // Node.js child_process - more specific patterns
+                "*.exec(",
+                "*.execSync(",
+                "*.spawn(",
+                "*.spawnSync(",
+                "*.execFile(",
+                "*.execFileSync(",
+                "child_process.exec",
+                "child_process.execSync",
+                "child_process.spawn",
+                "child_process.spawnSync",
+                "child_process.execFile",
+                "child_process.execFileSync",
+                
+                // Shell execution
+                "sh",
+                "bash",
+                "cmd",
+                "powershell"
+            ]),
+            
+            sanitizers: Some([
+                // Command sanitization
+                "escapeShellArg",
+                "escapeShellCmd",
+                "shellEscape",
+                "sanitizeCommand",
+                
+                // Validation
+                "validateCommand",
+                "isValidCommand",
+                "commandWhitelist.includes",
+                
+                // Safe alternatives
+                "execFile", // When used with array arguments
+                "spawn" // When used with array arguments
+            ]),
+            
+            finding_type: Some("Command Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-78"),
+            
+            description: Some("User-controlled data flows to command execution without sanitization"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"]),
+                exclude_patterns: Some([
+                    "*.min.js", "*.min.jsx", "*.min.ts", "*.min.tsx",
+                    "*/public/*", "*/static/*", "*/assets/*", "*/dist/*",
+                    "*/build/*", "*/frontend/*", "*/client/*",
+                    "*/node_modules/*", "*/lib/*", "*/vendor/*"
+                ])
+            )),
+            
+            tags: Some(["command-injection", "cwe-78", "server-side", "backend"])
+        ),
+
+        // ==================== CWE-89: Server-side SQL Injection ====================
+        (
+            id: Some("js-server-sql-injection-001"),
+            name: Some("Server-side SQL Injection"),
+            category: Some("sql-injection"),
+            mode: "taint",
+            
+            sources: Some([
+                // Request parameters
+                "req.query.*",
+                "req.params.*",
+                "req.body.*",
+                "request.query.*",
+                "request.params.*",
+                "request.body.*",
+                "ctx.query.*",
+                "ctx.params.*",
+                "ctx.request.body.*",
+                
+                // Headers
+                "req.headers.*",
+                "request.headers.*",
+                
+                // Function parameters
+                "userInput",
+                "input",
+                "data",
+                "searchTerm",
+                "query"
+            ]),
+            
+            sinks: Some([
+                // Raw SQL execution - more specific patterns
+                "*.query(",
+                "*.execute(",
+                "*.exec(",
+                "*.run(",
+                
+                // Database specific
+                "db.query",
+                "db.execute",
+                "db.run",
+                "connection.query",
+                "connection.execute",
+                "pool.query",
+                "pool.execute",
+                
+                // ORM raw queries
+                "sequelize.query",
+                "knex.raw",
+                "typeorm.query",
+                "mongoose.aggregate",
+                
+                // MySQL
+                "mysql.query",
+                "mysql2.query",
+                
+                // PostgreSQL
+                "pg.query",
+                "client.query",
+                
+                // SQLite
+                "sqlite3.run",
+                "sqlite3.exec",
+                "sqlite3.prepare"
+            ]),
+            
+            sanitizers: Some([
+                // Parameterized queries
+                "prepare",
+                "prepared",
+                "parameterized",
+                
+                // Escaping functions
+                "escape",
+                "escapeId",
+                "mysql.escape",
+                "pg.escape",
+                
+                // Validation
+                "validateSQL",
+                "sanitizeSQL",
+                "isValidSQL"
+            ]),
+            
+            finding_type: Some("SQL Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-89"),
+            
+            description: Some("User-controlled data flows to SQL queries without parameterization"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"]),
+                exclude_patterns: Some([
+                    "*.min.js", "*.min.jsx", "*.min.ts", "*.min.tsx",
+                    "*/public/*", "*/static/*", "*/assets/*", "*/dist/*",
+                    "*/build/*", "*/frontend/*", "*/client/*",
+                    "*/node_modules/*", "*/lib/*", "*/vendor/*"
+                ])
+            )),
+            
+            tags: Some(["sql-injection", "cwe-89", "server-side", "backend"])
+        ),
+
+        // ==================== CWE-22: Server-side Path Traversal ====================
+        (
+            id: Some("js-server-path-traversal-001"),
+            name: Some("Server-side Path Traversal"),
+            category: Some("path-traversal"),
+            mode: "taint",
+            
+            sources: Some([
+                // Request parameters
+                "req.query.*",
+                "req.params.*",
+                "req.body.*",
+                "request.query.*",
+                "request.params.*",
+                "request.body.*",
+                "ctx.query.*",
+                "ctx.params.*",
+                
+                // File upload names
+                "req.files.*.name",
+                "req.file.originalname",
+                "req.file.filename",
+                
+                // Headers
+                "req.headers.*",
+                
+                // Function parameters
+                "filename",
+                "filepath",
+                "path",
+                "file",
+                "userInput"
+            ]),
+            
+            sinks: Some([
+                // File system operations
+                "fs.readFile",
+                "fs.readFileSync",
+                "fs.writeFile",
+                "fs.writeFileSync",
+                "fs.createReadStream",
+                "fs.createWriteStream",
+                "fs.open",
+                "fs.openSync",
+                "fs.stat",
+                "fs.statSync",
+                "fs.access",
+                "fs.accessSync",
+                "fs.unlink",
+                "fs.unlinkSync",
+                "fs.rmdir",
+                "fs.rmdirSync",
+                "fs.mkdir",
+                "fs.mkdirSync",
+                
+                // Path operations
+                "path.join",
+                "path.resolve",
+                
+                // Express static serving
+                "express.static",
+                "res.sendFile",
+                "response.sendFile",
+                
+                // Require/import
+                "require",
+                "import"
+            ]),
+            
+            sanitizers: Some([
+                // Path validation
+                "path.normalize",
+                "path.resolve",
+                "validatePath",
+                "sanitizePath",
+                "isValidPath",
+                
+                // Security checks
+                "path.basename",
+                "allowedPaths.includes",
+                "pathWhitelist.includes",
+                
+                // Safe path construction
+                "path.join" // When used properly with validation
+            ]),
+            
+            finding_type: Some("Path Traversal"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-22"),
+            
+            description: Some("User-controlled data flows to file system operations without path validation"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"]),
+                exclude_patterns: Some([
+                    "*.min.js", "*.min.jsx", "*.min.ts", "*.min.tsx",
+                    "*/public/*", "*/static/*", "*/assets/*", "*/dist/*",
+                    "*/build/*", "*/frontend/*", "*/client/*",
+                    "*/node_modules/*", "*/lib/*", "*/vendor/*"
+                ])
+            )),
+            
+            tags: Some(["path-traversal", "cwe-22", "server-side", "backend"])
+        ),
+
+        // ==================== CWE-94: Server-side Code Injection ====================
+        (
+            id: Some("js-server-code-injection-001"),
+            name: Some("Server-side Code Injection"),
+            category: Some("code-injection"),
+            mode: "taint",
+            
+            sources: Some([
+                // Request parameters
+                "req.query.*",
+                "req.params.*",
+                "req.body.*",
+                "request.query.*",
+                "request.params.*",
+                "request.body.*",
+                "ctx.query.*",
+                "ctx.params.*",
+                
+                // Headers
+                "req.headers.*",
+                
+                // Function parameters
+                "code",
+                "script",
+                "expression",
+                "userInput",
+                "input"
+            ]),
+            
+            sinks: Some([
+                // Direct code execution
+                "eval",
+                "Function",
+                "setTimeout",
+                "setInterval",
+                
+                // VM module
+                "vm.runInThisContext",
+                "vm.runInNewContext",
+                "vm.runInContext",
+                
+                // Dynamic requires
+                "require",
+                "import",
+                
+                // Template engines (unsafe usage)
+                "ejs.render",
+                "handlebars.compile",
+                "mustache.render"
+            ]),
+            
+            sanitizers: Some([
+                // Code validation
+                "validateCode",
+                "sanitizeCode",
+                "isValidCode",
+                
+                // Safe alternatives
+                "JSON.parse", // For data, not code
+                "parseInt",
+                "parseFloat"
+            ]),
+            
+            finding_type: Some("Code Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-95"),
+            
+            description: Some("User-controlled data flows to code execution without validation"),
+            
+            file_types: Some((
+                extensions: Some([".js", ".jsx", ".ts", ".tsx"]),
+                exclude_patterns: Some([
+                    "*.min.js", "*.min.jsx", "*.min.ts", "*.min.tsx",
+                    "*/public/*", "*/static/*", "*/assets/*", "*/dist/*",
+                    "*/build/*", "*/frontend/*", "*/client/*",
+                    "*/node_modules/*", "*/lib/*", "*/vendor/*"
+                ])
+            )),
+            
+            tags: Some(["code-injection", "cwe-94", "server-side", "backend"])
+        )
+    ]
+) 

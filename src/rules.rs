@@ -3,13 +3,73 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
 use crate::language::LanguageSupport;
 use crate::common::CommonUtils;
 
 // Re-export for backward compatibility
 pub use crate::models::{UnifiedRule, FileTypes, Condition};
 
+// Embedded rules - include rule files at compile time
+const EMBEDDED_PYTHON_GENERAL_RULES: &str = include_str!("../rules/python/general_security.ron");
+const EMBEDDED_PYTHON_COMMAND_INJECTION_RULES: &str = include_str!("../rules/python/command_injection.ron");
+const EMBEDDED_PYTHON_CRYPTOGRAPHY_RULES: &str = include_str!("../rules/python/cryptography.ron");
+const EMBEDDED_PYTHON_FILE_SYSTEM_RULES: &str = include_str!("../rules/python/file_system.ron");
+const EMBEDDED_PYTHON_SQL_INJECTION_RULES: &str = include_str!("../rules/python/sql_injection.ron");
+const EMBEDDED_PYTHON_WORKING_RULES: &str = include_str!("../rules/python/working.ron");
+const EMBEDDED_JAVASCRIPT_FRONTEND_RULES: &str = include_str!("../rules/javascript/frontend_security.ron");
+const EMBEDDED_JAVASCRIPT_BACKEND_RULES: &str = include_str!("../rules/backend_javascript/backend_security.ron");
+const EMBEDDED_JAVASCRIPT_TAINT_RULES: &str = include_str!("../rules/javascript/frontend_taint_security.ron");
 
+// Add more embedded rules as needed
+// const EMBEDDED_JAVA_RULES: &str = include_str!("../rules/java/security.ron");
+// const EMBEDDED_HTML_RULES: &str = include_str!("../rules/html/security.ron");
+
+// Structure for centralized exclusion patterns
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExclusionPatterns {
+    pub frontend_exclusions: Option<Vec<String>>,
+    pub backend_exclusions: Option<Vec<String>>,
+    pub common_exclusions: Option<Vec<String>>,
+}
+
+impl ExclusionPatterns {
+    pub fn load_from_file(file_path: &str) -> Result<Self> {
+        let content = fs::read_to_string(file_path)
+            .context(format!("Failed to read exclusion patterns file: {}", file_path))?;
+        
+        ron::from_str(&content).context("Failed to parse exclusion patterns RON")
+    }
+    
+    pub fn get_patterns(&self, pattern_type: &str) -> Vec<String> {
+        match pattern_type {
+            "frontend" => {
+                let mut patterns = Vec::new();
+                if let Some(common) = &self.common_exclusions {
+                    patterns.extend(common.clone());
+                }
+                if let Some(frontend) = &self.frontend_exclusions {
+                    patterns.extend(frontend.clone());
+                }
+                patterns
+            }
+            "backend" => {
+                let mut patterns = Vec::new();
+                if let Some(common) = &self.common_exclusions {
+                    patterns.extend(common.clone());
+                }
+                if let Some(backend) = &self.backend_exclusions {
+                    patterns.extend(backend.clone());
+                }
+                patterns
+            }
+            "common" => {
+                self.common_exclusions.clone().unwrap_or_default()
+            }
+            _ => Vec::new()
+        }
+    }
+}
 
 // Simple injection pattern checking for basic patterns
 pub fn check_for_injection_pattern(text: &str, _language_support: &dyn LanguageSupport) -> bool {
@@ -40,6 +100,91 @@ impl Default for Rules {
 }
 
 impl Rules {
+    /// Load embedded rules for a specific language
+    pub fn load_embedded_rules(language: &str, code_type: Option<&str>) -> Result<Self> {
+        let mut all_rules = Vec::new();
+        
+        match language {
+            "python" => {
+                // Load all Python rule files
+                let general_rules: Rules = ron::from_str(EMBEDDED_PYTHON_GENERAL_RULES)
+                    .context("Failed to parse embedded Python general rules")?;
+                all_rules.push(general_rules);
+                
+                let command_injection_rules: Rules = ron::from_str(EMBEDDED_PYTHON_COMMAND_INJECTION_RULES)
+                    .context("Failed to parse embedded Python command injection rules")?;
+                all_rules.push(command_injection_rules);
+                
+                let cryptography_rules: Rules = ron::from_str(EMBEDDED_PYTHON_CRYPTOGRAPHY_RULES)
+                    .context("Failed to parse embedded Python cryptography rules")?;
+                all_rules.push(cryptography_rules);
+                
+                let file_system_rules: Rules = ron::from_str(EMBEDDED_PYTHON_FILE_SYSTEM_RULES)
+                    .context("Failed to parse embedded Python file system rules")?;
+                all_rules.push(file_system_rules);
+                
+                let sql_injection_rules: Rules = ron::from_str(EMBEDDED_PYTHON_SQL_INJECTION_RULES)
+                    .context("Failed to parse embedded Python SQL injection rules")?;
+                all_rules.push(sql_injection_rules);
+                
+                let working_rules: Rules = ron::from_str(EMBEDDED_PYTHON_WORKING_RULES)
+                    .context("Failed to parse embedded Python working rules")?;
+                all_rules.push(working_rules);
+            }
+            "javascript" | "tsx" => {
+                // Load frontend rules by default
+                let frontend_rules: Rules = ron::from_str(EMBEDDED_JAVASCRIPT_FRONTEND_RULES)
+                    .context("Failed to parse embedded JavaScript frontend rules")?;
+                all_rules.push(frontend_rules);
+                
+                // Load taint rules
+                let taint_rules: Rules = ron::from_str(EMBEDDED_JAVASCRIPT_TAINT_RULES)
+                    .context("Failed to parse embedded JavaScript taint rules")?;
+                all_rules.push(taint_rules);
+                
+                // Load backend rules if requested
+                if let Some(code_type) = code_type {
+                    if code_type != "frontend" {
+                        let backend_rules: Rules = ron::from_str(EMBEDDED_JAVASCRIPT_BACKEND_RULES)
+                            .context("Failed to parse embedded JavaScript backend rules")?;
+                        all_rules.push(backend_rules);
+                    }
+                }
+            }
+            // Add more languages as needed
+            _ => {
+                return Err(anyhow::anyhow!("No embedded rules available for language: {}", language));
+            }
+        }
+        
+        if all_rules.is_empty() {
+            return Ok(Self::default());
+        }
+        
+        Self::merge_rules(all_rules)
+    }
+    
+    /// Load embedded rules for all detected languages
+    pub fn load_all_embedded_rules(languages: &[String], code_type: Option<&str>) -> Result<Self> {
+        let mut all_rules = Vec::new();
+        
+        for language in languages {
+            match Self::load_embedded_rules(language, code_type) {
+                Ok(rules) => all_rules.push(rules),
+                Err(e) => {
+                    // Log warning but continue with other languages
+                    eprintln!("Warning: Failed to load embedded rules for {}: {}", language, e);
+                }
+            }
+        }
+        
+        if all_rules.is_empty() {
+            return Err(anyhow::anyhow!("No embedded rules found for any of the detected languages"));
+        }
+        
+        Self::merge_rules(all_rules)
+    }
+
     pub fn load_from_file(rules_file: &str) -> Result<Self> {
         let content = fs::read_to_string(rules_file)
             .context(format!("Failed to read rules file: {}", rules_file))?;
@@ -155,6 +300,59 @@ impl Rules {
         self.rules.iter().filter(|rule| {
             rule.category.as_ref().map(|c| c == category).unwrap_or(false)
         }).collect()
+    }
+
+    /// Apply centralized exclusion patterns to all rules
+    pub fn apply_centralized_exclusions(&mut self, exclusion_patterns: &ExclusionPatterns, pattern_type: &str) {
+        let patterns = exclusion_patterns.get_patterns(pattern_type);
+        
+        for rule in &mut self.rules {
+            if let Some(file_types) = &mut rule.file_types {
+                // If rule doesn't have exclusion patterns, add the centralized ones
+                if file_types.exclude_patterns.is_none() {
+                    file_types.exclude_patterns = Some(patterns.clone());
+                } else {
+                    // If rule has exclusion patterns, merge with centralized ones
+                    if let Some(existing_patterns) = &mut file_types.exclude_patterns {
+                        let mut merged_patterns = patterns.clone();
+                        merged_patterns.extend(existing_patterns.clone());
+                        *existing_patterns = merged_patterns;
+                    }
+                }
+            } else {
+                // If rule doesn't have file_types, create one with centralized exclusions
+                rule.file_types = Some(FileTypes {
+                    python: None,
+                    java: None,
+                    javascript: None,
+                    tsx: None,
+                    html: None,
+                    extensions: Some(vec![".js".to_string(), ".jsx".to_string(), ".ts".to_string(), ".tsx".to_string()]),
+                    include_patterns: None,
+                    exclude_patterns: Some(patterns.clone()),
+                });
+            }
+        }
+    }
+
+    /// Load rules from directory with centralized exclusions applied
+    pub fn load_from_directory_with_exclusions(rules_dir: &str, pattern_type: &str) -> Result<Self> {
+        let mut rules = Self::load_from_directory(rules_dir)?;
+        
+        // Try to load exclusion patterns from the same directory
+        let exclusion_file = format!("{}/exclusion_patterns.ron", rules_dir);
+        if Path::new(&exclusion_file).exists() {
+            match ExclusionPatterns::load_from_file(&exclusion_file) {
+                Ok(exclusion_patterns) => {
+                    rules.apply_centralized_exclusions(&exclusion_patterns, pattern_type);
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to load exclusion patterns from {}: {}", exclusion_file, e);
+                }
+            }
+        }
+        
+        Ok(rules)
     }
 }
 

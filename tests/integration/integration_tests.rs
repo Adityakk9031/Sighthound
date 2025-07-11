@@ -66,7 +66,7 @@ def paste_data():
         // Load and validate rules
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        
+
         let malware_rules = rules.malware_detection.unwrap();
         assert_eq!(malware_rules.len(), 2);
 
@@ -94,13 +94,13 @@ def test_clipboard_operations():
     # Various clipboard access patterns
     pyperclip.copy("data")
     data = pyperclip.paste()
-    
+
     df = pd.DataFrame({"col": [1, 2, 3]})
     df.to_clipboard()
-    
+
     root = tk.Tk()
     root.clipboard_append("text")
-    
+
     # Non-matching function
     print("safe operation")
 "#;

@@ -63,6 +63,19 @@ impl CommonUtils {
             return false;
         }
 
+        // Special handling for DOM property patterns like *.innerHTML
+        if pattern.starts_with("*.") {
+            let property = &pattern[2..]; // Remove "*."
+            
+            // Handle TypeScript casting syntax: (element.innerHTML as Type) = value
+            if text.contains(&format!(".{}", property)) {
+                // Check for assignment context
+                if text.contains('=') && !text.contains("==") && !text.contains("!=") {
+                    return true;
+                }
+            }
+        }
+
         Self::matches_unified_pattern(pattern, text)
     }
 
@@ -286,6 +299,15 @@ impl CommonUtils {
             return expr.split('[').next().map(|s| s.trim().to_string());
         }
 
+        // Handle JavaScript declarations: const/let/var variable_name
+        let tokens: Vec<&str> = expr.split_whitespace().collect();
+        if tokens.len() >= 2 && matches!(tokens[0], "const" | "let" | "var") {
+            // Return the variable name after the declaration keyword
+            if Self::is_valid_variable_name(tokens[1]) {
+                return Some(tokens[1].to_string());
+            }
+        }
+
         // Extract final identifier from whitespace-separated expression
         expr.split_whitespace()
             .last()
@@ -316,8 +338,25 @@ impl CommonUtils {
             variables.push(var);
         }
 
+        // Assignment variables (both sides)
+        if let Some(var) = Self::extract_variable_from_assignment(expr, false) {
+            variables.push(var);
+        }
+
+        // Extract variables from the right side of assignments
+        if let Some(eq_pos) = expr.find('=') {
+            let right_side = &expr[eq_pos + 1..].trim();
+            // Recursively extract from right side, but avoid infinite recursion
+            if !right_side.contains('=') || right_side.contains("==") {
+                variables.extend(Self::extract_simple_variables(right_side));
+            }
+        }
+
         // F-string variables: f"echo {user_input}"
         variables.extend(Self::extract_f_string_variables(expr));
+
+        // JavaScript/TypeScript template literals: `hello ${user_input}`
+        variables.extend(Self::extract_template_literal_variables(expr));
 
         // Format string variables: "echo {}".format(user_input)
         variables.extend(Self::extract_format_variables(expr));
@@ -328,7 +367,10 @@ impl CommonUtils {
         // Function call arguments: eval(user_input)
         variables.extend(Self::extract_function_arguments(expr).unwrap_or_default());
 
-        variables
+        // Remove duplicates and invalid names
+        variables.sort();
+        variables.dedup();
+        variables.into_iter().filter(|v| Self::is_valid_variable_name(v)).collect()
     }
 
     /// Extract direct variable from simple expressions
@@ -377,6 +419,9 @@ impl CommonUtils {
                                 if Self::is_valid_variable_name(clean_var) {
                                     log::debug!("[F_STRING_EXTRACT] Found variable: {}", clean_var);
                                     variables.push(clean_var.to_string());
+                                } else {
+                                    // For complex expressions, try to extract simple variables
+                                    variables.extend(Self::extract_simple_variables(clean_var));
                                 }
                             }
                         }
@@ -385,6 +430,58 @@ impl CommonUtils {
                 _ => {}
             }
             i += 1;
+        }
+
+        variables
+    }
+
+    /// Extract variables from JavaScript/TypeScript template literals
+    pub fn extract_template_literal_variables(expr: &str) -> Vec<String> {
+        log::debug!("[TEMPLATE_LITERAL_EXTRACT] Processing: '{}'", expr);
+        
+        let mut variables = Vec::new();
+        let mut dollar_brace_depth = 0usize;
+        let mut current_start: Option<usize> = None;
+        let chars: Vec<char> = expr.chars().collect();
+
+        let mut i = 0;
+        while i < chars.len() {
+            // Look for ${...} patterns
+            if i + 1 < chars.len() && chars[i] == '$' && chars[i + 1] == '{' {
+                dollar_brace_depth += 1;
+                if dollar_brace_depth == 1 {
+                    current_start = Some(i + 2); // Skip ${
+                }
+                i += 2;
+                continue;
+            }
+
+            if chars[i] == '{' && dollar_brace_depth > 0 {
+                dollar_brace_depth += 1;
+            } else if chars[i] == '}' && dollar_brace_depth > 0 {
+                dollar_brace_depth -= 1;
+                if dollar_brace_depth == 0 {
+                    if let Some(start) = current_start.take() {
+                        // Extract the expression inside ${}
+                        let raw_expr: String = chars[start..i].iter().collect();
+                        let raw_expr = raw_expr.trim();
+                        
+                        log::debug!("[TEMPLATE_LITERAL_EXTRACT] Found expression: '{}'", raw_expr);
+                        
+                        // Extract variables from the expression
+                        variables.extend(Self::extract_all_variables(raw_expr));
+                    }
+                }
+            }
+            
+            i += 1;
+        }
+
+        // Also extract assignment target if this is an assignment with template literal
+        if expr.contains('=') && expr.contains('`') {
+            if let Some(var) = Self::extract_variable_from_assignment(expr, false) {
+                variables.push(var);
+            }
         }
 
         variables
@@ -614,11 +711,26 @@ impl CommonUtils {
     }
 
     /// Validate required CLI parameter combination
-    pub fn validate_cli_params(language: &Option<String>, rules_path: &Option<String>) -> Result<()> {
-        match (language, rules_path) {
-            (Some(_), Some(_)) | (None, None) => Ok(()),
-            _ => Err(anyhow::anyhow!(
-                "Invalid combination. Provide both language and rules path, or use auto-detection"
+    pub fn validate_cli_params(language: &Option<String>, rules_path: &Option<String>, use_embedded_rules: bool, use_file_rules: bool) -> Result<()> {
+        // Resolve the actual embedded rules setting (use_file_rules overrides use_embedded_rules)
+        let should_use_embedded = use_embedded_rules && !use_file_rules;
+        
+        match (language, rules_path, should_use_embedded) {
+            // Explicit mode with embedded rules
+            (Some(_), None, true) => Ok(()),
+            // Explicit mode with file rules
+            (Some(_), Some(_), false) => Ok(()),
+            // Auto-detection mode (embedded or file rules)
+            (None, None, _) => Ok(()),
+            // Invalid combinations
+            (Some(_), Some(_), true) => Err(anyhow::anyhow!(
+                "Cannot specify both --rules-path and embedded rules. Use --use-file-rules to disable embedded rules"
+            )),
+            (Some(_), None, false) => Err(anyhow::anyhow!(
+                "Must specify --rules-path when using explicit mode with --use-file-rules"
+            )),
+            (None, Some(_), _) => Err(anyhow::anyhow!(
+                "Cannot specify --rules-path without language in auto-detection mode"
             )),
         }
     }

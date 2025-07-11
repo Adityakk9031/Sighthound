@@ -10,10 +10,6 @@ repository = "https://github.com/corgea/greppy_prototype"
 name = "find_vulns"
 path = "src/main.rs"
 
-[lib]
-name = "find_vulns"
-path = "src/lib.rs"
-
 [features]
 default = ["python", "java", "javascript", "tsx", "html", "django"]
 python = ["tree-sitter-python"]
@@ -48,7 +44,8 @@ memmap2 = "0.9"
 log = "0.4"
 env_logger = "0.10"
 ignore = "0.4"
-
+lazy_static = "1.4"
+dbg_breakpoint="0.1.1"
 [dev-dependencies]
 tempfile = "3.8"
 
@@ -67,3 +64,4 @@ path = "tests/integration/main.rs"
 [[test]]
 name = "end_to_end_tests"
 path = "tests/end_to_end/main.rs"
+

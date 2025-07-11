@@ -1,0 +1,60 @@
+// Centralized exclusion patterns for JavaScript/TypeScript security rules
+// This file defines common exclusion patterns that can be referenced by all rules
+// to ensure consistency and reduce maintenance overhead
+
+(
+    frontend_exclusions: Some([
+        "*.min.js", "*.min.jsx", "*.min.ts", "*.min.tsx",
+        "*.bundle.js", "*.chunk.js", "*.vendor.js", 
+        "*-min.js", "*-bundle.js", "*-compiled.js",
+        "*.production.js", "*.prod.js",
+        
+        // Third-party library directories
+        "*/node_modules/*", "*/assets/*", "*/lib/*", "*/vendor/*",
+        "*/libraries/*", "*/deps/*", "*/dependencies/*",
+        
+        // Common JavaScript libraries by name
+        "*jquery*.js", "*angular*.js", "*react*.js", "*vue*.js",
+        "*lodash*.js", "*underscore*.js", "*bootstrap*.js",
+        "*three.js", "*d3*.js", "*chart*.js", "*moment*.js",
+        "*backbone*.js", "*ember*.js", "*knockout*.js",
+        
+        // Framework test runners and testing frameworks (but not our test files)
+        "*/node_modules/*/test/*", "*/node_modules/*/tests/*",
+        "*karma*", "*jasmine*", "*mocha*", "*jest*",
+        "*/cypress/*", "*/e2e/*",
+        
+        // Build and configuration files
+        "*webpack*", "*rollup*", "*babel*", "*gulp*", "*grunt*",
+        "*.config.js", "*.config.ts", "*build*", "*dist*",
+        "*vite*", "*parcel*", "*esbuild*",
+        
+        // Documentation and metadata
+        "*readme*", "*license*", "*changelog*", "*contributing*",
+        "*docs/*", "*documentation/*"
+    ]),
+    
+    backend_exclusions: Some([
+        // Minified and compiled files
+        "*.min.js", "*.bundle.js", "*.compiled.js",
+        
+        // Third-party dependencies
+        "*/node_modules/*", "*/vendor/*", "*/lib/*",
+        
+        // Framework test directories (but not our test files)
+        "*/node_modules/*/test/*", "*/node_modules/*/tests/*",
+        
+        // Build and configuration
+        "*webpack*", "*babel*", "*.config.js", "*build*", "*dist*",
+        
+        // Documentation
+        "*readme*", "*docs/*"
+    ]),
+    
+    common_exclusions: Some([
+        "*/node_modules/*",
+        "*.min.js", "*.bundle.js",
+        "*build*", "*dist*",
+        "*.config.js", "*.config.ts"
+    ])
+) 
