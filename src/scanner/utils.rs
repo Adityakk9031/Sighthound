@@ -9,10 +9,68 @@ use crate::config::filters::SKIP_DIRS;
 use tree_sitter::Node;
 use crate::common::CommonUtils;
 use crate::parser::get_node_text;
+use ignore::WalkBuilder;
+use once_cell::sync::Lazy;
+
+static GIT_IGNORE_CACHE: Lazy<Mutex<HashMap<PathBuf, bool>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Check if a file path matches a glob pattern (delegates to common utils)
 pub fn matches_glob_pattern(pattern: &str, file_path: &str) -> bool {
     crate::common::CommonUtils::matches_file_pattern(pattern, file_path)
+}
+
+
+
+
+pub fn is_git_ignored(path: &Path) -> bool {
+    {
+        // Try to get from cache first
+        let cache = GIT_IGNORE_CACHE.lock().unwrap();
+        if let Some(cached) = cache.get(path) {
+            return *cached;
+        }
+    }
+
+    // Compute the result
+    let result = if !is_within_git_repo(path) {
+        false
+    } else if let Some(repo_root) = find_git_repo_root(path) {
+        let mut walker = WalkBuilder::new(&repo_root)
+            .git_ignore(true)
+            .git_global(false)
+            .git_exclude(false)
+            .build();
+
+        !walker.any(|entry| entry.map(|e| e.path() == path).unwrap_or(false))
+    } else {
+        false
+    };
+
+    // Store the result in the cache
+    let mut cache = GIT_IGNORE_CACHE.lock().unwrap();
+    cache.insert(path.to_path_buf(), result);
+
+    result
+}
+
+/// Check if a path is within a Git repository
+fn is_within_git_repo(path: &Path) -> bool {
+    find_git_repo_root(path).is_some()
+}
+
+/// Find the root of the Git repository containing the given path
+fn find_git_repo_root(path: &Path) -> Option<PathBuf> {
+    let mut current = path;
+    loop {
+        if current.join(".git").exists() {
+            return Some(current.to_path_buf());
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    None
 }
 
 /// Check if a rule applies to a given file path based on file type constraints
@@ -152,7 +210,12 @@ fn discover_files_parallel(root_dir: &str, estimated_languages: usize, show_prog
         .filter_map(|entry| {
             entry.ok().and_then(|e| {
                 if e.path().is_file() {
-                    Some(e.path().to_path_buf())
+                    // Skip files that are ignored by Git
+                    if is_git_ignored(e.path()) {
+                        None
+                    } else {
+                        Some(e.path().to_path_buf())
+                    }
                 } else { None }
             })
         })
@@ -206,11 +269,14 @@ fn discover_files_sequential(root_dir: &str, estimated_languages: usize, _show_p
         .filter_map(|e| e.ok())
     {
         if entry.path().is_file() {
-            if let Some(language) = detect_language_from_path(entry.path()) {
-                files_by_language
-                    .entry(language.to_string())
-                    .or_insert_with(|| Vec::with_capacity(crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG))
-                    .push(entry.path().to_path_buf());
+            // Skip files that are ignored by Git
+            if !is_git_ignored(entry.path()) {
+                if let Some(language) = detect_language_from_path(entry.path()) {
+                    files_by_language
+                        .entry(language.to_string())
+                        .or_insert_with(|| Vec::with_capacity(crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG))
+                        .push(entry.path().to_path_buf());
+                }
             }
         }
     }
