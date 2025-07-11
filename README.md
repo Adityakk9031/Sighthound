@@ -48,14 +48,16 @@ cd Sighthound
 cargo build --release
 ```
 
-The binary will be available at `target/release/find_vulns`.
+The binary will be available at `target/release/sighthound`.
 
 In order to build linux container compatible binary,
 ```bash
-docker build --target export -t find-vulns-export:latest .
-docker run --rm -v $(pwd):/output find-vulns-export sh -c "cp /find_vulns /output/
+DOCKER_BUILDKIT=1 docker build \
+  --target export \
+  --output type=local,dest=./sighthound_release \
+  .
 ```
-Then binary `find_vulns` would be exported at the current folder.
+Then binary `sighthound` would be exported at the current folder.
 
 ### Development Setup
 ```bash
@@ -70,7 +72,7 @@ cargo build
 cargo test
 
 # Run with sample files
-cargo run -- test_files/python
+cargo run -- tests/test_files/python
 ```
 
 ## 🎯 Quick Start
@@ -119,7 +121,7 @@ High: SQL Injection
 ### Command Line Options
 ```bash
 USAGE:
-    find_vulns [OPTIONS] <ROOT_DIR> [LANGUAGE] [RULES_PATH]
+    sighthound [OPTIONS] <ROOT_DIR> [LANGUAGE] [RULES_PATH]
 
 ARGS:
     <ROOT_DIR>     Root directory to scan for vulnerabilities
@@ -297,7 +299,7 @@ cargo test --test integration_tests
 cargo test --test end_to_end_tests
 
 # Test with specific files
-cargo run -- test_files/python/comprehensive_taint_test.py
+cargo run -- tests/test_files/python/comprehensive_taint_test.py
 ```
 
 ### Test Coverage
@@ -308,7 +310,7 @@ cargo run -- test_files/python/comprehensive_taint_test.py
 - **Performance Tests**: Large file handling and scaling
 
 ### Sample Test Files
-The `test_files/` directory contains comprehensive test cases:
+The `tests/test_files/` directory contains comprehensive test cases:
 - **True Positives**: Confirmed vulnerabilities that should be detected
 - **True Negatives**: Safe code that should not trigger alerts
 - **Edge Cases**: Complex scenarios and boundary conditions
