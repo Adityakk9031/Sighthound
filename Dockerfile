@@ -1,11 +1,13 @@
 # Multi-stage Dockerfile for building sighthound binary
 # Stage 1: Build the binary
-FROM rust:1.80-slim AS builder
+FROM rust:1.89-slim AS builder
 
-# Install build dependencies
+# Install build dependencies including cross-compilation tools
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    gcc-x86-64-linux-gnu \
+    gcc-aarch64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -24,6 +26,7 @@ ENV GIT_HASH=${GIT_HASH}
 ENV BUILD_DATE=${BUILD_DATE}
 
 # Build the release binary
+ENV CARGO_TARGET_DIR=/app/target
 RUN cargo build --release
 
 # Runtime stage - minimal image for running the container
