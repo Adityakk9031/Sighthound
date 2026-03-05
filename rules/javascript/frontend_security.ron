@@ -46,6 +46,38 @@
             tags: Some(["xss", "dom", "frontend", "cwe-79"])
         ),
         (
+            id: Some("js-react-dangerously-set-inner-html-001"),
+            name: Some("React DOM XSS via dangerouslySetInnerHTML"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                // React prop that bypasses default escaping – risky with dynamic content
+                "dangerouslySetInnerHTML*__html*",
+                "*dangerouslySetInnerHTML*user*",
+                "*dangerouslySetInnerHTML*input*",
+                "*dangerouslySetInnerHTML*data*",
+                "*dangerouslySetInnerHTML*param*",
+                "*dangerouslySetInnerHTML*location*",
+                "*dangerouslySetInnerHTML*content*",
+                "*dangerouslySetInnerHTML*html*"
+            ]),
+            unless: Some([
+                // Exclude sanitized content
+                "DOMPurify\\.sanitize",
+                "escapeHTML",
+                "encodeHTML",
+                "sanitizeHtml",
+                "sanitize\\(.*__html"
+            ]),
+            finding_type: Some("DOM XSS"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-79"),
+            description: Some("dangerouslySetInnerHTML with user or dynamic content can lead to DOM-based XSS; sanitize input or avoid raw HTML"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["xss", "dom", "react", "frontend", "cwe-79"])
+        ),
+        (
             id: Some("js-dom-xss-003"),
             name: Some("DOM XSS via document.write"),
             category: Some("xss"),
