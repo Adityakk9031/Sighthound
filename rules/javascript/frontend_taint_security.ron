@@ -81,7 +81,8 @@
             sinks: Some([
                 // Dangerous HTML manipulation only
                 "*.innerHTML",
-                "*.outerHTML", 
+                "*.outerHTML",
+                "dangerouslySetInnerHTML",
                 "document.write",
                 "document.writeln",
                 "*.insertAdjacentHTML",
@@ -299,6 +300,7 @@
                 // Dangerous HTML manipulation
                 "*.innerHTML",
                 "*.outerHTML",
+                "dangerouslySetInnerHTML",
                 "document.write",
                 "document.writeln",
                 "*.insertAdjacentHTML",
@@ -517,6 +519,7 @@
                 // Raw HTML output
                 "*.innerHTML",
                 "*.outerHTML",
+                "dangerouslySetInnerHTML",
                 "document.write",
                 "document.writeln",
                 "*.insertAdjacentHTML",
@@ -833,7 +836,8 @@
                 
                 // DOM manipulation
                 "*.innerHTML",
-                "*.outerHTML", 
+                "*.outerHTML",
+                "dangerouslySetInnerHTML",
                 "document.write",
                 
                 // Script/resource loading
@@ -896,6 +900,7 @@
                 "eval(",
                 "Function(",
                 "*.innerHTML",
+                "dangerouslySetInnerHTML",
                 "document.write",
                 "*.src",
                 "*.href",
