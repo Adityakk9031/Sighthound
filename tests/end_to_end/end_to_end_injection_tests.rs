@@ -1,5 +1,5 @@
-use find_vulns::VulnerabilityScanner;
-use find_vulns::rules::Rules;
+use sighthound::VulnerabilityScanner;
+use sighthound::rules::Rules;
 use tempfile::{TempDir, NamedTempFile};
 use std::fs;
 use std::io::Write;
@@ -271,10 +271,10 @@ public class VulnerableService {
         // 2. Directly validate the injection pattern detection logic
         #[cfg(feature = "java")]
         {
-            use find_vulns::parser::LanguageParser;
-            use find_vulns::language::LanguageSupport;
-            use find_vulns::rules::check_for_injection_pattern;
-            use find_vulns::models::Finding;
+            use sighthound::parser::LanguageParser;
+            use sighthound::language::LanguageSupport;
+            use sighthound::rules::check_for_injection_pattern;
+            use sighthound::models::Finding;
             
             // Create findings vector to store our results
             let mut findings = Vec::new();
