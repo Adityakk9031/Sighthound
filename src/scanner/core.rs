@@ -10,7 +10,7 @@ use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
 use memmap2::Mmap;
 use rayon::prelude::*;
 use std::cell::RefCell;
-use std::collections::{HashMap, BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
