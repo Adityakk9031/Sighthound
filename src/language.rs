@@ -410,7 +410,7 @@ impl LanguageSupport for HTMLLanguage {
 
             // Fallback: look for value-like children
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     match child.kind() {
                         "attribute_value" | "quoted_attribute_value" | "string" => {
                             return Some(child);
@@ -479,7 +479,7 @@ impl LanguageSupport for DjangoTemplateLanguage {
                     return Some(value_node);
                 }
                 for i in 0..node.child_count() {
-                    if let Some(child) = node.child(i) {
+                    if let Some(child) = node.child(i as u32) {
                         match child.kind() {
                             "attribute_value" | "quoted_attribute_value" | "string" => {
                                 return Some(child);

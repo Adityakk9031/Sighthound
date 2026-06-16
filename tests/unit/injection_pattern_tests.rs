@@ -27,7 +27,7 @@ fn any_call_has_injection(language: &str, code: &str) -> bool {
             }
         }
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 visit(&child, source, ls, found);
             }
         }
@@ -210,7 +210,7 @@ function safe() {
 fn visit_all<F: FnMut(&tree_sitter::Node)>(node: &tree_sitter::Node, f: &mut F) {
     f(node);
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
+        if let Some(child) = node.child(i as u32) {
             visit_all(&child, f);
         }
     }

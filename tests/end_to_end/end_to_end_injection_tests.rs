@@ -304,7 +304,7 @@ public class VulnerableService {
                         if func_name == "execute" {
                             if let Some(args_node) = language_support.get_arguments_node(node) {
                                 for i in 0..args_node.named_child_count() {
-                                    if let Some(arg) = args_node.named_child(i) {
+                                    if let Some(arg) = args_node.named_child(i as u32) {
                                         let arg_text = String::from_utf8_lossy(&source[arg.start_byte()..arg.end_byte()]);
                                         let arg_kind = arg.kind();
                                         
@@ -346,7 +346,7 @@ public class VulnerableService {
                         if func_name == "exec" {
                             if let Some(args_node) = language_support.get_arguments_node(node) {
                                 for i in 0..args_node.named_child_count() {
-                                    if let Some(arg) = args_node.named_child(i) {
+                                    if let Some(arg) = args_node.named_child(i as u32) {
                                         let arg_text = String::from_utf8_lossy(&source[arg.start_byte()..arg.end_byte()]);
                                         let arg_kind = arg.kind();
                                         
@@ -389,7 +389,7 @@ public class VulnerableService {
                 
                 // Recursively process all children
                 for i in 0..node.child_count() {
-                    if let Some(child) = node.child(i) {
+                    if let Some(child) = node.child(i as u32) {
                         find_vulnerabilities(&child, &source, filepath, language_support, findings, depth + 1);
                     }
                 }

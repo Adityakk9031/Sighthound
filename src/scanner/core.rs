@@ -543,7 +543,7 @@ impl ScanningLogic {
     ) -> bool {
         if let Some(args_node) = language_support.get_arguments_node(node) {
             for i in 0..args_node.named_child_count() {
-                if let Some(arg) = args_node.named_child(i) {
+                if let Some(arg) = args_node.named_child(i as u32) {
                     let arg_text = crate::parser::get_node_text(&arg, source);
                     if !crate::rules::is_literal_node(&arg) && 
                        crate::rules::check_for_injection_pattern(&arg_text, language_support) {
