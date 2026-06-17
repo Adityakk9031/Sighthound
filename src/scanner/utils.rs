@@ -240,8 +240,11 @@ fn discover_files_parallel(root_dir: &str, estimated_languages: usize, show_prog
     };
 
     if show_progress {
-        println!("📂 Discovered {} files total, estimating {} files per language",
-                 all_paths.len(), estimated_files_per_lang);
+        crate::ui::note(&format!(
+            "discovered {} files (est. {} per language)",
+            all_paths.len(),
+            estimated_files_per_lang
+        ));
     }
 
     let files_by_language = Arc::new(Mutex::new(

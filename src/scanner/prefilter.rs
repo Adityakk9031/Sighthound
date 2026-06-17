@@ -331,13 +331,16 @@ impl FilterStats {
 
 impl std::fmt::Display for FilterStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, 
-            "📊 Pre-filter: {} included, {} filtered out ({:.1}% reduction)",
-            self.included, self.filtered_out, self.filter_percentage()
+        write!(
+            f,
+            "pre-filter: {} included, {} filtered out ({:.1}% reduction)",
+            self.included,
+            self.filtered_out,
+            self.filter_percentage()
         )?;
-        
+
         if self.minified_filtered > 0 || self.test_filtered > 0 || self.doc_filtered > 0 {
-            write!(f, "\n   ↳ ")?;
+            write!(f, "\n     ")?;
             let mut details = Vec::new();
             if self.minified_filtered > 0 {
                 details.push(format!("{} minified", self.minified_filtered));

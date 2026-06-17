@@ -24,35 +24,25 @@ impl ScanContext {
     /// Initialize scan context with file discovery
     fn new(cli: &Cli, root_dir: &str, show_progress: bool) -> Result<Self> {
         let discovery_start = std::time::Instant::now();
-        
+
         let parallel = !cli.single_threaded;
-        if show_progress {
-            if parallel {
-                println!("🚀 Using parallel file discovery for maximum performance...");
-            } else {
-                println!("🔍 Using sequential file discovery...");
-            }
-        }
-        
-        let files_by_language = crate::scanner::utils::discover_files_by_language_with_progress(root_dir, parallel, show_progress)?;
+        let files_by_language = crate::scanner::utils::discover_files_by_language_with_progress(
+            root_dir,
+            parallel,
+            show_progress,
+        )?;
         let discovery_time = discovery_start.elapsed();
-        
+
         if files_by_language.is_empty() {
             if show_progress {
-                println!("❌ No supported files found in {}", root_dir);
-                println!("   Supported file types: .py, .java, .js, .tsx, .html");
+                crate::ui::warn(&format!("no supported source files found in {}", root_dir));
             }
             return Err(anyhow::anyhow!("No supported files found"));
         }
-        
+
         let detected_languages: Vec<String> = files_by_language.keys().cloned().collect();
         let total_files: usize = files_by_language.values().map(|files| files.len()).sum();
-        
-        if show_progress {
-            println!("🔍 Detected languages: {} (in {:.2?})", 
-                    detected_languages.join(", "), discovery_time);
-        }
-        
+
         Ok(Self {
             root_dir: root_dir.to_string(),
             single_threaded: cli.single_threaded,
@@ -62,16 +52,15 @@ impl ScanContext {
             detected_languages,
         })
     }
-    
-    /// Get mode information string for display
-    fn get_mode_info(&self, threads: Option<usize>) -> (String, String) {
-        let mode = if self.single_threaded { "single-threaded" } else { "parallel" };
-        let thread_info = if let Some(threads) = threads {
-            format!(" with {} threads", threads)
+
+    fn mode_display(&self, threads: Option<usize>) -> String {
+        if self.single_threaded {
+            "single-threaded".to_string()
+        } else if let Some(threads) = threads {
+            format!("parallel ({} threads)", threads)
         } else {
-            String::new()
-        };
-        (mode.to_string(), thread_info)
+            "parallel".to_string()
+        }
     }
     
     /// Create and configure progress manager
@@ -81,11 +70,17 @@ impl ScanContext {
     
     /// Print performance summary
     fn print_performance_summary(&self, rule_count: usize, scan_duration: std::time::Duration) {
-        println!();
-        println!("📊 Scanned {} files total with {} rules across {} languages", 
-                self.total_files, rule_count, self.detected_languages.len());
-        println!("⚡ File discovery: {:.2?} | Analysis: {:.2?}", 
-                self.discovery_time, scan_duration.saturating_sub(self.discovery_time));
+        crate::ui::note(&format!(
+            "scanned {} files \u{b7} {} rules \u{b7} {} languages",
+            self.total_files,
+            rule_count,
+            self.detected_languages.len()
+        ));
+        crate::ui::note(&format!(
+            "discovery {:.2?} \u{b7} analysis {:.2?}",
+            self.discovery_time,
+            scan_duration.saturating_sub(self.discovery_time)
+        ));
     }
 }
 
@@ -187,9 +182,6 @@ pub fn run_explicit_scan(cli: &Cli, root_dir: &str, show_progress: bool) -> Resu
         Rules::merge_rules(all_rules)?
     };
     let total_rules = ScanningLogic::count_total_rules(&rules);
-    if show_progress {
-        println!("🔢 Total number of rules: {}", total_rules);
-    }
     // Configure minified file skipping
     let skip_minified = cli.skip_minified.unwrap_or(true);
     let scanner = VulnerabilityScanner::with_skip_minified(
@@ -197,36 +189,33 @@ pub fn run_explicit_scan(cli: &Cli, root_dir: &str, show_progress: bool) -> Resu
         rules, 
         skip_minified
     )?;
-    
-    if !skip_minified && show_progress {
-        println!("⚠️  Minified file skipping disabled - this may increase scan time and false positives");
-    }
 
     if show_progress {
-        // Use unified configuration for display
-        let mode = if cli.single_threaded { "single-threaded" } else { "parallel" };
-        let thread_info = if let Some(threads) = cli.threads {
-            format!(" with {} threads", threads)
+        let mode = if cli.single_threaded {
+            "single-threaded".to_string()
+        } else if let Some(threads) = cli.threads {
+            format!("parallel ({} threads)", threads)
         } else {
-            String::new()
+            "parallel".to_string()
         };
-        
-        println!("🚀 Starting Explicit Scan ({} mode{})!", mode, thread_info);
-        println!("📂 Target directory: {}", root_dir);
-        println!("🔧 Language: {}", language);
-        
-        if should_use_embedded_rules(cli) {
-            println!("📋 Using embedded rules");
+
+        let rules_source = if should_use_embedded_rules(cli) {
+            "embedded".to_string()
         } else if let Some(rules_path) = &cli.rules_path {
-            let path = std::path::Path::new(rules_path);
-            if path.is_dir() {
-                println!("📋 Rules directory: {}", rules_path);
-            } else {
-                println!("📋 Rules file: {}", rules_path);
-            }
+            rules_path.clone()
+        } else {
+            "embedded".to_string()
+        };
+
+        crate::ui::banner(root_dir);
+        crate::ui::field("language", language);
+        crate::ui::field("rules", &format!("{} ({})", total_rules, rules_source));
+        crate::ui::field("mode", &mode);
+        if !skip_minified {
+            crate::ui::warn(
+                "minified-file skipping disabled; this may slow scans and add false positives",
+            );
         }
-        
-        println!("🔍 Running scan with {} rules", total_rules);
         println!();
     }
 
@@ -250,11 +239,18 @@ pub fn run_auto_detection_scan(cli: &Cli, root_dir: &str, show_progress: bool) -
     
     // Initialize unified scan context
     let context = ScanContext::new(cli, root_dir, show_progress)?;
-    let (mode, thread_info) = context.get_mode_info(cli.threads);
-    
+
     if show_progress {
-        println!("🚀 Starting Auto-Detection Scan ({} mode{})!", mode, thread_info);
-        println!("📂 Target directory: {}", root_dir);
+        crate::ui::banner(root_dir);
+        crate::ui::field(
+            "languages",
+            &format!(
+                "{}  {}",
+                context.detected_languages.join(", "),
+                crate::ui::dim(&format!("(detected in {:.2?})", context.discovery_time))
+            ),
+        );
+        crate::ui::field("mode", &context.mode_display(cli.threads));
     }
     
     // Rediscover files by language for actual processing (context only used for validation)
@@ -378,7 +374,7 @@ pub fn run_auto_detection_scan(cli: &Cli, root_dir: &str, show_progress: bool) -
                         all_findings.extend(fnds);
                     }
                     Err(e) => {
-                        eprintln!("⚠️  Failed to scan {}: {}", language, e);
+                        crate::ui::warn(&format!("failed to scan {}: {}", language, e));
                     }
                 }
             }
@@ -405,54 +401,53 @@ pub fn run_taint_analysis(cli: &Cli, root_dir: &str, show_progress: bool) -> Res
 
 /// Run taint analysis mode with verbosity control
 pub fn run_taint_analysis_with_verbosity(cli: &Cli, root_dir: &str, show_progress: bool, verbose_mode: bool) -> Result<Vec<Finding>> {
-    if show_progress && verbose_mode {
-        println!("🔍 Taint analysis enabled - tracking data flows from sources to sinks");
-    }
-    
+    let report = show_progress && verbose_mode;
     let scan_start = std::time::Instant::now();
-    
-    // Initialize unified scan context (reuse existing infrastructure)
-    let context = ScanContext::new(cli, root_dir, show_progress)?;
-    
-    // Load rules using unified pattern (reuse existing infrastructure)
+
+    let context = ScanContext::new(cli, root_dir, report)?;
+
     let rules = load_rules(cli, &context)?;
-    
-    // Check if we have taint flow rules
+
     let taint_rules_count = rules.rules.iter().filter(|r| r.is_taint_rule()).count();
-    
+
     if taint_rules_count == 0 {
         return Err(anyhow::anyhow!("No taint flow rules found. Please ensure your rules contain rules with mode='taint'."));
     }
-    if show_progress && verbose_mode {
-        println!("🔍 Starting Optimized Taint Analysis Mode");
-        println!("📂 Target directory: {}", root_dir);
-        println!("🔧 Loaded {} taint flow rules", taint_rules_count);
-        println!("📁 Total files to analyze: {}", context.total_files);
-        println!("⚡ Using parallel processing for maximum performance");
+    if report {
+        crate::ui::banner(root_dir);
+        crate::ui::field("mode", "taint analysis");
+        crate::ui::field("rules", &format!("{} taint-flow rules", taint_rules_count));
+        crate::ui::field("files", &context.total_files.to_string());
         println!();
     }
-    // Use the unified VulnerabilityScanner infrastructure for massive speedup!
-    // This reuses ALL existing optimizations: parallel processing, prefiltering, 
-    // memory mapping, thread-local parsers, progress tracking, etc.
-    // Respect CLI language parameter for proper prefiltering (especially minified file skipping)
     let language = cli.language.as_deref().unwrap_or("");
     let scanner = VulnerabilityScanner::with_skip_minified(
         language,
         rules, 
         context.skip_minified
     )?;
-    
+
+    let mut spinner = if show_progress && !verbose_mode {
+        Some(ProgressManager::new_spinner("analyzing data flows"))
+    } else {
+        None
+    };
+
     let all_findings = if cli.code_type.is_some() || cli.language_filter.is_some() {
         scanner.find_vulnerabilities_unified_with_filters(
             root_dir, 
             language, 
-            show_progress,
+            report,
             cli.code_type.as_deref(),
             cli.language_filter.as_deref()
         )?
     } else {
-        scanner.find_vulnerabilities_unified(root_dir, language, show_progress)?
+        scanner.find_vulnerabilities_unified(root_dir, language, report)?
     };
+
+    if let Some(mut spinner) = spinner.take() {
+        spinner.stop();
+    }
         
     // Filter to only taint analysis findings 
     let taint_findings: Vec<Finding> = all_findings.into_iter()
@@ -465,19 +460,21 @@ pub fn run_taint_analysis_with_verbosity(cli: &Cli, root_dir: &str, show_progres
     
     let scan_duration = scan_start.elapsed();
     
-    if show_progress && verbose_mode {
-        // Use unified performance reporting (reuse existing infrastructure)
+    if report {
         context.print_performance_summary(taint_rules_count, scan_duration);
-        println!("⏱️  Optimized taint analysis completed in {:.2?}", scan_duration);
-        
+
         if !taint_findings.is_empty() {
             let same_file_count = taint_findings.iter()
                 .filter(|f| f.tags.as_ref().map_or(false, |tags| tags.contains(&"same_file".to_string())))
                 .count();
             let cross_file_count = taint_findings.len() - same_file_count;
-            
-            println!("🎯 Found {} taint flows ({} same-file, {} cross-file)", 
-                    taint_findings.len(), same_file_count, cross_file_count);
+
+            crate::ui::note(&format!(
+                "{} taint flows ({} same-file, {} cross-file)",
+                taint_findings.len(),
+                same_file_count,
+                cross_file_count
+            ));
         }
     }
     

@@ -1,9 +1,10 @@
 use anyhow::Result;
-use env_logger;
-use log::LevelFilter;
 use clap::Parser;
-use sighthound::{Cli, CommonUtils, run_explicit_scan, run_auto_detection_scan, run_taint_analysis, run_taint_analysis_with_verbosity};
-use sighthound::scanner::core::{print_findings_json, print_findings_csv, print_findings_text, print_summary};
+use sighthound::scanner::core::{print_findings_csv, print_findings_json, print_findings_text};
+use sighthound::{
+    run_auto_detection_scan, run_explicit_scan, run_taint_analysis,
+    run_taint_analysis_with_verbosity, Cli, CommonUtils,
+};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -48,65 +49,42 @@ fn main() -> Result<()> {
     // Validate CLI parameters using CommonUtils
     CommonUtils::validate_cli_params(&cli.language, &cli.rules_path, cli.use_embedded_rules, cli.use_file_rules)
         .map_err(|e| anyhow::anyhow!(
-            "❌ Invalid parameter combination: {}\n\n\
+            "invalid parameter combination: {}\n\n\
             Valid usage:\n  \
-            • Explicit mode with embedded rules (default): cargo run -- {} <language>\n  \
-            • Explicit mode with file rules: cargo run -- {} <language> <rules_path> --use-file-rules\n  \
-            • Auto-detection mode with embedded rules (default): cargo run -- {}\n  \
-            • Auto-detection mode with file rules: cargo run -- {} --use-file-rules\n  \
-            • Custom rules directory: cargo run -- {} --rules-dir <custom_rules_dir> --use-file-rules", 
+            - Explicit mode with embedded rules (default): sighthound {} <language>\n  \
+            - Explicit mode with file rules:               sighthound {} <language> <rules_path> --use-file-rules\n  \
+            - Auto-detection mode (default):               sighthound {}\n  \
+            - Auto-detection mode with file rules:         sighthound {} --use-file-rules\n  \
+            - Custom rules directory:                      sighthound {} --rules-dir <dir> --use-file-rules",
             e, root_dir, root_dir, root_dir, root_dir, root_dir
         ))?;
 
     // Handle all vulnerability scanning modes with unified flow
     let findings = if cli.taint_analysis {
-        // Only taint analysis
-        if show_progress {
-            println!("🔍 Running taint analysis mode only");
-        }
         run_taint_analysis(&cli, root_dir, show_progress)?
     } else if cli.simple_analysis {
-        // Only simple analysis
-        if show_progress {
-            println!("🔍 Running simple analysis mode only");
-        }
         match (&cli.language, &cli.rules_path, should_use_embedded) {
             (Some(_), Some(_), false) => run_explicit_scan(&cli, root_dir, show_progress)?,
             (Some(_), None, true) => run_explicit_scan(&cli, root_dir, show_progress)?,
             (None, None, _) => run_auto_detection_scan(&cli, root_dir, show_progress)?,
-            _ => unreachable!(), // Validation above ensures this won't happen
+            _ => unreachable!(),
         }
     } else {
-        // Default: Run both simple and taint analysis
-        if show_progress {
-            println!("🔍 Running comprehensive analysis (both simple and taint modes)");
-        }
-        
-        // Run simple analysis first
         let mut simple_findings = match (&cli.language, &cli.rules_path, should_use_embedded) {
             (Some(_), Some(_), false) => run_explicit_scan(&cli, root_dir, show_progress)?,
             (Some(_), None, true) => run_explicit_scan(&cli, root_dir, show_progress)?,
             (None, None, _) => run_auto_detection_scan(&cli, root_dir, show_progress)?,
-            _ => unreachable!(), // Validation above ensures this won't happen
+            _ => unreachable!(),
         };
-        
-        // Run taint analysis second (less verbose in combined mode)
-        let mut taint_findings = run_taint_analysis_with_verbosity(&cli, root_dir, show_progress, false)?;
-        
-        // Combine findings
+
+        let mut taint_findings =
+            run_taint_analysis_with_verbosity(&cli, root_dir, show_progress, false)?;
+
         simple_findings.append(&mut taint_findings);
         simple_findings
     };
 
-    // Output results
     let duration = start_time.elapsed();
-    
-    // Only show completion message for text output
-    if show_progress {
-        println!();
-        println!("⏱️  Scan completed in {:.2?}", duration);
-        println!();
-    }
 
     match cli.output_format.as_str() {
         "json" => print_findings_json(&findings),

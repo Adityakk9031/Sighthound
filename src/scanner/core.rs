@@ -1919,57 +1919,65 @@ impl ScanningLogic {
 // ============================================================================
 
 pub fn print_summary(findings: &[Finding], duration: std::time::Duration) {
-    println!("\n\x1b[1;36m=== Vulnerability Summary ===\x1b[0m");
+    crate::ui::section("Summary");
 
-    // Group findings by severity - use BTreeMap for deterministic iteration
+    if findings.is_empty() {
+        crate::ui::note(&format!("no vulnerabilities found \u{b7} {:.2?}", duration));
+        println!();
+        return;
+    }
+
     let mut severity_counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut finding_types: BTreeMap<String, usize> = BTreeMap::new();
     let mut file_counts: BTreeMap<String, usize> = BTreeMap::new();
 
     for finding in findings {
-        *severity_counts.entry(finding.severity.clone()).or_insert(0) += 1;
-        *finding_types.entry(finding.finding_type.clone()).or_insert(0) += 1;
+        *severity_counts
+            .entry(finding.severity.to_lowercase())
+            .or_insert(0) += 1;
+        *finding_types
+            .entry(finding.finding_type.clone())
+            .or_insert(0) += 1;
         *file_counts.entry(finding.file.clone()).or_insert(0) += 1;
     }
 
-    // Print severity breakdown
-    println!("\n\x1b[1;33mSeverity Breakdown:\x1b[0m");
     let severity_order = ["critical", "high", "medium", "low"];
-    for severity in severity_order {
-        if let Some(count) = severity_counts.get(severity) {
-            let color = match severity {
-                "critical" => "\x1b[31;1m", // Bright red
-                "high" => "\x1b[31m",      // Red
-                "medium" => "\x1b[33m",    // Yellow
-                "low" => "\x1b[32m",       // Green
-                _ => "\x1b[0m",
-            };
-            println!("  {}{}\x1b[0m {} findings",
-                    color,
-                    "●",
-                    count);
+    let parts: Vec<String> = severity_order
+        .iter()
+        .filter_map(|sev| {
+            severity_counts.get(*sev).map(|count| {
+                let bullet = crate::ui::paint(crate::ui::severity_code(sev), "\u{25cf}");
+                format!("{} {} {}", bullet, count, sev)
+            })
+        })
+        .collect();
+    if !parts.is_empty() {
+        println!("  {}", parts.join("   "));
+    }
+
+    let mut sorted_types: Vec<_> = finding_types.iter().collect();
+    sorted_types.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    println!();
+    for (finding_type, count) in sorted_types.iter().take(8) {
+        println!("  {:>4}  {}", count, finding_type);
+    }
+
+    let mut sorted_files: Vec<_> = file_counts.iter().collect();
+    sorted_files.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    if sorted_files.len() > 1 {
+        crate::ui::section("Most affected files");
+        for (file_path, count) in sorted_files.iter().take(5) {
+            println!("  {:>4}  {}", count, crate::ui::dim(file_path));
         }
     }
 
-    // Print finding types
-    println!("\n\x1b[1;33mFinding Types:\x1b[0m");
-    let mut sorted_types: Vec<_> = finding_types.iter().collect();
-    sorted_types.sort_by(|a, b| b.1.cmp(a.1)); // Sort by count descending
-    for (finding_type, count) in sorted_types {
-        println!("  \x1b[36m●\x1b[0m {}: {} occurrences", finding_type, count);
-    }
-
-    // Print most vulnerable files
-    println!("\n\x1b[1;33mMost Vulnerable Files:\x1b[0m");
-    let mut sorted_files: Vec<_> = file_counts.iter().collect();
-    sorted_files.sort_by(|a, b| b.1.cmp(a.1));
-    for (file_path, count) in sorted_files.iter().take(5) {
-        println!("  \x1b[34m●\x1b[0m {}: {} vulnerabilities", file_path, count);
-    }
-
-    // Print total
-    println!("\n\x1b[1;36mTotal Findings: \x1b[1;33m{}\x1b[0m", findings.len());
-    println!("\x1b[1;36mScan Time: \x1b[1;33m{:.2?}\x1b[0m", duration);
+    println!();
+    println!(
+        "  {} findings in {:.2?}",
+        crate::ui::bold(&findings.len().to_string()),
+        duration
+    );
+    println!();
 }
 
 /// Progress bar management for vulnerability scanning
@@ -1980,13 +1988,36 @@ pub struct ProgressManager {
 }
 
 impl ProgressManager {
-    /// Create a new progress manager
+    const TICK_CHARS: &'static str =
+        "\u{280b}\u{2819}\u{2839}\u{2838}\u{283c}\u{2834}\u{2826}\u{2827}\u{2807}\u{280f} ";
+
     pub fn new(total: usize) -> Self {
         let bar = ProgressBar::new(total as u64);
-        if let Ok(style) = ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} files {msg}") {
-            bar.set_style(style.progress_chars("#>-"));
+        if let Ok(style) = ProgressStyle::with_template(
+            "  {spinner:.cyan} [{elapsed_precise}] [{bar:30.cyan/blue}] {pos}/{len} files  {msg}",
+        ) {
+            bar.set_style(style.progress_chars("=> ").tick_chars(Self::TICK_CHARS));
         }
         bar.set_draw_target(ProgressDrawTarget::stderr());
+        bar.enable_steady_tick(Duration::from_millis(100));
+
+        Self {
+            bar,
+            should_stop: Arc::new(AtomicBool::new(false)),
+            handle: None,
+        }
+    }
+
+    pub fn new_spinner(message: &str) -> Self {
+        let bar = ProgressBar::new_spinner();
+        if let Ok(style) =
+            ProgressStyle::with_template("  {spinner:.cyan} {msg} [{elapsed_precise}]")
+        {
+            bar.set_style(style.tick_chars(Self::TICK_CHARS));
+        }
+        bar.set_draw_target(ProgressDrawTarget::stderr());
+        bar.set_message(message.to_string());
+        bar.enable_steady_tick(Duration::from_millis(100));
 
         Self {
             bar,
@@ -2005,7 +2036,7 @@ impl ProgressManager {
                 let val = processed.load(Ordering::Relaxed) as u64;
                 bar_clone.set_position(val);
                 let vulns = findings.load(Ordering::Relaxed);
-                bar_clone.set_message(format!("| {} vulns", vulns));
+                bar_clone.set_message(format!("{} findings", vulns));
                 std::thread::sleep(Duration::from_millis(crate::config::ScanDefaults::PROGRESS_INTERVAL_MS));
             }
         }));
@@ -2022,7 +2053,7 @@ impl ProgressManager {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
-        self.bar.finish_with_message("Scan complete");
+        self.bar.finish_and_clear();
     }
 }
 
@@ -2062,28 +2093,27 @@ pub fn print_findings_csv(findings: &[Finding]) {
 
 /// Print findings in text format with syntax highlighting
 pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: bool, duration: std::time::Duration) {
-    if !summary_only {
-        // Initialize syntax highlighting
+    if !summary_only && !findings.is_empty() {
+        crate::ui::section("Findings");
+
         let ps = SyntaxSet::load_defaults_newlines();
         let ts = ThemeSet::load_defaults();
         let theme = &ts.themes["base16-ocean.dark"];
 
-        // Pre-sort findings by file and severity for better grouping
         let mut sorted_findings: Vec<_> = findings.iter().collect();
         sorted_findings.sort_by(|a, b| {
-            a.file.cmp(&b.file)
+            a.file
+                .cmp(&b.file)
                 .then(a.severity.cmp(&b.severity))
                 .then(a.line.cmp(&b.line))
         });
 
-        // Group findings by file
         let mut current_file = None;
         let mut file_contents: String;
         let mut lines = Vec::new();
         let mut syntax = None;
 
         for finding in sorted_findings {
-            // Only read file when it changes
             if current_file != Some(&finding.file) {
                 current_file = Some(&finding.file);
                 file_contents = match fs::read_to_string(&finding.file) {
@@ -2092,90 +2122,104 @@ pub fn print_findings_text(findings: &[Finding], _verbose: bool, summary_only: b
                 };
                 lines = file_contents.lines().collect();
 
-
-                // Set up syntax highlighting for the new file
                 let syntax_name = CommonUtils::detect_syntax(&finding.file);
                 syntax = ps.find_syntax_by_name(syntax_name);
 
-                println!("\n\x1b[1;34m{}\x1b[0m", finding.file);
+                println!();
+                println!("{}", crate::ui::bold(&crate::ui::blue(&finding.file)));
             }
-
-            let severity_color = match finding.severity.to_lowercase().as_str() {
-                "critical" => "\x1b[31m", // Red
-                "high" => "\x1b[31;1m",   // Bright red
-                "medium" => "\x1b[33m",   // Yellow
-                "low" => "\x1b[32m",      // Green
-                _ => "\x1b[0m",           // Default
-            };
 
             let line_num = finding.line;
             let start_line = line_num.saturating_sub(3);
             let end_line = (line_num + 3).min(lines.len());
 
-            println!("");
+            println!();
             let cwe_info = if let Some(ref cwe_id) = finding.cwe_id {
                 format!(" ({})", cwe_id)
             } else {
                 String::new()
             };
-            println!("    {}{}●\x1b[0m {}{} on line {}",
-                    severity_color,
-                    severity_color,
-                    finding.finding_type,
-                    cwe_info,
-                    line_num);
+            let bullet = crate::ui::paint(crate::ui::severity_code(&finding.severity), "\u{25cf}");
+            println!(
+                "    {} {}{} {}",
+                bullet,
+                finding.finding_type,
+                cwe_info,
+                crate::ui::dim(&format!("line {}", line_num))
+            );
 
-            // Display source and sink information if available
             if let Some(source_info) = &finding.source_info {
-                println!("    📍 Source: {} ({})", source_info.source_type, source_info.context);
+                println!(
+                    "    {} {} ({})",
+                    crate::ui::dim("source"),
+                    source_info.source_type,
+                    source_info.context
+                );
             }
 
             if let Some(sink_info) = &finding.sink_info {
-                println!("    🎯 Sink: {} ({})", sink_info.sink_type, sink_info.function_name);
+                println!(
+                    "    {} {} ({})",
+                    crate::ui::dim("sink  "),
+                    sink_info.sink_type,
+                    sink_info.function_name
+                );
                 if let Some(var) = &sink_info.variable {
-                    println!("       Variable: {}", var);
+                    println!("           {} {}", crate::ui::dim("var"), var);
                 }
             }
 
-            // Display traces if available
             if let Some(traces) = &finding.traces {
                 if !traces.is_empty() {
-                    println!("    🔄 Data Flow Traces:");
+                    println!("    {}", crate::ui::dim("flow"));
                     for (i, trace) in traces.iter().enumerate() {
-                        println!("       {}. {}:{} - {} ({}) in {}",
-                                i + 1,
-                                trace.line,
-                                trace.variable,
-                                trace.operation,
-                                trace.code.chars().take(50).collect::<String>(),
-                                trace.function);
+                        println!(
+                            "       {}. {}:{} - {} ({}) in {}",
+                            i + 1,
+                            trace.line,
+                            trace.variable,
+                            trace.operation,
+                            trace.code.chars().take(50).collect::<String>(),
+                            trace.function
+                        );
                     }
                 }
             }
 
             println!();
 
-            // Print surrounding context with syntax highlighting
-            if let Some(syntax) = syntax {
+            let color = crate::ui::color_enabled();
+            let marker = |is_hit: bool| -> &'static str {
+                if !is_hit {
+                    "  "
+                } else if color {
+                    "\x1b[31m>>\x1b[0m"
+                } else {
+                    ">>"
+                }
+            };
+            if let (Some(syntax), true) = (syntax, color) {
                 let mut h = HighlightLines::new(syntax, theme);
                 for i in start_line..end_line {
                     let line = lines[i];
-                    let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap_or_default();
-                    let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
-                    print!("    {}{:4} | ", prefix, i + 1);
+                    let ranges: Vec<(Style, &str)> =
+                        h.highlight_line(line, &ps).unwrap_or_default();
+                    print!("    {}{:4} | ", marker(i + 1 == line_num), i + 1);
 
                     for (style, text) in ranges {
                         let fg = style.foreground;
-                        print!("\x1b[38;2;{};{};{}m{}\x1b[0m",
-                            fg.r, fg.g, fg.b, text);
+                        print!("\x1b[38;2;{};{};{}m{}\x1b[0m", fg.r, fg.g, fg.b, text);
                     }
                     println!();
                 }
             } else {
-                // Fallback to plain text if syntax highlighting fails
                 for i in start_line..end_line {
-                    let prefix = if i + 1 == line_num { "\x1b[31m>>\x1b[0m" } else { "  " };
-                    println!("    {}{:4} | {}", prefix, i + 1, lines[i]);
+                    println!(
+                        "    {}{:4} | {}",
+                        marker(i + 1 == line_num),
+                        i + 1,
+                        lines[i]
+                    );
                 }
             }
             println!();
@@ -3603,7 +3647,7 @@ impl FunctionBodyAnalyzer {
         source: &[u8],
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Result<FunctionTaintBehavior> {
-        log::debug!("  🔍 [FUNCTION_ANALYZER] Analyzing function: {}", function_name);
+        log::debug!("  [FUNCTION_ANALYZER] Analyzing function: {}", function_name);
 
         let mut behavior = FunctionTaintBehavior {
             returns_tainted_data: false,
@@ -3623,7 +3667,7 @@ impl FunctionBodyAnalyzer {
 
             // Check for taint sources
             if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(&node_text) {
-                log::debug!("    ✅ [FUNCTION_ANALYZER] Found taint source: {} -> {}", source_pattern, node_text);
+                log::debug!("    [FUNCTION_ANALYZER] Found taint source: {} -> {}", source_pattern, node_text);
                 behavior.taint_sources_used.push(source_pattern);
                 behavior.returns_tainted_data = true; // Assume function returns tainted if it accesses sources
             }
@@ -3652,7 +3696,7 @@ impl FunctionBodyAnalyzer {
             }
         }
 
-        log::debug!("    ✅ [FUNCTION_ANALYZER] Function {} behavior: returns_tainted={}, sources={:?}", 
+        log::debug!("    [FUNCTION_ANALYZER] Function {} behavior: returns_tainted={}, sources={:?}", 
             function_name, behavior.returns_tainted_data, behavior.taint_sources_used);
 
         Ok(behavior)
