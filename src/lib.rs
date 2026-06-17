@@ -7,6 +7,7 @@ pub mod parser;
 pub mod rules;
 pub mod scanner;
 pub mod code_type_detector;
+pub mod ui;
 
 // Re-export the main types and functions that main.rs needs
 pub use scanner::{
