@@ -4,6 +4,7 @@ use crate::rules::Rules;
 use crate::scanner::utils::matches_glob_pattern;
 use anyhow::Result;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 use tree_sitter::Node;
 
@@ -57,7 +58,13 @@ impl PreFilter {
             }
         }
 
-        // Always skip text/doc files for both modes
+        // For malicious scanning, scan everything else (including text/doc and
+        // binary files such as .svg, which can carry payloads)
+        if self.is_malicious_scan {
+            return true;
+        }
+
+        // Skip text/doc files (except in malicious-scan mode, handled above)
         if self.is_text_or_doc_file(file_path) {
             return false;
         }
@@ -66,11 +73,6 @@ impl PreFilter {
         if self.skip_minified && self.is_js_or_ts_language() && self.is_minified_js_file(file_path)
         {
             return false;
-        }
-
-        // For malicious scanning, scan everything else
-        if self.is_malicious_scan {
-            return true;
         }
 
         // For general scanning, also skip test/migration files
@@ -147,17 +149,32 @@ impl PreFilter {
             return false;
         }
 
-        // Simple check: large single-line files are likely minified
-        match fs::read_to_string(file_path) {
-            Ok(content) => {
-                let line_count = content.lines().count();
-                let char_count = content.len();
+        // Sniff only the first chunk of the file instead of reading it whole.
+        // The heuristic (<= 3 lines && > 2000 bytes) is fully decidable on a
+        // capped window: the > 2000 byte threshold is reachable within 8 KB,
+        // and if the first 8 KB already holds > 3 lines the file is not the
+        // "few huge lines" minified shape. A file that packs its first 8 KB
+        // into <= 3 lines is exactly the minified signature we want to catch.
+        const MAX_SNIFF_BYTES: u64 = 8192;
 
-                // Single line with lots of content = likely minified
-                line_count <= 3 && char_count > 2000
-            }
-            Err(_) => false,
+        let file = match fs::File::open(file_path) {
+            Ok(file) => file,
+            Err(_) => return false,
+        };
+
+        let mut buf = Vec::new();
+        if file.take(MAX_SNIFF_BYTES).read_to_end(&mut buf).is_err() {
+            return false;
         }
+
+        // Decode lossily so non-UTF8 bytes don't abort the heuristic (the old
+        // read_to_string returned false on non-UTF8; here we still classify).
+        let content = String::from_utf8_lossy(&buf);
+        let line_count = content.lines().count();
+        let char_count = buf.len();
+
+        // Single line with lots of content = likely minified
+        line_count <= 3 && char_count > 2000
     }
 
     /// Use tree-sitter to check if file is test or migration
@@ -314,14 +331,16 @@ impl PreFilter {
             }
         }
 
-        // Check text/doc files next (relatively fast)
-        if self.is_text_or_doc_file(file_path) {
-            return FilterReason::Doc;
-        }
-
-        // For malicious scanning, include everything else (skip other checks)
+        // For malicious scanning, include everything else (skip other checks),
+        // including text/doc and binary files such as .svg, which can carry payloads
         if self.is_malicious_scan {
             return FilterReason::Include;
+        }
+
+        // Check text/doc files next (relatively fast); skipped except in
+        // malicious-scan mode, handled above
+        if self.is_text_or_doc_file(file_path) {
+            return FilterReason::Doc;
         }
 
         // Check minified files for JS/TS (potentially expensive, so do conditionally)

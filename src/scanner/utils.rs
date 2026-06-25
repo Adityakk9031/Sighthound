@@ -3,6 +3,7 @@ use crate::config::filters::SKIP_DIRS;
 use crate::parser::get_node_text;
 use crate::rules::FileTypes;
 use anyhow::Result;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::WalkBuilder;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
@@ -12,7 +13,13 @@ use std::sync::{Arc, Mutex};
 use tree_sitter::Node;
 use walkdir::WalkDir;
 
-static GIT_IGNORE_CACHE: Lazy<Mutex<HashMap<PathBuf, bool>>> =
+/// Cache of compiled gitignore matchers, keyed by repository root.
+///
+/// A matcher is built once per repo root by walking the repo a single time to
+/// collect every `.gitignore` file, then reused for all subsequent per-file
+/// queries. This turns the previous O(files x repo_size) cost (a full repo
+/// walk on every cache miss) into ~O(repo_size) per repo plus O(1) per query.
+static GIT_IGNORE_MATCHER_CACHE: Lazy<Mutex<HashMap<PathBuf, Arc<RepoGitignore>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Check if a file path matches a glob pattern (delegates to common utils)
@@ -21,39 +28,89 @@ pub fn matches_glob_pattern(pattern: &str, file_path: &str) -> bool {
 }
 
 pub fn is_git_ignored(path: &Path) -> bool {
+    // Outside a git repo nothing is git-ignored.
+    let Some(repo_root) = find_git_repo_root(path) else {
+        return false;
+    };
+
+    matcher_for_repo(&repo_root).is_ignored(path)
+}
+
+/// Compiled gitignore state for a single repository.
+///
+/// Holds one `Gitignore` matcher per `.gitignore` file discovered under the
+/// repo root, each rooted at that file's own directory so nested patterns are
+/// matched with the correct relative semantics. Matchers are ordered deepest
+/// first so the most specific `.gitignore` wins (matching git's precedence).
+struct RepoGitignore {
+    /// (matcher root dir, matcher), deepest dir first.
+    matchers: Vec<(PathBuf, Gitignore)>,
+}
+
+impl RepoGitignore {
+    /// Build by walking the repo root once and compiling every `.gitignore`.
+    fn build(repo_root: &Path) -> Self {
+        let mut matchers: Vec<(PathBuf, Gitignore)> = WalkBuilder::new(repo_root)
+            .standard_filters(false)
+            .hidden(false)
+            .parents(false)
+            .build()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name() == ".gitignore")
+            .filter_map(|entry| {
+                let gitignore_path = entry.path();
+                let dir = gitignore_path.parent()?.to_path_buf();
+                let mut builder = GitignoreBuilder::new(&dir);
+                builder.add(gitignore_path);
+                let matcher = builder.build().ok()?;
+                Some((dir, matcher))
+            })
+            .collect();
+
+        // Deepest directories first so the most specific gitignore is checked
+        // before shallower ones.
+        matchers.sort_by_key(|(dir, _)| std::cmp::Reverse(dir.components().count()));
+
+        RepoGitignore { matchers }
+    }
+
+    /// Returns true if `path` is ignored by any applicable `.gitignore`.
+    ///
+    /// Uses `matched_path_or_any_parents` so that a directory pattern (e.g.
+    /// `build/`) ignores everything beneath it, matching git's behaviour of
+    /// pruning whole ignored subtrees. A matcher is only consulted for paths
+    /// under its own root directory (where its patterns apply).
+    fn is_ignored(&self, path: &Path) -> bool {
+        let is_dir = path.is_dir();
+        for (root, matcher) in &self.matchers {
+            if !path.starts_with(root) {
+                continue;
+            }
+            match matcher.matched_path_or_any_parents(path, is_dir) {
+                m if m.is_ignore() => return true,
+                m if m.is_whitelist() => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
+/// Get (building and caching on first use) the gitignore matcher for a repo.
+fn matcher_for_repo(repo_root: &Path) -> Arc<RepoGitignore> {
     {
-        // Try to get from cache first
-        let cache = GIT_IGNORE_CACHE.lock().unwrap();
-        if let Some(cached) = cache.get(path) {
-            return *cached;
+        let cache = GIT_IGNORE_MATCHER_CACHE.lock().unwrap();
+        if let Some(matcher) = cache.get(repo_root) {
+            return Arc::clone(matcher);
         }
     }
 
-    // Compute the result
-    let result = if !is_within_git_repo(path) {
-        false
-    } else if let Some(repo_root) = find_git_repo_root(path) {
-        let mut walker = WalkBuilder::new(&repo_root)
-            .git_ignore(true)
-            .git_global(false)
-            .git_exclude(false)
-            .build();
+    // Build outside the lock; a concurrent racer may build the same matcher,
+    // which is harmless and cheap relative to a full repo walk per file.
+    let matcher = Arc::new(RepoGitignore::build(repo_root));
 
-        !walker.any(|entry| entry.map(|e| e.path() == path).unwrap_or(false))
-    } else {
-        false
-    };
-
-    // Store the result in the cache
-    let mut cache = GIT_IGNORE_CACHE.lock().unwrap();
-    cache.insert(path.to_path_buf(), result);
-
-    result
-}
-
-/// Check if a path is within a Git repository
-fn is_within_git_repo(path: &Path) -> bool {
-    find_git_repo_root(path).is_some()
+    let mut cache = GIT_IGNORE_MATCHER_CACHE.lock().unwrap();
+    Arc::clone(cache.entry(repo_root.to_path_buf()).or_insert(matcher))
 }
 
 /// Find the root of the Git repository containing the given path

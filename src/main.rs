@@ -104,8 +104,8 @@ fn main() -> Result<()> {
     let duration = start_time.elapsed();
 
     match cli.output_format.as_str() {
-        "json" => print_findings_json(&findings),
-        "csv" => print_findings_csv(&findings),
+        "json" => print_findings_json(&findings)?,
+        "csv" => print_findings_csv(&findings)?,
         _ => print_findings_text(&findings, cli.verbose, cli.summary_only, duration),
     }
 
