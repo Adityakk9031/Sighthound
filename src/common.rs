@@ -17,8 +17,8 @@ impl CommonUtils {
         }
 
         // Handle regex patterns (prefix or escaped chars)
-        if pattern.starts_with("regex:") {
-            return Self::matches_regex(&pattern[6..], text);
+        if let Some(rest) = pattern.strip_prefix("regex:") {
+            return Self::matches_regex(rest, text);
         }
         if pattern.contains("\\\\") || pattern.contains("\\.") {
             return Self::matches_regex(pattern, text);
@@ -58,15 +58,18 @@ impl CommonUtils {
     /// Specialized pattern matching for taint analysis with context awareness
     pub fn matches_taint_pattern(pattern: &str, text: &str) -> bool {
         // Skip string literals and metadata
-        if text.trim().starts_with('"') || text.trim().starts_with("'") ||
-           text.contains("__all__") || text.contains("__version__") {
+        if text.trim().starts_with('"')
+            || text.trim().starts_with("'")
+            || text.contains("__all__")
+            || text.contains("__version__")
+        {
             return false;
         }
 
         // Special handling for DOM property patterns like *.innerHTML
-        if pattern.starts_with("*.") {
-            let property = &pattern[2..]; // Remove "*."
-            
+        if let Some(property) = pattern.strip_prefix("*.") {
+            // Remove "*."
+
             // Handle TypeScript casting syntax: (element.innerHTML as Type) = value
             if text.contains(&format!(".{}", property)) {
                 // Check for assignment context
@@ -87,7 +90,11 @@ impl CommonUtils {
         _context: &str,
     ) -> bool {
         // Skip string literals in any context
-        if text.starts_with('"') || text.starts_with("'") || text.starts_with("b\"") || text.starts_with("b'") {
+        if text.starts_with('"')
+            || text.starts_with("'")
+            || text.starts_with("b\"")
+            || text.starts_with("b'")
+        {
             return false;
         }
 
@@ -155,7 +162,9 @@ impl CommonUtils {
             } else if suffix.is_empty() {
                 return text.starts_with(prefix);
             } else {
-                return text.starts_with(prefix) && text.ends_with(suffix) && text.len() >= prefix.len() + suffix.len();
+                return text.starts_with(prefix)
+                    && text.ends_with(suffix)
+                    && text.len() >= prefix.len() + suffix.len();
             }
         }
 
@@ -189,15 +198,15 @@ impl CommonUtils {
     }
 
     /// Check if pattern is a regex pattern
+    #[allow(dead_code)] // retained for parity with matcher dispatch; not yet called
     fn is_regex_pattern(pattern: &str) -> bool {
-        pattern.starts_with("regex:") ||
-        pattern.contains("\\\\") ||
-        pattern.contains("\\.")
+        pattern.starts_with("regex:") || pattern.contains("\\\\") || pattern.contains("\\.")
     }
 
     /// Match regex patterns with caching for performance
     fn matches_regex(pattern: &str, text: &str) -> bool {
-        static REGEX_CACHE: Lazy<Mutex<HashMap<String, regex::Regex>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+        static REGEX_CACHE: Lazy<Mutex<HashMap<String, regex::Regex>>> =
+            Lazy::new(|| Mutex::new(HashMap::new()));
 
         // Fast path: try cache first
         if let Some(re) = REGEX_CACHE.lock().unwrap().get(pattern) {
@@ -235,7 +244,7 @@ impl CommonUtils {
             if parts.len() == 2 {
                 let module_name = parts[0];
                 let func_name = parts[1];
-                
+
                 // Look for exact "module.function" pattern in text
                 let full_pattern = format!("{}.{}", module_name, func_name);
                 return text.contains(&full_pattern);
@@ -245,19 +254,19 @@ impl CommonUtils {
         // For function call patterns ending with '(', ensure exact function name match
         if cleaned_pattern.ends_with('(') {
             let func_name = &cleaned_pattern[..cleaned_pattern.len() - 1];
-            
+
             // Special handling for module.function( patterns
             if func_name.contains('.') {
                 return text.contains(&cleaned_pattern);
             }
-            
+
             // Look for the function name followed by '(' in the text
             if let Some(pos) = text.find(&format!("{}(", func_name)) {
                 // Ensure it's a word boundary (not part of a larger identifier)
                 let before_pos = if pos > 0 { pos - 1 } else { 0 };
                 let char_before = text.chars().nth(before_pos);
-                
-                return char_before.map_or(true, |c| !c.is_alphanumeric() && c != '_');
+
+                return char_before.is_none_or(|c| !c.is_alphanumeric() && c != '_');
             }
             return false;
         }
@@ -271,7 +280,10 @@ impl CommonUtils {
     }
 
     /// Extract variable name from assignment expression with configurable behavior
-    pub fn extract_variable_from_assignment(assignment_text: &str, return_empty_on_none: bool) -> Option<String> {
+    pub fn extract_variable_from_assignment(
+        assignment_text: &str,
+        return_empty_on_none: bool,
+    ) -> Option<String> {
         let eq_pos = assignment_text.find('=')?;
         let left_side = assignment_text[..eq_pos].trim();
 
@@ -394,7 +406,10 @@ impl CommonUtils {
         let mut i = 0;
         while i < chars.len() {
             // Skip escaped braces `{{` or `}}`
-            if i + 1 < chars.len() && ((chars[i] == '{' && chars[i + 1] == '{') || (chars[i] == '}' && chars[i + 1] == '}')) {
+            if i + 1 < chars.len()
+                && ((chars[i] == '{' && chars[i + 1] == '{')
+                    || (chars[i] == '}' && chars[i + 1] == '}'))
+            {
                 i += 2;
                 continue;
             }
@@ -406,23 +421,22 @@ impl CommonUtils {
                         current_start = Some(i + 1);
                     }
                 }
-                '}' => {
-                    if brace_depth > 0 {
-                        brace_depth -= 1;
-                        if brace_depth == 0 {
-                            if let Some(start) = current_start.take() {
-                                // Extract the variable using character indices, not byte indices
-                                let raw_var: String = chars[start..i].iter().collect();
-                                let raw_var = raw_var.trim();
-                                // Strip format specifiers after ':' or '!'
-                                let clean_var = raw_var.split([':', '!'].as_ref()).next().unwrap_or("").trim();
-                                if Self::is_valid_variable_name(clean_var) {
-                                    log::debug!("[F_STRING_EXTRACT] Found variable: {}", clean_var);
-                                    variables.push(clean_var.to_string());
-                                } else {
-                                    // For complex expressions, try to extract simple variables
-                                    variables.extend(Self::extract_simple_variables(clean_var));
-                                }
+                '}' if brace_depth > 0 => {
+                    brace_depth -= 1;
+                    if brace_depth == 0 {
+                        if let Some(start) = current_start.take() {
+                            // Extract the variable using character indices, not byte indices
+                            let raw_var: String = chars[start..i].iter().collect();
+                            let raw_var = raw_var.trim();
+                            // Strip format specifiers after ':' or '!'
+                            let clean_var =
+                                raw_var.split([':', '!'].as_ref()).next().unwrap_or("").trim();
+                            if Self::is_valid_variable_name(clean_var) {
+                                log::debug!("[F_STRING_EXTRACT] Found variable: {}", clean_var);
+                                variables.push(clean_var.to_string());
+                            } else {
+                                // For complex expressions, try to extract simple variables
+                                variables.extend(Self::extract_simple_variables(clean_var));
                             }
                         }
                     }
@@ -438,7 +452,7 @@ impl CommonUtils {
     /// Extract variables from JavaScript/TypeScript template literals
     pub fn extract_template_literal_variables(expr: &str) -> Vec<String> {
         log::debug!("[TEMPLATE_LITERAL_EXTRACT] Processing: '{}'", expr);
-        
+
         let mut variables = Vec::new();
         let mut dollar_brace_depth = 0usize;
         let mut current_start: Option<usize> = None;
@@ -465,15 +479,15 @@ impl CommonUtils {
                         // Extract the expression inside ${}
                         let raw_expr: String = chars[start..i].iter().collect();
                         let raw_expr = raw_expr.trim();
-                        
+
                         log::debug!("[TEMPLATE_LITERAL_EXTRACT] Found expression: '{}'", raw_expr);
-                        
+
                         // Extract variables from the expression
                         variables.extend(Self::extract_all_variables(raw_expr));
                     }
                 }
             }
-            
+
             i += 1;
         }
 
@@ -544,39 +558,43 @@ impl CommonUtils {
     pub fn extract_function_arguments(call_expr: &str) -> Option<Vec<String>> {
         let start = call_expr.find('(')?;
         let end = call_expr.rfind(')')?;
-        
+
         // Validate bounds before slicing to prevent panic
         if start + 1 >= end {
             return Some(Vec::new()); // Return empty args for malformed expressions
         }
-        
+
         let args_str = &call_expr[start + 1..end];
 
-        Some(args_str.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && !s.starts_with('"') && !s.starts_with('\''))
-            .collect())
+        Some(
+            args_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && !s.starts_with('"') && !s.starts_with('\''))
+                .collect(),
+        )
     }
 
     /// Check if assignment text is valid (not comparison)
     pub fn is_valid_assignment_text(text: &str) -> bool {
-        text.contains('=') &&
-        !text.contains("==") &&
-        !text.contains("!=") &&
-        !text.contains("<=") &&
-        !text.contains(">=")
+        text.contains('=')
+            && !text.contains("==")
+            && !text.contains("!=")
+            && !text.contains("<=")
+            && !text.contains(">=")
     }
 
     /// Check if string is a valid variable name
     pub fn is_valid_variable_name(s: &str) -> bool {
-        !s.is_empty() &&
-        s.chars().all(|c| c.is_alphanumeric() || c == '_') &&
-        !s.chars().next().unwrap().is_ascii_digit()
+        !s.is_empty()
+            && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && !s.chars().next().unwrap().is_ascii_digit()
     }
 
     /// Check if string is a keyword or builtin (consolidated from multiple implementations)
     pub fn is_keyword_or_builtin(s: &str) -> bool {
-        matches!(s,
+        matches!(
+            s,
             // Python keywords
             "and" | "as" | "assert" | "break" | "class" | "continue" | "def" | "del" | "elif" |
             "else" | "except" | "exec" | "finally" | "for" | "from" | "global" | "if" | "import" |
@@ -706,15 +724,20 @@ impl CommonUtils {
         visitor(node);
 
         Self::for_each_child(node, |child| {
-            Self::traverse_recursive(&child, visitor, max_depth - 1);
+            Self::traverse_recursive(child, visitor, max_depth - 1);
         });
     }
 
     /// Validate required CLI parameter combination
-    pub fn validate_cli_params(language: &Option<String>, rules_path: &Option<String>, use_embedded_rules: bool, use_file_rules: bool) -> Result<()> {
+    pub fn validate_cli_params(
+        language: &Option<String>,
+        rules_path: &Option<String>,
+        use_embedded_rules: bool,
+        use_file_rules: bool,
+    ) -> Result<()> {
         // Resolve the actual embedded rules setting (use_file_rules overrides use_embedded_rules)
         let should_use_embedded = use_embedded_rules && !use_file_rules;
-        
+
         match (language, rules_path, should_use_embedded) {
             // Explicit mode with embedded rules
             (Some(_), None, true) => Ok(()),

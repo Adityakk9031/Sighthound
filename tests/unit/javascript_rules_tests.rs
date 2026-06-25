@@ -1,8 +1,8 @@
+use ron::error::SpannedError;
+use ron::from_str;
+use serde::Deserialize;
 use std::fs;
 use std::path::Path;
-use ron::from_str;
-use ron::error::SpannedError;
-use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 struct Condition {
@@ -56,8 +56,8 @@ struct CodeInjectionRule {
 #[test]
 fn test_dom_xss_rules() {
     let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("dom_xss.ron"))
-        .expect("Failed to read dom_xss.ron");
+    let content =
+        fs::read_to_string(rules_dir.join("dom_xss.ron")).expect("Failed to read dom_xss.ron");
 
     let result: Result<DomXssRule, SpannedError> = from_str(&content);
     assert!(result.is_ok(), "Failed to parse dom_xss.ron");
@@ -66,7 +66,10 @@ fn test_dom_xss_rules() {
         // Verify structure
         assert!(!rule.dom_xss_sinks.is_empty(), "dom_xss_sinks should not be empty");
         assert!(!rule.sanitizers.is_empty(), "sanitizers should not be empty");
-        assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
+        assert!(
+            !rule.file_types.extensions.is_empty(),
+            "file_types.extensions should not be empty"
+        );
 
         // Verify test file
         let test_file = fs::read_to_string(rules_dir.join("dom_xss_test.js"))
@@ -88,7 +91,10 @@ fn test_unsafe_object_rules() {
     if let Ok(rule) = result {
         // Verify structure
         assert!(!rule.unsafe_operations.is_empty(), "unsafe_operations should not be empty");
-        assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
+        assert!(
+            !rule.file_types.extensions.is_empty(),
+            "file_types.extensions should not be empty"
+        );
 
         // Verify test file
         let test_file = fs::read_to_string(rules_dir.join("unsafe_object_test.js"))
@@ -110,7 +116,10 @@ fn test_code_injection_rules() {
     if let Ok(rule) = result {
         // Verify structure
         assert!(!rule.injection_patterns.is_empty(), "injection_patterns should not be empty");
-        assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
+        assert!(
+            !rule.file_types.extensions.is_empty(),
+            "file_types.extensions should not be empty"
+        );
 
         // Verify test file
         let test_file = fs::read_to_string(rules_dir.join("code_injection_test.js"))
@@ -123,8 +132,8 @@ fn test_code_injection_rules() {
 #[test]
 fn test_rule_conditions() {
     let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("dom_xss.ron"))
-        .expect("Failed to read dom_xss.ron");
+    let content =
+        fs::read_to_string(rules_dir.join("dom_xss.ron")).expect("Failed to read dom_xss.ron");
 
     let result: Result<DomXssRule, SpannedError> = from_str(&content);
     assert!(result.is_ok(), "Failed to parse dom_xss.ron");
@@ -142,22 +151,24 @@ fn test_rule_conditions() {
 #[test]
 fn test_file_type_patterns() {
     let rules_dir = Path::new("rules/javascript");
-    let files = [
-        "dom_xss.ron",
-        "unsafe_object_operations.ron",
-        "code_injection.ron"
-    ];
+    let files = ["dom_xss.ron", "unsafe_object_operations.ron", "code_injection.ron"];
 
     for file in files.iter() {
-        let content = fs::read_to_string(rules_dir.join(file))
-            .expect(&format!("Failed to read {}", file));
-        
+        let content =
+            fs::read_to_string(rules_dir.join(file)).expect(&format!("Failed to read {}", file));
+
         let result: Result<DomXssRule, SpannedError> = from_str(&content);
         assert!(result.is_ok(), "Failed to parse {}", file);
 
         if let Ok(rule) = result {
-            assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
-            assert!(!rule.file_types.exclude_patterns.is_empty(), "file_types.exclude_patterns should not be empty");
+            assert!(
+                !rule.file_types.extensions.is_empty(),
+                "file_types.extensions should not be empty"
+            );
+            assert!(
+                !rule.file_types.exclude_patterns.is_empty(),
+                "file_types.exclude_patterns should not be empty"
+            );
         }
     }
-} 
+}
