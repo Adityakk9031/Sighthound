@@ -865,8 +865,12 @@ fn first_diff_line(left: &str, right: &str) -> usize {
     }
 }
 
-/// Fail if AGENTS.md differs byte-for-byte from CLAUDE.md.
-/// Returns ok=true on identity. With `no_exit=false`, exits 1 on mismatch.
+/// Fail if the local CLAUDE.md mirror differs byte-for-byte from AGENTS.md.
+///
+/// AGENTS.md is the committed source of truth; CLAUDE.md is a git-ignored local
+/// mirror materialized by `setup-hooks`. A missing CLAUDE.md is fine (not yet
+/// materialized) — only a present-but-divergent mirror fails. Returns ok=true
+/// on identity or absence; with `no_exit=false`, exits 1 on a real mismatch.
 fn check_agents_md_drift(no_exit: bool) -> RunResult {
     let claude_path = root().join("CLAUDE.md");
     let agents_path = root().join("AGENTS.md");
@@ -877,19 +881,24 @@ fn check_agents_md_drift(no_exit: bool) -> RunResult {
         }
         RunResult { ok: false, output: msg }
     };
-    let Ok(a) = fs::read(&claude_path) else {
-        return fail("CLAUDE.md not found".into());
+    let Ok(agents) = fs::read(&agents_path) else {
+        return fail("AGENTS.md not found".into());
     };
-    let Ok(b) = fs::read(&agents_path) else {
-        return fail("AGENTS.md missing \u{2014} run `cargo harness sync-agents-md`".into());
+    let Ok(claude) = fs::read(&claude_path) else {
+        println!(
+            "  {GREEN}\u{26a0}{RESET} agents-md-drift: CLAUDE.md absent \
+             (git-ignored mirror \u{2014} run `cargo harness setup-hooks`)"
+        );
+        return RunResult { ok: true, output: String::new() };
     };
-    if a == b {
+    if claude == agents {
         println!("  {GREEN}\u{2713}{RESET} agents-md-drift");
         return RunResult { ok: true, output: String::new() };
     }
-    let line = first_diff_line(&String::from_utf8_lossy(&a), &String::from_utf8_lossy(&b));
+    let line =
+        first_diff_line(&String::from_utf8_lossy(&agents), &String::from_utf8_lossy(&claude));
     fail(format!(
-        "AGENTS.md differs from CLAUDE.md (first diff at line {line}) \u{2014} run `cargo harness sync-agents-md`"
+        "CLAUDE.md differs from AGENTS.md (first diff at line {line}) \u{2014} run `cargo harness sync-agents-md`"
     ))
 }
 
@@ -897,18 +906,18 @@ fn cmd_agents_md_drift() {
     check_agents_md_drift(false);
 }
 
-/// Overwrite AGENTS.md with CLAUDE.md contents.
+/// Overwrite the git-ignored CLAUDE.md mirror with AGENTS.md contents.
 fn cmd_sync_agents_md() {
-    let claude_path = root().join("CLAUDE.md");
-    let Ok(bytes) = fs::read(&claude_path) else {
-        println!("  {RED}\u{2717}{RESET} sync-agents-md: CLAUDE.md not found");
+    let agents_path = root().join("AGENTS.md");
+    let Ok(bytes) = fs::read(&agents_path) else {
+        println!("  {RED}\u{2717}{RESET} sync-agents-md: AGENTS.md not found");
         std::process::exit(1);
     };
-    if let Err(e) = fs::write(root().join("AGENTS.md"), &bytes) {
+    if let Err(e) = fs::write(root().join("CLAUDE.md"), &bytes) {
         println!("  {RED}\u{2717}{RESET} sync-agents-md: {e}");
         std::process::exit(1);
     }
-    println!("  {GREEN}\u{2713}{RESET} sync-agents-md: AGENTS.md \u{2190} CLAUDE.md");
+    println!("  {GREEN}\u{2713}{RESET} sync-agents-md: CLAUDE.md \u{2190} AGENTS.md");
 }
 
 fn cmd_check() {
@@ -1143,10 +1152,21 @@ fn install_stop_hooks() {
     }
 }
 
+/// Materialize the git-ignored CLAUDE.md mirror from the committed AGENTS.md.
+fn install_claude_md() {
+    let Ok(agents) = fs::read_to_string(root().join("AGENTS.md")) else {
+        return;
+    };
+    if write_if_missing(&root().join("CLAUDE.md"), &agents, false) {
+        println!("Installed CLAUDE.md (mirror of AGENTS.md)");
+    }
+}
+
 fn cmd_hooks() {
     install_git_hook("pre-commit");
     install_git_hook("pre-push");
     install_stop_hooks();
+    install_claude_md();
     check_stop_hook_present();
 }
 

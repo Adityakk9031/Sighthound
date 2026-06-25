@@ -17,7 +17,7 @@ flags (`--min`, `--max`, `--enforce`) by invoking the runner directly, e.g.
 - Coverage: `cargo harness coverage --min=0` — cargo-llvm-cov line coverage with threshold
 - Mutation (advisory): `make mutation` — cargo-mutants kill-rate on the crate
 - Arch: `make arch` — cargo-modules checks against `arch.toml`
-- Agents drift: `make agents-md-drift` — fail if AGENTS.md differs from CLAUDE.md
-- Sync: `make sync-agents-md` — overwrite AGENTS.md from CLAUDE.md
-- Setup: `make setup-hooks` to install git pre-commit + pre-push hooks and materialize the Claude/Codex Stop hook wiring (under the git-ignored `.claude/` + `.codex/`)
+- Agents drift: `make agents-md-drift` — fail if the local CLAUDE.md mirror differs from AGENTS.md (AGENTS.md is the committed source; edit it, not CLAUDE.md)
+- Sync: `make sync-agents-md` — rewrite the git-ignored CLAUDE.md mirror from AGENTS.md
+- Setup: `make setup-hooks` to install git pre-commit + pre-push hooks and materialize the git-ignored agent files (CLAUDE.md mirror plus the `.claude/` + `.codex/` Stop hook wiring)
 - Stop hook: auto-formats/fixes changed files, then runs complexity and CRAP (`make stop-hook`)
