@@ -61,9 +61,8 @@
                 "e.data",
                 "message.data",
                 
-                // Network responses (external data)
+                // Network response text that may be rendered as HTML.
                 "*.responseText",
-                "*.response",
                 "fetch(*).then",
                 "XMLHttpRequest.responseText",
                 "axios.get",
@@ -92,7 +91,7 @@
                 "iframe.src",
                 "*.srcdoc",  // iframe srcdoc
                 
-                // Attribute manipulation
+                // Attribute manipulation that can inject executable markup.
                 "*.onclick",
                 "*.onload",
                 "*.onerror",
@@ -151,7 +150,7 @@
                 // Exclude safe operations that commonly cause false positives
                 (
                     field: "pattern",
-                    operator: "not_contains", 
+                    operator: "not_contains",
                     value: "addEventListener",
                     condition_type: Some("exclude_safe_operations")
                 ),
@@ -276,9 +275,8 @@
                 // PostMessage (external data)
                 "event.data",
                 
-                // Network responses (external data)
+                // Network response text that may be rendered as HTML.
                 "*.responseText",
-                "*.response",
                 "fetch(*).then",
                 "XMLHttpRequest.responseText",
                 "axios.*.then",
@@ -308,12 +306,12 @@
                 "*.formAction",
                 "*.setAttribute",
                 
-                // Event handlers
+                // Event handlers that execute attacker-controlled code.
                 "*.onclick",
                 "*.onload",
                 "*.onerror",
                 "addEventListener",
-                
+
                 // Template/rendering (dangerous)
                 "template.innerHTML",
                 "*.render",
@@ -1777,12 +1775,10 @@
                 "prompt(",
                 "confirm(",
                 
-                // Network responses
+                // Network response values that can carry executable code.
                 "*.responseText",
-                "*.response",
-                "fetch(",
-                "XMLHttpRequest",
-                "axios.*",
+                "*.response.data",
+                "*.responseJSON",
                 
                 // Storage (could contain user data)
                 "localStorage.getItem",
@@ -1797,7 +1793,6 @@
             sinks: Some([
                 // Direct code execution
                 "eval(",
-                "Function(",
                 "new Function(",
                 
                 // Timed execution with string
