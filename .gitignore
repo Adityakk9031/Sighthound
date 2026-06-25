@@ -68,3 +68,7 @@ release/
 # cargo-mutants
 /mutants.out/
 /mutants.out.old/
+
+# Local agent config — Stop-hook wiring is materialized by `make setup-hooks`
+/.claude/
+/.codex/

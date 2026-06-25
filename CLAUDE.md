@@ -19,5 +19,5 @@ flags (`--min`, `--max`, `--enforce`) by invoking the runner directly, e.g.
 - Arch: `make arch` — cargo-modules checks against `arch.toml`
 - Agents drift: `make agents-md-drift` — fail if AGENTS.md differs from CLAUDE.md
 - Sync: `make sync-agents-md` — overwrite AGENTS.md from CLAUDE.md
-- Setup: `make setup-hooks` to install git pre-commit + pre-push hooks and verify Claude/Codex Stop hook wiring
+- Setup: `make setup-hooks` to install git pre-commit + pre-push hooks and materialize the Claude/Codex Stop hook wiring (under the git-ignored `.claude/` + `.codex/`)
 - Stop hook: auto-formats/fixes changed files, then runs complexity and CRAP (`make stop-hook`)

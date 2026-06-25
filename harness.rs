@@ -1053,9 +1053,100 @@ fn install_git_hook(name: &str) {
     println!("Installed {name} hook");
 }
 
+// Agent Stop-hook wiring, materialized by `setup-hooks`. `.claude/` and
+// `.codex/` are git-ignored (machine-local agent config), so a fresh checkout
+// has neither until `setup-hooks` writes these. Kept byte-identical to the
+// originals so `check_stop_hook_present` is satisfied after install.
+const CLAUDE_SETTINGS_JSON: &str = r#"{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd $CLAUDE_PROJECT_DIR && cargo harness stop-hook"
+          }
+        ]
+      }
+    ]
+  }
+}
+"#;
+
+const CODEX_HOOKS_JSON: &str = r#"{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$(git rev-parse --show-toplevel)\" && .codex/hooks/codex-stop-hook.sh cargo harness stop-hook",
+            "timeout": 300,
+            "statusMessage": "Running stop-hook checks"
+          }
+        ]
+      }
+    ]
+  }
+}
+"#;
+
+const CODEX_STOP_HOOK_SH: &str = r#"#!/bin/sh
+set -u
+
+if [ "$#" -eq 0 ]; then
+  printf '%s\n' '{"decision":"block","reason":"Codex stop-hook wrapper received no command to run."}'
+  exit 0
+fi
+
+if "$@" >&2; then
+  printf '%s\n' '{"continue":true}'
+else
+  printf '%s\n' '{"decision":"block","reason":"Stop hook checks failed; review the output above and fix it before stopping."}'
+fi
+"#;
+
+/// Write `path` with `content` only if it does not already exist. Returns true
+/// when it created the file. Never clobbers an existing file — preserves any
+/// local customization; `check_stop_hook_present` then reports the result.
+fn write_if_missing(path: &Path, content: &str, executable: bool) -> bool {
+    if path.exists() {
+        return false;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if fs::write(path, content).is_err() {
+        return false;
+    }
+    #[cfg(unix)]
+    if executable {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
+    }
+    true
+}
+
+/// Materialize the git-ignored Claude/Codex Stop-hook wiring if absent.
+fn install_stop_hooks() {
+    let root = root();
+    let targets: [(&str, &str, bool); 3] = [
+        (".claude/settings.json", CLAUDE_SETTINGS_JSON, false),
+        (".codex/hooks/codex-stop-hook.sh", CODEX_STOP_HOOK_SH, true),
+        (".codex/hooks.json", CODEX_HOOKS_JSON, false),
+    ];
+    for (rel, content, executable) in targets {
+        if write_if_missing(&root.join(rel), content, executable) {
+            println!("Installed {rel}");
+        }
+    }
+}
+
 fn cmd_hooks() {
     install_git_hook("pre-commit");
     install_git_hook("pre-push");
+    install_stop_hooks();
     check_stop_hook_present();
 }
 
