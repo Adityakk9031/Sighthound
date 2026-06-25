@@ -10,6 +10,11 @@ repository = "https://github.com/corgea/greppy_prototype"
 name = "sighthound"
 path = "src/main.rs"
 
+[[bin]]
+name = "harness"
+path = "harness.rs"
+edition = "2024"
+
 [features]
 default = ["python", "java", "javascript", "tsx", "html", "django"]
 python = ["tree-sitter-python"]
@@ -48,6 +53,7 @@ lazy_static = "1.4"
 dbg_breakpoint="0.1.1"
 [dev-dependencies]
 tempfile = "3.8"
+proptest = "1"
 
 [profile.release]
 opt-level = 3

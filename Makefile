@@ -57,6 +57,17 @@ help:
 	@echo "  make build        - Just build the binary"
 	@echo "  make test         - Run all tests"
 
+# ── Quality harness (delegates to the `cargo harness` runner in harness.rs) ──
+HARNESS := cargo harness
+HARNESS_TARGETS := check fix lint pre-commit pre-push ci audit post-edit \
+	stop-hook complexity coverage crap mutation acceptance arch \
+	agents-md-drift sync-agents-md setup-hooks
+
+.PHONY: bootstrap $(HARNESS_TARGETS)
+bootstrap: setup-hooks
+$(HARNESS_TARGETS):
+	$(HARNESS) $@
+
 # Development shortcuts
 dev-django:
 	@echo "🐍 Testing Django rules..."

@@ -64,3 +64,7 @@ target/
 debug/
 release/
 .DS_Store
+
+# cargo-mutants
+/mutants.out/
+/mutants.out.old/
