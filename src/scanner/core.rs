@@ -17,6 +17,7 @@ use rayon::prelude::*;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -1961,7 +1962,9 @@ impl VulnerabilityScanner {
     ) -> Result<Vec<Finding>> {
         let files = self.discover_files_with_options(root_dir, include_test_fixtures)?;
         if files.is_empty() {
-            println!("No {} files found in {}", language_name, root_dir);
+            if show_progress {
+                println!("No {} files found in {}", language_name, root_dir);
+            }
             return Ok(Vec::new());
         }
 
@@ -1979,7 +1982,9 @@ impl VulnerabilityScanner {
         }
 
         if filtered_files.is_empty() {
-            println!("No {} files remaining after filtering", language_name);
+            if show_progress {
+                println!("No {} files remaining after filtering", language_name);
+            }
             return Ok(Vec::new());
         }
 
@@ -2309,9 +2314,36 @@ impl VulnerabilityScanner {
                 log::info!("Performing cross-file taint analysis...");
             }
 
+            // Restrict cross-file analysis to the files that survived prefiltering and
+            // the code-type/language `retain` above. `files_by_language` is the raw,
+            // unfiltered discovery map, so filter each per-language Vec down to the
+            // paths still present in `filtered_files`. Keeping the same BTreeMap keys
+            // and grouping means the analyzer behaves identically except that
+            // minified/test/doc/excluded files no longer participate.
+            let filtered_set: std::collections::BTreeSet<&std::path::PathBuf> =
+                filtered_files.iter().collect();
+            let filtered_files_by_language: std::collections::BTreeMap<
+                String,
+                Vec<std::path::PathBuf>,
+            > = files_by_language
+                .iter()
+                .filter_map(|(language, paths)| {
+                    let kept: Vec<std::path::PathBuf> = paths
+                        .iter()
+                        .filter(|path| filtered_set.contains(path))
+                        .cloned()
+                        .collect();
+                    if kept.is_empty() {
+                        None
+                    } else {
+                        Some((language.clone(), kept))
+                    }
+                })
+                .collect();
+
             let mut multi_file_analyzer = MultiFileTaintAnalyzer::new();
             match multi_file_analyzer.analyze_cross_file_flows(
-                &files_by_language,
+                &filtered_files_by_language,
                 &taint_rules,
                 language_filter,
             ) {
@@ -2827,16 +2859,20 @@ impl ProgressManager {
 }
 
 /// Print findings in JSON format
-pub fn print_findings_json(findings: &[Finding]) {
-    match serde_json::to_string_pretty(findings) {
-        Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("Error serializing findings to JSON: {}", e),
-    }
+pub fn print_findings_json(findings: &[Finding]) -> Result<()> {
+    let json = serde_json::to_string_pretty(findings)?;
+    let stdout = std::io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    writeln!(out, "{}", json)?;
+    out.flush()?;
+    Ok(())
 }
 
 /// Print findings in CSV format
-pub fn print_findings_csv(findings: &[Finding]) {
-    println!("file,line,function,finding_type,code,severity,confidence,cwe_id,source_type,source_context,sink_type,sink_function,traces");
+pub fn print_findings_csv(findings: &[Finding]) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    writeln!(out, "file,line,function,finding_type,code,severity,confidence,cwe_id,source_type,source_context,sink_type,sink_function,traces")?;
     for finding in findings {
         let code = finding.snippet.replace('"', "\"\"");
         let source_type = finding
@@ -2871,7 +2907,8 @@ pub fn print_findings_csv(findings: &[Finding]) {
             String::new()
         };
 
-        println!(
+        writeln!(
+            out,
             "{},{},{},{},\"{}\",{},{},{},{},{},{},{},\"{}\"",
             finding.file,
             finding.line,
@@ -2886,8 +2923,10 @@ pub fn print_findings_csv(findings: &[Finding]) {
             sink_type,
             sink_function,
             traces
-        );
+        )?;
     }
+    out.flush()?;
+    Ok(())
 }
 
 /// Print findings in text format with syntax highlighting
@@ -3296,8 +3335,36 @@ impl MultiFileTaintAnalyzer {
         let mut findings = Vec::new();
         let rule_deduplicator = TaintRuleDeduplicator::new(taint_rules);
 
+        // Dedup verified cross-file flows within this invocation. The same flow can be
+        // rediscovered when multiple sink_info entries / rule patterns match the same
+        // (sink_file, sink_variable). We key on the full flow identity rather than the sink
+        // line alone so that distinct tainted variables on the same line (now emitted as
+        // separate TaintSinkInfo per used variable) stay separate findings; only a flow whose
+        // source AND sink are byte-for-byte identical is collapsed. BTreeSet keeps the dedup
+        // deterministic per repo convention.
+        let mut seen_flows: std::collections::BTreeSet<(
+            String, // sink_file
+            usize,  // sink_line
+            String, // sink_variable
+            String, // sink_pattern
+            String, // source_file
+            usize,  // source_line
+            String, // source_pattern
+        )> = std::collections::BTreeSet::new();
+
         // Build legacy import/export maps for sink discovery (temporary)
         self.build_import_export_maps(files_by_language, taint_rules, language_filter)?;
+
+        // Hand the parsed import data to the tracer so it can resolve `from foo import bar`
+        // statements to their source file via real imports (no re-parsing). This is derived
+        // from `self.file_imports.functions`, which already maps imported function name ->
+        // resolved source file per calling file.
+        let import_map = self
+            .file_imports
+            .iter()
+            .map(|(file, imports)| (file.clone(), imports.functions.clone()))
+            .collect();
+        data_flow_tracer.set_import_map(import_map);
 
         log::debug!(
             "[CROSS_FILE_NEW] Analyzing {} files with sinks",
@@ -3336,8 +3403,29 @@ impl MultiFileTaintAnalyzer {
                         if let Some(rule) = rule_deduplicator
                             .get_rule_for_combination(&flow.source_pattern, &flow.sink_pattern)
                         {
-                            let finding = self.create_finding_from_verified_flow(&flow, rule);
-                            findings.push(finding);
+                            let flow_key = (
+                                flow.sink_file.clone(),
+                                flow.sink_line,
+                                flow.sink_variable.clone(),
+                                flow.sink_pattern.clone(),
+                                flow.source_file.clone(),
+                                flow.source_line,
+                                flow.source_pattern.clone(),
+                            );
+                            if seen_flows.insert(flow_key) {
+                                let finding = self.create_finding_from_verified_flow(&flow, rule);
+                                findings.push(finding);
+                            } else {
+                                log::debug!(
+                                    "[CROSS_FILE_NEW] Skipping duplicate flow: {} ({}:{}) -> {} ({}:{})",
+                                    flow.source_pattern,
+                                    flow.source_file,
+                                    flow.source_line,
+                                    flow.sink_pattern,
+                                    flow.sink_file,
+                                    flow.sink_line
+                                );
+                            }
                         }
                     }
                     AnalysisResult::DefinitelySafe => {
@@ -3559,14 +3647,22 @@ impl MultiFileTaintAnalyzer {
             if let Some(sink_pattern) =
                 Self::extract_taint_sink_pattern(&node, source, rule_deduplicator)
             {
-                // Extract variables from function call arguments
+                // Extract variables from function call arguments.
+                // `extract_all_variables` sorts+dedups its result, so `.first()`
+                // would return the lexicographically smallest name rather than the
+                // tainted argument (e.g. `subprocess.run(["sh","-c",cmd])` or
+                // `os.system(prefix + cmd)` could record the wrong variable).
+                // Record one sink per used variable so the data-flow tracer can
+                // check every argument — the tainted one is never dropped by sort
+                // order. This mirrors the "check ANY used variable" handling in the
+                // single-file sink analysis above.
                 let used_variables = CommonUtils::extract_all_variables(&node_text);
-                if let Some(first_var) = used_variables.first() {
+                for used_variable in used_variables {
                     imports.taint_sinks.push(TaintSinkInfo {
                         function: func_name.clone(),
                         line,
-                        pattern: sink_pattern,
-                        used_variable: first_var.clone(),
+                        pattern: sink_pattern.clone(),
+                        used_variable,
                     });
                 }
             }
@@ -3770,6 +3866,11 @@ struct DataFlowTracer {
     variable_source_cache: std::collections::HashMap<(String, String, String), VariableSource>,
     /// Verified taint flows that have been fully validated
     verified_flows: Vec<VerifiedTaintFlow>,
+    /// Resolved imports parsed elsewhere: calling_file -> {imported_function -> source_file}.
+    /// Lets `find_function_source_file` resolve real `from foo import bar` statements via the
+    /// already-parsed import data instead of relying on fixture-name heuristics. BTreeMap keeps
+    /// iteration deterministic per repo convention.
+    import_map: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
 }
 
 impl DataFlowTracer {
@@ -3777,7 +3878,21 @@ impl DataFlowTracer {
         Self {
             variable_source_cache: std::collections::HashMap::new(),
             verified_flows: Vec::new(),
+            import_map: std::collections::BTreeMap::new(),
         }
+    }
+
+    /// Populate the import map from import data already parsed by the analyzer.
+    /// Called before cross-file flow analysis so `find_function_source_file` can resolve
+    /// imported functions to their source file without re-parsing any files.
+    fn set_import_map(
+        &mut self,
+        import_map: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, String>,
+        >,
+    ) {
+        self.import_map = import_map;
     }
 
     /// Analyze whether a sink variable in a function truly receives tainted data
@@ -3853,6 +3968,7 @@ impl DataFlowTracer {
                     sink_line,
                     sink_variable,
                     rule_deduplicator,
+                    &mut std::collections::BTreeSet::new(),
                 )
             }
 
@@ -4001,13 +4117,41 @@ impl DataFlowTracer {
             }
         };
 
+        // Scope the assignment search to the enclosing function's body so a
+        // same-named local variable in an EARLIER function can't shadow the
+        // real assignment in the target function. Each body line's 0-based
+        // index `i` maps to absolute file line `start_line + i`.
+        //
+        // Build (line, absolute_file_line) pairs to search. If the function
+        // body can't be located, fall back to the whole-file scan so we never
+        // regress detection (preserves the previous behavior).
+        let scoped_lines: Vec<(usize, String)> =
+            match self.extract_function_body(&source_text, function_name) {
+                Some((body, start_line)) => body
+                    .lines()
+                    .enumerate()
+                    .map(|(i, line)| (start_line + i, line.to_string()))
+                    .collect::<Vec<_>>(),
+                None => source_text
+                    .lines()
+                    .enumerate()
+                    .map(|(i, line)| (i + 1, line.to_string()))
+                    .collect::<Vec<_>>(),
+            };
+
         // Simple text-based analysis for now
         // Look for assignment patterns like "variable_name = something"
-        for (line_num, line) in source_text.lines().enumerate() {
+        for (file_line, line) in &scoped_lines {
+            let file_line = *file_line;
             let line = line.trim();
+            // Note: augmented assignments (`x += ...`, `x -= ...`) are intentionally
+            // not matched by this `{} =` guard and are not handled by this path.
             if line.starts_with(&format!("{} =", variable_name)) {
+                // Split on the FIRST '=' only so the full RHS is preserved even when
+                // it contains '==' or kwarg '=' (e.g. `x = a == b`, `x = f(k=v)`), then
+                // strip any trailing inline comment.
                 let rhs = TaintExpressionUtils::strip_inline_comment(
-                    line.split('=').nth(1).unwrap_or("").trim(),
+                    line.split_once('=').map(|(_, rhs)| rhs).unwrap_or("").trim(),
                 );
                 log::debug!(
                     "[COMPUTE_VARIABLE_SOURCE] Found assignment: {} = {}",
@@ -4023,7 +4167,7 @@ impl DataFlowTracer {
                         );
                         return VariableSource::KnownSafe {
                             reason,
-                            line: line_num + 1,
+                            line: file_line,
                         };
                     }
                     ValueSourceClassification::Tainted(source_pattern) => {
@@ -4033,7 +4177,7 @@ impl DataFlowTracer {
                         );
                         return VariableSource::DirectTaintSource {
                             pattern: source_pattern,
-                            line: line_num + 1,
+                            line: file_line,
                         };
                     }
                     ValueSourceClassification::Unknown => {}
@@ -4047,7 +4191,7 @@ impl DataFlowTracer {
                     );
                     return VariableSource::DirectTaintSource {
                         pattern: source_pattern,
-                        line: line_num + 1,
+                        line: file_line,
                     };
                 }
 
@@ -4060,7 +4204,7 @@ impl DataFlowTracer {
                     );
                     return VariableSource::LocalAssignment {
                         source_expression: rhs.to_string(),
-                        line: line_num + 1,
+                        line: file_line,
                     };
                 }
 
@@ -4068,7 +4212,7 @@ impl DataFlowTracer {
                 log::debug!("[COMPUTE_VARIABLE_SOURCE] Local assignment: '{}'", rhs);
                 return VariableSource::LocalAssignment {
                     source_expression: rhs.to_string(),
-                    line: line_num + 1,
+                    line: file_line,
                 };
             }
         }
@@ -4323,6 +4467,7 @@ impl DataFlowTracer {
         sink_line: usize,
         sink_variable: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
+        visited: &mut std::collections::BTreeSet<(String, String)>,
     ) -> AnalysisResult {
         log::debug!(
             "[TRACE_LOCAL] Analyzing local assignment: '{}' in {}::{}",
@@ -4391,16 +4536,16 @@ impl DataFlowTracer {
 
         // Check if the source expression is a function call
         if source_expression.contains('(') && source_expression.contains(')') {
-            let function_name = self.extract_function_name_from_call(source_expression);
-            log::debug!("[TRACE_LOCAL] Source is function call: '{}'", function_name);
+            let callee_name = self.extract_function_name_from_call(source_expression);
+            log::debug!("[TRACE_LOCAL] Source is function call: '{}'", callee_name);
 
             // Find the source file for this function
             let resolved_function = if let Some(source_file) =
-                self.find_function_source_file(&function_name, file_path)
+                self.find_function_source_file(&callee_name, file_path)
             {
-                Some((function_name.clone(), source_file))
-            } else if let Some(method_name) = function_name.rsplit('.').next() {
-                if method_name != function_name {
+                Some((callee_name.clone(), source_file))
+            } else if let Some(method_name) = callee_name.rsplit('.').next() {
+                if method_name != callee_name {
                     self.find_function_source_file(method_name, file_path)
                         .or_else(|| {
                             self.file_contains_function(file_path, method_name)
@@ -4426,9 +4571,10 @@ impl DataFlowTracer {
                     &source_file,
                     &resolved_function_name,
                     rule_deduplicator,
+                    visited,
                 ) {
                     AnalysisResult::DefinitelyTainted { flow } => {
-                        log::debug!("[TRACE_LOCAL] Function '{}' returns tainted data, creating cross-file flow", function_name);
+                        log::debug!("[TRACE_LOCAL] Function '{}' returns tainted data, creating cross-file flow", callee_name);
 
                         // Create a cross-file taint flow from the original source to the current sink
                         let cross_file_flow = VerifiedTaintFlow {
@@ -4456,7 +4602,7 @@ impl DataFlowTracer {
             } else {
                 log::debug!(
                     "[TRACE_LOCAL] Could not find source file for function '{}'",
-                    function_name
+                    callee_name
                 );
             }
         }
@@ -4552,6 +4698,26 @@ impl DataFlowTracer {
             calling_file
         );
 
+        // First, resolve via the real imports parsed for the calling file. `from foo import bar`
+        // populates this map with `bar -> foo.py`, so genuine code resolves here regardless of
+        // function name. The hardcoded fixture arms and read_dir heuristic below remain as a
+        // fallback when no parsed import covers this call (e.g. same-directory definitions with
+        // no explicit import).
+        if let Some(source_file) = self
+            .import_map
+            .get(calling_file)
+            .and_then(|functions| functions.get(function_name))
+        {
+            if std::path::Path::new(source_file).exists() {
+                log::debug!(
+                    "[FIND_SOURCE_FILE] Resolved \"{}\" via parsed import -> \"{}\"",
+                    function_name,
+                    source_file
+                );
+                return Some(source_file.clone());
+            }
+        }
+
         let calling_dir = std::path::Path::new(calling_file)
             .parent()
             .and_then(|p| p.to_str())
@@ -4635,12 +4801,31 @@ impl DataFlowTracer {
         file_path: &str,
         function_name: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
+        visited: &mut std::collections::BTreeSet<(String, String)>,
     ) -> AnalysisResult {
         log::debug!(
             "[ANALYZE_FUNCTION] Analyzing function \"{}\" in \"{}\"",
             function_name,
             file_path
         );
+
+        // Guard against cyclic call graphs (e.g. a() returns b(), b() returns a()).
+        // Insert the (file, function) identity key; if it was already present we are
+        // re-entering a function still on the current call stack, so bail out as
+        // inconclusive instead of recursing into a stack overflow.
+        if !visited.insert((file_path.to_string(), function_name.to_string())) {
+            log::debug!(
+                "[ANALYZE_FUNCTION] Cycle detected for \"{}\" in \"{}\", stopping recursion",
+                function_name,
+                file_path
+            );
+            return AnalysisResult::Unknown {
+                reason: format!(
+                    "Recursion cutoff: already analyzing function \"{}\" in \"{}\"",
+                    function_name, file_path
+                ),
+            };
+        }
 
         let source_text = match std::fs::read_to_string(file_path) {
             Ok(content) => content,
@@ -4652,7 +4837,9 @@ impl DataFlowTracer {
             }
         };
 
-        if let Some(function_body) = self.extract_function_body(&source_text, function_name) {
+        if let Some((function_body, body_start_line)) =
+            self.extract_function_body(&source_text, function_name)
+        {
             log::debug!("[ANALYZE_FUNCTION] Function body found, analyzing...");
 
             let mut tainted_locals: std::collections::BTreeMap<String, VerifiedTaintFlow> =
@@ -4660,6 +4847,9 @@ impl DataFlowTracer {
             let mut ambient_taint: Option<VerifiedTaintFlow> = None;
 
             for (line_num, line) in function_body.lines().enumerate() {
+                // Translate the 0-based body-relative index to the absolute,
+                // 1-based file line number using the body's start offset.
+                let file_line = body_start_line + line_num;
                 let line = line.trim();
 
                 if ambient_taint.is_none() {
@@ -4696,6 +4886,7 @@ impl DataFlowTracer {
                                 line_num + 1,
                                 lhs,
                                 rule_deduplicator,
+                                visited,
                             ) {
                                 AnalysisResult::DefinitelyTainted { flow } => {
                                     tainted_locals.insert(lhs.to_string(), flow);
@@ -4789,11 +4980,11 @@ impl DataFlowTracer {
                         let flow = VerifiedTaintFlow {
                             source_file: file_path.to_string(),
                             source_function: function_name.to_string(),
-                            source_line: line_num + 1,
+                            source_line: file_line,
                             source_pattern: source_pattern.clone(),
                             sink_file: file_path.to_string(),
                             sink_function: function_name.to_string(),
-                            sink_line: line_num + 1,
+                            sink_line: file_line,
                             sink_variable: "return_value".to_string(),
                             sink_pattern: "function_return".to_string(),
                             call_chain_len: 0,
@@ -4812,11 +5003,12 @@ impl DataFlowTracer {
                             file_path,
                             function_name,
                             return_expr,
-                            line_num + 1,
+                            file_line,
                             "function_return",
-                            line_num + 1,
+                            file_line,
                             "return_value",
                             rule_deduplicator,
+                            visited,
                         );
 
                         match nested_result {
@@ -4847,11 +5039,22 @@ impl DataFlowTracer {
         }
     }
 
-    /// Extract the body of a function from source code
-    fn extract_function_body(&self, source_text: &str, function_name: &str) -> Option<String> {
+    /// Extract the body of a function from source code.
+    ///
+    /// Returns `(body, body_start_line)` where `body` is the function body text
+    /// (the `def` line is skipped) and `body_start_line` is the 1-based absolute
+    /// file line number of the FIRST body line. With this convention, the
+    /// absolute file line of the body line at 0-based index `i` (e.g. from
+    /// `body.lines().enumerate()`) is exactly `body_start_line + i`.
+    fn extract_function_body(
+        &self,
+        source_text: &str,
+        function_name: &str,
+    ) -> Option<(String, usize)> {
         let lines: Vec<&str> = source_text.lines().collect();
         let mut in_function = false;
         let mut function_lines = Vec::new();
+        let mut body_start_line: Option<usize> = None;
         let mut base_indent = None;
 
         log::debug!(
@@ -4892,7 +5095,12 @@ impl DataFlowTracer {
                     }
                 }
 
-                // Add line to function body (including empty lines)
+                // Add line to function body (including empty lines).
+                // Record the 1-based absolute file line of the first body line so
+                // callers can translate body-relative indices to file lines.
+                if body_start_line.is_none() {
+                    body_start_line = Some(line_num + 1);
+                }
                 function_lines.push(*line);
                 log::debug!(
                     "[EXTRACT_FUNCTION_BODY] Added line {}: '{}'",
@@ -4910,13 +5118,17 @@ impl DataFlowTracer {
             None
         } else {
             let body = function_lines.join("\n");
+            // body_start_line is guaranteed Some here: a non-empty function_lines
+            // means at least one body line was pushed, which sets body_start_line.
+            let body_start_line = body_start_line.unwrap_or(1);
             log::debug!(
-                "[EXTRACT_FUNCTION_BODY] Extracted {} lines for function: {}",
+                "[EXTRACT_FUNCTION_BODY] Extracted {} lines for function: {} (body starts at file line {})",
                 function_lines.len(),
-                function_name
+                function_name,
+                body_start_line
             );
             log::debug!("[EXTRACT_FUNCTION_BODY] Function body:\n{}", body);
-            Some(body)
+            Some((body, body_start_line))
         }
     }
 }
