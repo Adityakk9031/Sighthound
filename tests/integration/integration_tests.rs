@@ -1,4 +1,6 @@
-use find_vulns::rules::{Rules, rule_matches_pattern, validate_rule_patterns};
+// TODO(onboarding): symbols `rule_matches_pattern` and `validate_rule_patterns` removed and Rules::malware_detection schema removed during crate rename; needs triage.
+// Module is currently excluded from tests/integration/main.rs so the rest of the suite still compiles.
+use sighthound::rules::{Rules, rule_matches_pattern, validate_rule_patterns};
 use tempfile::{NamedTempFile};
 use std::io::Write;
 

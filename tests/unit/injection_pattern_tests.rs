@@ -1,7 +1,7 @@
-use find_vulns::language::{get_language_support, LanguageSupport};
-use find_vulns::rules::{check_for_injection_pattern, is_literal_node};
-use find_vulns::scanner::shared::ScanningLogic;
-use find_vulns::parser::{LanguageParser, get_node_text};
+use sighthound::language::{get_language_support, LanguageSupport};
+use sighthound::rules::{check_for_injection_pattern, is_literal_node};
+use sighthound::scanner::core::ScanningLogic;
+use sighthound::parser::{LanguageParser, get_node_text};
 
 #[cfg(test)]
 mod injection_pattern_tests {
