@@ -73,7 +73,7 @@ fn main() -> Result<()> {
         ))?;
 
     // Handle all vulnerability scanning modes with unified flow
-    let findings = if cli.taint_analysis {
+    let mut findings = if cli.taint_analysis {
         // Only taint analysis
         run_taint_analysis(&cli, root_dir, show_progress)?
     } else if cli.simple_analysis {
@@ -100,9 +100,11 @@ fn main() -> Result<()> {
 
         // Combine findings
         simple_findings.append(&mut taint_findings);
-        deduplicate_findings(&mut simple_findings);
         simple_findings
     };
+
+    // Deduplicate findings across all analysis modes (keeps first occurrence order)
+    deduplicate_findings(&mut findings);
 
     // Output results
     let duration = start_time.elapsed();
@@ -125,6 +127,8 @@ fn deduplicate_findings(findings: &mut Vec<sighthound::Finding>) {
             finding.end_line,
             finding.finding_type.clone(),
             finding.snippet.clone(),
+            finding.severity.clone(),
+            finding.description.clone(),
         ))
     });
 }

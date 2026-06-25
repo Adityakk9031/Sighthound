@@ -138,14 +138,21 @@ impl TaintRuleDeduplicator {
     }
 
     fn matches_bare_call_source(pattern: &str, text: &str) -> bool {
+        // Module qualifiers that alias Python builtins (e.g. `builtins.input(`,
+        // `six.moves.input(`). These read as the bare source even though they
+        // carry a dotted prefix, so they must survive the identifier-prefix guard.
+        const BUILTIN_QUALIFIERS: [&str; 2] = ["builtins.", "six.moves."];
+
         let mut search_start = 0;
         while let Some(relative_pos) = text[search_start..].find(pattern) {
             let pos = search_start + relative_pos;
-            let before = text[..pos].chars().next_back();
-            let has_identifier_prefix =
-                before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+            let before = &text[..pos];
+            let has_identifier_prefix = before
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
 
-            if !has_identifier_prefix {
+            if !has_identifier_prefix || Self::has_builtin_qualifier(before, &BUILTIN_QUALIFIERS) {
                 return true;
             }
 
@@ -153,6 +160,19 @@ impl TaintRuleDeduplicator {
         }
 
         false
+    }
+
+    /// Whether the text preceding a bare-call pattern ends with a whitelisted
+    /// builtin module qualifier that is itself bare. `builtins.input(` and
+    /// `six.moves.input(` match; `obj.input(` and `mybuiltins.input(` do not.
+    fn has_builtin_qualifier(before: &str, qualifiers: &[&str]) -> bool {
+        qualifiers.iter().any(|qualifier| {
+            before.strip_suffix(qualifier).is_some_and(|head| {
+                head.chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '.')
+            })
+        })
     }
 
     /// Check if a pattern matches any sink
@@ -4104,11 +4124,15 @@ impl DataFlowTracer {
             return ValueSourceClassification::Safe("literal expression".to_string());
         }
 
-        if expr.contains("setdefault(") {
-            return ValueSourceClassification::Safe(
-                "environment default/configuration write".to_string(),
-            );
-        }
+        // `setdefault(key, default)` returns `default` when the key is absent, so a
+        // tainted default (e.g. `d.setdefault("k", request.args["x"])` or
+        // `os.environ.setdefault(k, input())`) propagates taint through the result.
+        // We deliberately do NOT short-circuit `setdefault(` to Safe. Robustly parsing
+        // out the 2nd argument (nested calls, commas, and quotes) is not worth the
+        // complexity, so we drop the blanket guard and let normal classification run:
+        // `os.environ.setdefault(...)` is handled by the env-key path below (which
+        // separates user-controlled keys from config keys), and any inline taint source
+        // in the default argument is caught by the source-pattern checks further down.
 
         if Self::is_safe_static_file_read(expr) {
             return ValueSourceClassification::Safe("static config/template file read".to_string());
@@ -4169,9 +4193,32 @@ impl DataFlowTracer {
     }
 
     fn is_string_literal(expression: &str) -> bool {
-        let expr = expression.trim();
-        (expr.len() >= 2 && expr.starts_with('"') && expr.ends_with('"'))
-            || (expr.len() >= 2 && expr.starts_with('\'') && expr.ends_with('\''))
+        // Returns true only for a SINGLE atomic quoted literal. The opening quote's
+        // matching closing quote must be the final character; otherwise the expression
+        // is a top-level concatenation like `"x" + tainted + "y"` (which starts and ends
+        // with a quote but is not one literal) and must fall through to the per-operand
+        // concat check in `is_safe_literal_expression`.
+        let bytes = expression.trim().as_bytes();
+        if bytes.len() < 2 {
+            return false;
+        }
+        let quote = bytes[0];
+        if quote != b'"' && quote != b'\'' {
+            return false;
+        }
+        // Quotes and `\` are ASCII, so byte scanning is safe even with multibyte
+        // UTF-8 content (continuation bytes are all >= 0x80 and never match).
+        let mut escaped = false;
+        for (i, &b) in bytes.iter().enumerate().skip(1) {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == quote {
+                return i == bytes.len() - 1;
+            }
+        }
+        false
     }
 
     fn is_safe_static_file_read(expression: &str) -> bool {
@@ -4195,6 +4242,16 @@ impl DataFlowTracer {
             return false;
         };
         let filename = rest[..end].to_ascii_lowercase();
+
+        // The path must be a SINGLE string literal. After the literal's closing
+        // quote the only thing allowed is the argument terminator (`)` or `,` for
+        // the mode arg). A `+` (concatenation) or any other token means the real
+        // path is built from a tainted value — e.g. `open("config/" + user_input)`
+        // — which must NOT be treated as a safe static read.
+        let remainder = rest[end + quote.len_utf8()..].trim_start();
+        if !matches!(remainder.chars().next(), Some(')') | Some(',')) {
+            return false;
+        }
 
         filename.contains("config")
             || filename.contains("template")
@@ -4249,9 +4306,11 @@ impl DataFlowTracer {
             || key.starts_with("FLASK_")
             || key.ends_with("_MODE")
             || key.ends_with("_VERSION")
+            || key.ends_with("_API_KEY")
             || key == "DEBUG"
             || key == "LOG_LEVEL"
             || key == "SECRET_KEY"
+            || key == "API_KEY"
     }
 
     fn trace_local_assignment_taint(

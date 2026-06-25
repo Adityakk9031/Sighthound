@@ -93,6 +93,8 @@
                 
                 // Attribute manipulation that can inject executable markup.
                 "*.onclick",
+                "*.onload",
+                "*.onerror",
                 "*.setAttribute",
                 // Code execution
                 "eval(",
@@ -148,7 +150,7 @@
                 // Exclude safe operations that commonly cause false positives
                 (
                     field: "pattern",
-                    operator: "not_contains", 
+                    operator: "not_contains",
                     value: "addEventListener",
                     condition_type: Some("exclude_safe_operations")
                 ),
@@ -306,7 +308,10 @@
                 
                 // Event handlers that execute attacker-controlled code.
                 "*.onclick",
-                
+                "*.onload",
+                "*.onerror",
+                "addEventListener",
+
                 // Template/rendering (dangerous)
                 "template.innerHTML",
                 "*.render",
