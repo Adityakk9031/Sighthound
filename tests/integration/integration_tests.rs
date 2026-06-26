@@ -1,9 +1,10 @@
-// TODO(onboarding): symbols `rule_matches_pattern` and `validate_rule_patterns` removed and Rules::malware_detection schema removed during crate rename; needs triage.
-// Module is currently excluded from tests/integration/main.rs so the rest of the suite still compiles.
-use sighthound::rules::{Rules, rule_matches_pattern, validate_rule_patterns};
-use tempfile::{NamedTempFile};
+use sighthound::rules::{Rules, rule_matches_pattern_unified, validate_unified_rule_patterns};
+use tempfile::NamedTempFile;
 use std::io::Write;
 
+// note: rules now live in a single unified `rules: [...]` list. Pattern matching uses
+// `rule_matches_pattern_unified` and validation uses `validate_unified_rule_patterns`
+// (which validates regex patterns only). RON Option fields require explicit `Some(...)`.
 #[cfg(test)]
 mod integration_tests {
     use super::*;
@@ -37,51 +38,50 @@ def paste_data():
         let _python_file = create_test_python_file(python_content);
 
         // Create rules with single patterns
-        let rules_content = r#"{
-            malware_detection: Some([
+        let rules_content = r#"(
+            rules: [
                 (
-                    pattern: "pyperclip.copy",
+                    pattern: Some("pyperclip.copy"),
                     finding_type: Some("clipboard_access"),
                     severity: Some("medium"),
                     conditions: None,
                     file_types: Some((
-                        extensions: [".py"],
+                        extensions: Some([".py"]),
                         include_patterns: None,
                         exclude_patterns: None,
                     )),
                 ),
                 (
-                    pattern: "pyperclip.paste",
+                    pattern: Some("pyperclip.paste"),
                     finding_type: Some("clipboard_access"),
                     severity: Some("medium"),
                     conditions: None,
                     file_types: Some((
-                        extensions: [".py"],
+                        extensions: Some([".py"]),
                         include_patterns: None,
                         exclude_patterns: None,
                     )),
                 ),
-            ]),
-        }"#;
+            ]
+        )"#;
         let rules_file = create_test_rules_file(rules_content);
 
         // Load and validate rules
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
 
-        let malware_rules = rules.malware_detection.unwrap();
-        assert_eq!(malware_rules.len(), 2);
+        assert_eq!(rules.rules.len(), 2);
 
         // Validate each rule
-        for rule in &malware_rules {
-            assert!(validate_rule_patterns(rule).is_ok());
+        for rule in &rules.rules {
+            assert!(validate_unified_rule_patterns(rule).is_ok());
         }
 
         // Test pattern matching
-        assert!(rule_matches_pattern(&malware_rules[0], "pyperclip.copy"));
-        assert!(!rule_matches_pattern(&malware_rules[0], "pyperclip.paste"));
-        assert!(rule_matches_pattern(&malware_rules[1], "pyperclip.paste"));
-        assert!(!rule_matches_pattern(&malware_rules[1], "pyperclip.copy"));
+        assert!(rule_matches_pattern_unified(&rules.rules[0], "pyperclip.copy"));
+        assert!(!rule_matches_pattern_unified(&rules.rules[0], "pyperclip.paste"));
+        assert!(rule_matches_pattern_unified(&rules.rules[1], "pyperclip.paste"));
+        assert!(!rule_matches_pattern_unified(&rules.rules[1], "pyperclip.copy"));
     }
 
     #[test]
@@ -109,48 +109,47 @@ def test_clipboard_operations():
         let _python_file = create_test_python_file(python_content);
 
         // Create rules with multiple patterns
-        let rules_content = r#"{
-            malware_detection: Some([
+        let rules_content = r#"(
+            rules: [
                 (
-                    patterns: [
+                    patterns: Some([
                         "pyperclip.copy",
                         "pyperclip.paste",
                         "*.to_clipboard",
                         "*.clipboard_append",
-                    ],
+                    ]),
                     finding_type: Some("clipboard_access"),
                     severity: Some("medium"),
                     confidence: Some("high"),
                     conditions: None,
                     file_types: Some((
-                        extensions: [".py"],
+                        extensions: Some([".py"]),
                         include_patterns: None,
                         exclude_patterns: None,
                     )),
                 ),
-            ]),
-        }"#;
+            ]
+        )"#;
         let rules_file = create_test_rules_file(rules_content);
 
         // Load and validate rules
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        
-        let malware_rules = rules.malware_detection.unwrap();
-        assert_eq!(malware_rules.len(), 1);
 
-        let rule = &malware_rules[0];
-        assert!(validate_rule_patterns(rule).is_ok());
+        assert_eq!(rules.rules.len(), 1);
+
+        let rule = &rules.rules[0];
+        assert!(validate_unified_rule_patterns(rule).is_ok());
 
         // Test that all patterns match
-        assert!(rule_matches_pattern(rule, "pyperclip.copy"));
-        assert!(rule_matches_pattern(rule, "pyperclip.paste"));
-        assert!(rule_matches_pattern(rule, "df.to_clipboard"));
-        assert!(rule_matches_pattern(rule, "root.clipboard_append"));
-        
+        assert!(rule_matches_pattern_unified(rule, "pyperclip.copy"));
+        assert!(rule_matches_pattern_unified(rule, "pyperclip.paste"));
+        assert!(rule_matches_pattern_unified(rule, "df.to_clipboard"));
+        assert!(rule_matches_pattern_unified(rule, "root.clipboard_append"));
+
         // Test non-matching patterns
-        assert!(!rule_matches_pattern(rule, "print"));
-        assert!(!rule_matches_pattern(rule, "clipboard.get"));
+        assert!(!rule_matches_pattern_unified(rule, "print"));
+        assert!(!rule_matches_pattern_unified(rule, "clipboard.get"));
     }
 
     #[test]
@@ -163,10 +162,10 @@ import subprocess
 def malicious_functions():
     keyboard.hook(callback)
     keyboard.on_press(handler)
-    
+
     subprocess.call("malware.exe")
     subprocess.run("virus.exe.hidden")
-    
+
     # Safe functions
     mouse.click()
     file.txt.read()
@@ -174,99 +173,96 @@ def malicious_functions():
         let _python_file = create_test_python_file(python_content);
 
         // Create rules with wildcard patterns
-        let rules_content = r#"{
-            malware_detection: Some([
+        let rules_content = r#"(
+            rules: [
                 (
-                    patterns: [
+                    patterns: Some([
                         "keyboard.*",
                         "*.exe*",
-                    ],
+                    ]),
                     finding_type: Some("suspicious_activity"),
                     severity: Some("high"),
                     conditions: None,
                     file_types: Some((
-                        extensions: [".py"],
+                        extensions: Some([".py"]),
                         include_patterns: None,
                         exclude_patterns: None,
                     )),
                 ),
-            ]),
-        }"#;
+            ]
+        )"#;
         let rules_file = create_test_rules_file(rules_content);
 
         // Load and validate rules
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        
-        let malware_rules = rules.malware_detection.unwrap();
-        let rule = &malware_rules[0];
+
+        let rule = &rules.rules[0];
 
         // Test wildcard matching
-        assert!(rule_matches_pattern(rule, "keyboard.hook"));
-        assert!(rule_matches_pattern(rule, "keyboard.on_press"));
-        assert!(rule_matches_pattern(rule, "malware.exe"));
-        assert!(rule_matches_pattern(rule, "virus.exe.hidden"));
-        
+        assert!(rule_matches_pattern_unified(rule, "keyboard.hook"));
+        assert!(rule_matches_pattern_unified(rule, "keyboard.on_press"));
+        assert!(rule_matches_pattern_unified(rule, "malware.exe"));
+        assert!(rule_matches_pattern_unified(rule, "virus.exe.hidden"));
+
         // Test non-matching patterns
-        assert!(!rule_matches_pattern(rule, "mouse.click"));
-        assert!(!rule_matches_pattern(rule, "file.txt"));
+        assert!(!rule_matches_pattern_unified(rule, "mouse.click"));
+        assert!(!rule_matches_pattern_unified(rule, "file.txt"));
     }
 
     #[test]
     fn test_rule_validation_integration() {
-        // Test various rule validation scenarios
+        // note: validation now only checks that `regex:`-prefixed patterns compile, so the
+        // "invalid" case below is a malformed regex rather than the old both-pattern case.
         let test_cases = vec![
             // Valid single pattern
-            (r#"{
-                malware_detection: Some([
+            (r#"(
+                rules: [
                     (
-                        pattern: "test_function",
+                        pattern: Some("test_function"),
                         finding_type: Some("test"),
                         conditions: None,
                         file_types: None,
                     ),
-                ]),
-            }"#, true),
-            
+                ]
+            )"#, true),
+
             // Valid multiple patterns
-            (r#"{
-                malware_detection: Some([
+            (r#"(
+                rules: [
                     (
-                        patterns: ["test1", "test2"],
+                        patterns: Some(["test1", "test2"]),
                         finding_type: Some("test"),
                         conditions: None,
                         file_types: None,
                     ),
-                ]),
-            }"#, true),
-            
-            // Invalid: both pattern and patterns (should parse but fail validation)
-            (r#"{
-                malware_detection: Some([
+                ]
+            )"#, true),
+
+            // Invalid: malformed regex pattern (should parse but fail validation)
+            (r#"(
+                rules: [
                     (
-                        pattern: "test",
-                        patterns: ["test1", "test2"],
+                        pattern: Some("regex:[unclosed"),
                         finding_type: Some("test"),
                         conditions: None,
                         file_types: None,
                     ),
-                ]),
-            }"#, false),
+                ]
+            )"#, false),
         ];
 
         for (rules_content, should_be_valid) in test_cases {
             let rules_file = create_test_rules_file(rules_content);
             let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
                 .expect("Failed to load rules");
-            
-            if let Some(malware_rules) = rules.malware_detection {
-                for rule in &malware_rules {
-                    let validation_result = validate_rule_patterns(rule);
-                    if should_be_valid {
-                        assert!(validation_result.is_ok(), "Rule should be valid: {:?}", rule);
-                    } else {
-                        assert!(validation_result.is_err(), "Rule should be invalid: {:?}", rule);
-                    }
+
+            for rule in &rules.rules {
+                let validation_result = validate_unified_rule_patterns(rule);
+                if should_be_valid {
+                    assert!(validation_result.is_ok(), "Rule should be valid: {:?}", rule);
+                } else {
+                    assert!(validation_result.is_err(), "Rule should be invalid: {:?}", rule);
                 }
             }
         }
@@ -275,47 +271,46 @@ def malicious_functions():
     #[test]
     fn test_file_type_filtering() {
         // Create rules that should only apply to Python files
-        let rules_content = r#"{
-            malware_detection: Some([
+        let rules_content = r#"(
+            rules: [
                 (
-                    pattern: "dangerous_function",
+                    pattern: Some("dangerous_function"),
                     finding_type: Some("test"),
                     conditions: None,
                     file_types: Some((
-                        extensions: [".py"],
+                        extensions: Some([".py"]),
                         include_patterns: None,
                         exclude_patterns: None,
                     )),
                 ),
                 (
-                    patterns: ["pattern1", "pattern2"],
+                    patterns: Some(["pattern1", "pattern2"]),
                     finding_type: Some("test"),
                     conditions: None,
                     file_types: Some((
-                        extensions: [".py", ".pyw"],
-                        include_patterns: ["*test*"],
-                        exclude_patterns: ["*safe*"],
+                        extensions: Some([".py", ".pyw"]),
+                        include_patterns: Some(["*test*"]),
+                        exclude_patterns: Some(["*safe*"]),
                     )),
                 ),
-            ]),
-        }"#;
+            ]
+        )"#;
         let rules_file = create_test_rules_file(rules_content);
 
         // Load rules and verify file type filters
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        
-        let malware_rules = rules.malware_detection.unwrap();
-        assert_eq!(malware_rules.len(), 2);
+
+        assert_eq!(rules.rules.len(), 2);
 
         // Check first rule file types
-        let file_types1 = malware_rules[0].file_types.as_ref().unwrap();
+        let file_types1 = rules.rules[0].file_types.as_ref().unwrap();
         assert_eq!(file_types1.extensions, Some(vec![".py".to_string()]));
         assert_eq!(file_types1.include_patterns, None);
         assert_eq!(file_types1.exclude_patterns, None);
 
         // Check second rule file types
-        let file_types2 = malware_rules[1].file_types.as_ref().unwrap();
+        let file_types2 = rules.rules[1].file_types.as_ref().unwrap();
         assert_eq!(file_types2.extensions, Some(vec![".py".to_string(), ".pyw".to_string()]));
         assert_eq!(file_types2.include_patterns, Some(vec!["*test*".to_string()]));
         assert_eq!(file_types2.exclude_patterns, Some(vec!["*safe*".to_string()]));
@@ -324,51 +319,48 @@ def malicious_functions():
     #[test]
     fn test_conditions_with_patterns() {
         // Create rules with conditions that use both single and multiple patterns
-        let rules_content = r#"{
-            malware_detection: Some([
+        let rules_content = r#"(
+            rules: [
                 (
-                    pattern: "subprocess.Popen",
+                    pattern: Some("subprocess.Popen"),
                     finding_type: Some("command_injection"),
                     conditions: Some([
                         (
-                            type: "has_argument",
-                            pattern: "shell=True",
-                            name: None,
-                            not_in: None,
-                            parent_type: None,
+                            field: "has_argument",
+                            operator: "contains",
+                            value: "shell=True",
+                            pattern: Some("shell=True"),
                         ),
                         (
-                            type: "has_argument",
-                            patterns: ["*.exe*", "*.bat*", "*.cmd*"],
-                            name: None,
-                            not_in: None,
-                            parent_type: None,
+                            field: "has_argument",
+                            operator: "matches",
+                            value: "executables",
+                            patterns: Some(["*.exe*", "*.bat*", "*.cmd*"]),
                         ),
                     ]),
                     file_types: None,
                 ),
-            ]),
-        }"#;
+            ]
+        )"#;
         let rules_file = create_test_rules_file(rules_content);
 
         // Load and validate rules
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        
-        let malware_rules = rules.malware_detection.unwrap();
-        let rule = &malware_rules[0];
+
+        let rule = &rules.rules[0];
 
         // Validate rule structure
-        assert!(validate_rule_patterns(rule).is_ok());
+        assert!(validate_unified_rule_patterns(rule).is_ok());
         assert_eq!(rule.pattern, Some("subprocess.Popen".to_string()));
-        
+
         let conditions = rule.conditions.as_ref().unwrap();
         assert_eq!(conditions.len(), 2);
-        
+
         // First condition with single pattern
         assert_eq!(conditions[0].pattern, Some("shell=True".to_string()));
         assert_eq!(conditions[0].patterns, None);
-        
+
         // Second condition with multiple patterns
         assert_eq!(conditions[1].pattern, None);
         assert_eq!(conditions[1].patterns, Some(vec![
@@ -381,63 +373,62 @@ def malicious_functions():
     #[test]
     fn test_real_world_malware_patterns() {
         // Test with realistic malware detection patterns
-        let rules_content = r#"{
-            malware_detection: Some([
+        let rules_content = r#"(
+            rules: [
                 (
-                    patterns: [
+                    patterns: Some([
                         "*.tk*",
                         "*.ml*",
                         "*.ga*",
                         "*.cf*",
-                    ],
+                    ]),
                     finding_type: Some("suspicious_domain"),
                     severity: Some("medium"),
                     conditions: None,
                     file_types: Some((
-                        extensions: [".py"],
+                        extensions: Some([".py"]),
                         include_patterns: None,
                         exclude_patterns: None,
                     )),
                 ),
                 (
-                    patterns: [
+                    patterns: Some([
                         "bit.ly",
                         "tinyurl",
                         "t.co",
-                    ],
+                    ]),
                     finding_type: Some("url_shortener"),
                     severity: Some("low"),
                     conditions: None,
                     file_types: Some((
-                        extensions: [".py"],
+                        extensions: Some([".py"]),
                         include_patterns: None,
                         exclude_patterns: None,
                     )),
                 ),
-            ]),
-        }"#;
+            ]
+        )"#;
         let rules_file = create_test_rules_file(rules_content);
 
         // Load rules
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        
-        let malware_rules = rules.malware_detection.unwrap();
-        assert_eq!(malware_rules.len(), 2);
+
+        assert_eq!(rules.rules.len(), 2);
 
         // Test suspicious domain patterns
-        let domain_rule = &malware_rules[0];
-        assert!(rule_matches_pattern(domain_rule, "malicious.tk"));
-        assert!(rule_matches_pattern(domain_rule, "bad.ml.site"));
-        assert!(rule_matches_pattern(domain_rule, "evil.ga"));
-        assert!(rule_matches_pattern(domain_rule, "virus.cf.com"));
-        assert!(!rule_matches_pattern(domain_rule, "google.com"));
+        let domain_rule = &rules.rules[0];
+        assert!(rule_matches_pattern_unified(domain_rule, "malicious.tk"));
+        assert!(rule_matches_pattern_unified(domain_rule, "bad.ml.site"));
+        assert!(rule_matches_pattern_unified(domain_rule, "evil.ga"));
+        assert!(rule_matches_pattern_unified(domain_rule, "virus.cf.com"));
+        assert!(!rule_matches_pattern_unified(domain_rule, "google.com"));
 
         // Test URL shortener patterns
-        let url_rule = &malware_rules[1];
-        assert!(rule_matches_pattern(url_rule, "bit.ly"));
-        assert!(rule_matches_pattern(url_rule, "tinyurl"));
-        assert!(rule_matches_pattern(url_rule, "t.co"));
-        assert!(!rule_matches_pattern(url_rule, "github.com"));
+        let url_rule = &rules.rules[1];
+        assert!(rule_matches_pattern_unified(url_rule, "bit.ly"));
+        assert!(rule_matches_pattern_unified(url_rule, "tinyurl"));
+        assert!(rule_matches_pattern_unified(url_rule, "t.co"));
+        assert!(!rule_matches_pattern_unified(url_rule, "github.com"));
     }
-} 
+}

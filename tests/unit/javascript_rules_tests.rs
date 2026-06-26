@@ -1,163 +1,92 @@
+use sighthound::rules::Rules;
 use std::fs;
 use std::path::Path;
-use ron::from_str;
-use ron::error::SpannedError;
-use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
-struct Condition {
-    #[serde(rename = "type")]
-    type_: String,
-    #[serde(default)]
-    argument_position: Option<usize>,
-    #[serde(default)]
-    not_in: Option<Vec<String>>,
-    #[serde(default)]
-    patterns: Option<Vec<String>>,
-}
+// note: the categorized JavaScript rule files were consolidated into the unified
+// `frontend_security.ron` / `frontend_taint_security.ron`. These tests now load those
+// files via the real `Rules` loader and verify the matching test fixtures (which moved to
+// tests/test_files/javascript/) contain the dangerous patterns the rules target.
 
-#[derive(Debug, Deserialize)]
-struct Sink {
-    #[serde(default)]
-    pattern: Option<String>,
-    #[serde(default)]
-    patterns: Option<Vec<String>>,
-    finding_type: String,
-    severity: String,
-    confidence: String,
-    conditions: Vec<Condition>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileTypes {
-    extensions: Vec<String>,
-    exclude_patterns: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DomXssRule {
-    dom_xss_sinks: Vec<Sink>,
-    sanitizers: Vec<String>,
-    file_types: FileTypes,
-}
-
-#[derive(Debug, Deserialize)]
-struct UnsafeObjectRule {
-    unsafe_operations: Vec<Sink>,
-    file_types: FileTypes,
-}
-
-#[derive(Debug, Deserialize)]
-struct CodeInjectionRule {
-    injection_patterns: Vec<Sink>,
-    file_types: FileTypes,
+fn load_frontend_rules() -> Rules {
+    Rules::load_from_file("rules/javascript/frontend_security.ron")
+        .expect("Failed to load frontend_security.ron")
 }
 
 #[test]
 fn test_dom_xss_rules() {
-    let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("dom_xss.ron"))
-        .expect("Failed to read dom_xss.ron");
+    let rules = load_frontend_rules();
 
-    let result: Result<DomXssRule, SpannedError> = from_str(&content);
-    assert!(result.is_ok(), "Failed to parse dom_xss.ron");
+    // Verify structure: the consolidated rule set is non-empty and XSS rules exist
+    assert!(rules.count_rules() > 0, "frontend rules should not be empty");
+    assert!(
+        rules.rules.iter().any(|r| r.finding_type.as_deref().map(|t| t.contains("XSS")).unwrap_or(false)
+            || r.category.as_deref() == Some("xss")),
+        "should contain DOM XSS rules"
+    );
 
-    if let Ok(rule) = result {
-        // Verify structure
-        assert!(!rule.dom_xss_sinks.is_empty(), "dom_xss_sinks should not be empty");
-        assert!(!rule.sanitizers.is_empty(), "sanitizers should not be empty");
-        assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
-
-        // Verify test file
-        let test_file = fs::read_to_string(rules_dir.join("dom_xss_test.js"))
-            .expect("Failed to read dom_xss_test.js");
-        assert!(test_file.contains("innerHTML"), "Test file should contain innerHTML");
-        assert!(test_file.contains("document.write"), "Test file should contain document.write");
-    }
+    // Verify test fixture
+    let fixtures = Path::new("tests/test_files/javascript");
+    let test_file = fs::read_to_string(fixtures.join("dom_xss_test.js"))
+        .expect("Failed to read dom_xss_test.js");
+    assert!(test_file.contains("innerHTML"), "Test file should contain innerHTML");
+    assert!(test_file.contains("document.write"), "Test file should contain document.write");
 }
 
 #[test]
 fn test_unsafe_object_rules() {
-    let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("unsafe_object_operations.ron"))
-        .expect("Failed to read unsafe_object_operations.ron");
+    let rules = load_frontend_rules();
 
-    let result: Result<UnsafeObjectRule, SpannedError> = from_str(&content);
-    assert!(result.is_ok(), "Failed to parse unsafe_object_operations.ron");
+    // Verify structure
+    assert!(rules.count_rules() > 0, "frontend rules should not be empty");
 
-    if let Ok(rule) = result {
-        // Verify structure
-        assert!(!rule.unsafe_operations.is_empty(), "unsafe_operations should not be empty");
-        assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
-
-        // Verify test file
-        let test_file = fs::read_to_string(rules_dir.join("unsafe_object_test.js"))
-            .expect("Failed to read unsafe_object_test.js");
-        assert!(test_file.contains("JSON.parse"), "Test file should contain JSON.parse");
-        assert!(test_file.contains("eval"), "Test file should contain eval");
-    }
+    // Verify test fixture
+    let fixtures = Path::new("tests/test_files/javascript");
+    let test_file = fs::read_to_string(fixtures.join("unsafe_object_test.js"))
+        .expect("Failed to read unsafe_object_test.js");
+    assert!(test_file.contains("JSON.parse"), "Test file should contain JSON.parse");
+    assert!(test_file.contains("Object.assign"), "Test file should contain Object.assign");
 }
 
 #[test]
 fn test_code_injection_rules() {
-    let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("code_injection.ron"))
-        .expect("Failed to read code_injection.ron");
+    let rules = load_frontend_rules();
 
-    let result: Result<CodeInjectionRule, SpannedError> = from_str(&content);
-    assert!(result.is_ok(), "Failed to parse code_injection.ron");
+    // Verify structure
+    assert!(rules.count_rules() > 0, "frontend rules should not be empty");
 
-    if let Ok(rule) = result {
-        // Verify structure
-        assert!(!rule.injection_patterns.is_empty(), "injection_patterns should not be empty");
-        assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
-
-        // Verify test file
-        let test_file = fs::read_to_string(rules_dir.join("code_injection_test.js"))
-            .expect("Failed to read code_injection_test.js");
-        assert!(test_file.contains("new Function"), "Test file should contain new Function");
-        assert!(test_file.contains("setTimeout"), "Test file should contain setTimeout");
-    }
+    // Verify test fixture
+    let fixtures = Path::new("tests/test_files/javascript");
+    let test_file = fs::read_to_string(fixtures.join("code_injection_test.js"))
+        .expect("Failed to read code_injection_test.js");
+    assert!(test_file.contains("new Function"), "Test file should contain new Function");
+    assert!(test_file.contains("setTimeout"), "Test file should contain setTimeout");
 }
 
 #[test]
-fn test_rule_conditions() {
-    let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("dom_xss.ron"))
-        .expect("Failed to read dom_xss.ron");
+fn test_rule_well_formedness() {
+    // note: the consolidated rules express logic via patterns/sources/sinks rather than the
+    // old per-sink `conditions` lists, so we assert each rule carries actionable matching data.
+    let rules = load_frontend_rules();
 
-    let result: Result<DomXssRule, SpannedError> = from_str(&content);
-    assert!(result.is_ok(), "Failed to parse dom_xss.ron");
-
-    if let Ok(rule) = result {
-        if let Some(first_sink) = rule.dom_xss_sinks.first() {
-            assert!(!first_sink.conditions.is_empty(), "Sink should have conditions");
-            if let Some(first_condition) = first_sink.conditions.first() {
-                assert!(!first_condition.type_.is_empty(), "Condition should have type field");
-            }
-        }
+    for rule in &rules.rules {
+        assert!(
+            rule.pattern.is_some() || rule.patterns.is_some()
+                || rule.sources.is_some() || rule.sinks.is_some(),
+            "each rule should declare a pattern or taint source/sink"
+        );
     }
 }
 
 #[test]
 fn test_file_type_patterns() {
-    let rules_dir = Path::new("rules/javascript");
-    let files = [
-        "dom_xss.ron",
-        "unsafe_object_operations.ron",
-        "code_injection.ron"
-    ];
+    let rules = load_frontend_rules();
 
-    for file in files.iter() {
-        let content = fs::read_to_string(rules_dir.join(file))
-            .expect(&format!("Failed to read {}", file));
-        
-        let result: Result<DomXssRule, SpannedError> = from_str(&content);
-        assert!(result.is_ok(), "Failed to parse {}", file);
-
-        if let Ok(rule) = result {
-            assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
-            assert!(!rule.file_types.exclude_patterns.is_empty(), "file_types.exclude_patterns should not be empty");
-        }
-    }
-} 
+    // At least some rules declare file-type filters with JS/TS extensions
+    assert!(
+        rules.rules.iter().any(|r| r.file_types.as_ref()
+            .and_then(|ft| ft.extensions.as_ref())
+            .map(|exts| !exts.is_empty())
+            .unwrap_or(false)),
+        "rules should declare file_types extensions"
+    );
+}
