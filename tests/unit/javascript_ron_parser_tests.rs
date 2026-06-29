@@ -1,58 +1,27 @@
 use ron::error::SpannedError;
 use ron::from_str;
 use serde::Deserialize;
-use std::fs;
-use std::path::Path;
+use sighthound::rules::Rules;
 
-#[derive(Debug, Deserialize)]
-struct Condition {
-    #[serde(rename = "type")]
-    type_: String,
-    #[serde(default)]
-    argument_position: Option<usize>,
-    #[serde(default)]
-    not_in: Option<Vec<String>>,
-    #[serde(default)]
-    patterns: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Sink {
-    #[serde(default)]
-    pattern: Option<String>,
-    #[serde(default)]
-    patterns: Option<Vec<String>>,
-    finding_type: String,
-    severity: String,
-    confidence: String,
-    conditions: Vec<Condition>,
-}
-
-#[derive(Debug, Deserialize)]
-struct FileTypes {
-    extensions: Vec<String>,
-    exclude_patterns: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DomXssRule {
-    dom_xss_sinks: Vec<Sink>,
-    sanitizers: Vec<String>,
-    file_types: FileTypes,
-}
+// note: the categorized JavaScript rule files (dom_xss.ron, unsafe_object_operations.ron,
+// ...) with `dom_xss_sinks`/`sanitizers` schemas were consolidated into the unified
+// `rules: [...]` files `frontend_security.ron` and `frontend_taint_security.ron`. These
+// tests now verify those unified files parse via the real `Rules` loader. The two
+// schema-agnostic RON-syntax tests below are unchanged.
 
 #[test]
 fn test_basic_ron_structure() {
-    let simple_ron = r#"{
+    // RON struct syntax uses parentheses; nested structs are parenthesised too.
+    let simple_ron = r#"(
         key: "value",
         number: 42,
         array: [1, 2, 3],
-        nested: {
+        nested: (
             field: "nested_value"
-        }
-    }"#;
+        )
+    )"#;
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     struct SimpleStruct {
         key: String,
         number: i32,
@@ -60,59 +29,62 @@ fn test_basic_ron_structure() {
         nested: NestedStruct,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     struct NestedStruct {
         field: String,
     }
 
-    let result: Result<SimpleStruct, SpannedError> = from_str(simple_ron);
-    assert!(result.is_ok(), "Failed to parse basic RON structure");
+    let parsed: SimpleStruct = from_str(simple_ron).expect("Failed to parse basic RON structure");
+    assert_eq!(parsed.key, "value");
+    assert_eq!(parsed.number, 42);
+    assert_eq!(parsed.array, vec![1, 2, 3]);
+    assert_eq!(parsed.nested.field, "nested_value");
 }
 
 #[test]
-fn test_dom_xss_ron_structure() {
-    let rules_dir = Path::new("rules/javascript");
-    let content =
-        fs::read_to_string(rules_dir.join("dom_xss.ron")).expect("Failed to read dom_xss.ron");
+fn test_frontend_rules_structure() {
+    let rules = Rules::load_from_file("rules/javascript/frontend_security.ron")
+        .expect("Failed to load frontend_security.ron");
 
-    let result: Result<DomXssRule, SpannedError> = from_str(&content);
-    assert!(result.is_ok(), "Failed to parse dom_xss.ron");
-
-    if let Ok(rule) = result {
-        // Verify required fields
-        assert!(!rule.dom_xss_sinks.is_empty(), "dom_xss_sinks should not be empty");
-        assert!(!rule.sanitizers.is_empty(), "sanitizers should not be empty");
+    // Verify the unified JS rules parsed and look well-formed
+    assert!(rules.count_rules() > 0, "frontend_security rules should not be empty");
+    for rule in &rules.rules {
         assert!(
-            !rule.file_types.extensions.is_empty(),
-            "file_types.extensions should not be empty"
+            rule.pattern.is_some()
+                || rule.patterns.is_some()
+                || rule.sources.is_some()
+                || rule.sinks.is_some(),
+            "each rule should declare a pattern or taint source/sink"
         );
     }
 }
 
 #[test]
 fn test_ron_syntax_validation() {
-    let valid_ron = r#"{
+    let valid_ron = r#"(
         field: "value",
         array: [1, 2, 3],
-        object: {
+        object: (
             nested: "value"
-        }
-    }"#;
+        )
+    )"#;
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     struct TestStruct {
         field: String,
         array: Vec<i32>,
         object: NestedStruct,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     struct NestedStruct {
         nested: String,
     }
 
-    let result: Result<TestStruct, SpannedError> = from_str(valid_ron);
-    assert!(result.is_ok(), "Failed to parse valid RON syntax");
+    let parsed: TestStruct = from_str(valid_ron).expect("Failed to parse valid RON syntax");
+    assert_eq!(parsed.field, "value");
+    assert_eq!(parsed.array, vec![1, 2, 3]);
+    assert_eq!(parsed.object.nested, "value");
 
     let invalid_ron = r#"{
         field: "value",
@@ -128,64 +100,37 @@ fn test_ron_syntax_validation() {
 
 #[test]
 fn test_rule_file_parsing() {
-    let rules_dir = Path::new("rules/javascript");
-    let files = [
-        "dom_xss.ron",
-        "unsafe_object_operations.ron",
-        "unsafe_navigation.ron",
-        "data_exposure.ron",
-        "code_injection.ron",
-        "event_handler_injection.ron",
-    ];
+    let files = ["frontend_security.ron", "frontend_taint_security.ron"];
 
     for file in files.iter() {
-        let content =
-            fs::read_to_string(rules_dir.join(file)).expect(&format!("Failed to read {}", file));
-
-        let result: Result<DomXssRule, SpannedError> = from_str(&content);
-        assert!(result.is_ok(), "Failed to parse {}", file);
+        let path = format!("rules/javascript/{}", file);
+        let rules = Rules::load_from_file(&path)
+            .unwrap_or_else(|e| panic!("Failed to parse {}: {}", file, e));
+        assert!(rules.count_rules() > 0, "{} should contain rules", file);
     }
 }
 
 #[test]
 fn test_ron_field_types() {
-    let rules_dir = Path::new("rules/javascript");
-    let content =
-        fs::read_to_string(rules_dir.join("dom_xss.ron")).expect("Failed to read dom_xss.ron");
+    let rules = Rules::load_from_file("rules/javascript/frontend_security.ron")
+        .expect("Failed to load frontend_security.ron");
 
-    let result: Result<DomXssRule, SpannedError> = from_str(&content);
-    assert!(result.is_ok(), "Failed to parse dom_xss.ron");
-
-    if let Ok(rule) = result {
-        // Verify field types
-        assert!(!rule.dom_xss_sinks.is_empty(), "dom_xss_sinks should not be empty");
-        assert!(!rule.sanitizers.is_empty(), "sanitizers should not be empty");
-        assert!(
-            !rule.file_types.extensions.is_empty(),
-            "file_types.extensions should not be empty"
-        );
-        assert!(
-            !rule.file_types.exclude_patterns.is_empty(),
-            "file_types.exclude_patterns should not be empty"
-        );
-    }
+    // Verify field types: rules carry finding types and file-type filters
+    assert!(
+        rules.rules.iter().any(|r| r.finding_type.is_some()),
+        "rules should declare finding types"
+    );
+    assert!(rules.rules.iter().any(|r| r.file_types.is_some()), "rules should declare file types");
 }
 
 #[test]
-fn test_ron_condition_structure() {
-    let rules_dir = Path::new("rules/javascript");
-    let content =
-        fs::read_to_string(rules_dir.join("dom_xss.ron")).expect("Failed to read dom_xss.ron");
+fn test_ron_mode_classification() {
+    // The taint rule file should expose taint-mode rules via the unified accessor.
+    let rules = Rules::load_from_file("rules/javascript/frontend_taint_security.ron")
+        .expect("Failed to load frontend_taint_security.ron");
 
-    let result: Result<DomXssRule, SpannedError> = from_str(&content);
-    assert!(result.is_ok(), "Failed to parse dom_xss.ron");
-
-    if let Ok(rule) = result {
-        if let Some(first_sink) = rule.dom_xss_sinks.first() {
-            assert!(!first_sink.conditions.is_empty(), "Sink should have conditions");
-            if let Some(first_condition) = first_sink.conditions.first() {
-                assert!(!first_condition.type_.is_empty(), "Condition should have type field");
-            }
-        }
-    }
+    assert!(
+        !rules.get_taint_rules().is_empty(),
+        "frontend_taint_security should contain taint-mode rules"
+    );
 }
