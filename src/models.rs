@@ -285,7 +285,7 @@ pub struct Condition {
 #[command(
     name = "sighthound",
     about = "A fast vulnerability scanner for source code",
-    long_about = "Corgea Greppy - A high-performance vulnerability scanner that uses tree-sitter for AST-based analysis with parallel processing support.\n\nBy default, runs both simple pattern-based analysis and taint analysis for comprehensive vulnerability detection. Use --simple-analysis or --taint-analysis to run only one mode.\n\nSupports both explicit mode (specify language and rules) and auto-detection mode (automatically detect file types and load appropriate rules). Rules must be in RON format."
+    long_about = "Sighthound - A high-performance vulnerability scanner that uses tree-sitter for AST-based analysis with parallel processing support.\n\nBy default, runs both simple pattern-based analysis and taint analysis for comprehensive vulnerability detection. Use --simple-analysis or --taint-analysis to run only one mode.\n\nSupports both explicit mode (specify language and rules) and auto-detection mode (automatically detect file types and load appropriate rules). Rules must be in RON format."
 )]
 pub struct Cli {
     /// Root directory to scan

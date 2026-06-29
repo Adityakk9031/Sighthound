@@ -4,7 +4,10 @@ version = "0.1.1"
 edition = "2021"
 authors = ["Corgea Team"]
 description = "A blazing fast vulnerability scanner for source code using tree-sitter"
-repository = "https://github.com/corgea/greppy_prototype"
+repository = "https://github.com/Corgea/Sighthound"
+license = "MIT"
+keywords = ["security", "sast", "static-analysis", "vulnerability", "tree-sitter"]
+categories = ["development-tools", "command-line-utilities"]
 
 [[bin]]
 name = "sighthound"

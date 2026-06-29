@@ -1,14 +1,14 @@
-# Greppy - Blazing Fast Vulnerability Scanner
+# Sighthound - Blazing Fast Vulnerability Scanner
 
 <div align="center">
 
-![Greppy Logo](assets/logo.png)
+![Sighthound Logo](assets/logo.png)
 
 A high-performance vulnerability scanner for source code using tree-sitter parsing and advanced taint flow analysis.
 
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/corgea/greppy_prototype)
+[![CI](https://github.com/Corgea/Sighthound/actions/workflows/ci.yml/badge.svg)](https://github.com/Corgea/Sighthound/actions/workflows/ci.yml)
 
 </div>
 
@@ -23,12 +23,19 @@ A high-performance vulnerability scanner for source code using tree-sitter parsi
 - **📊 Multiple Output Formats**: Text, JSON, and CSV reporting
 
 ### Language Support
-- **Python** (.py) - Full AST analysis with Django template support
-- **Java** (.java) - Method invocation and object creation analysis
-- **JavaScript** (.js) - Function calls and DOM manipulation detection
-- **TypeScript/TSX** (.tsx) - React component and JSX attribute analysis
-- **HTML** (.html) - Tag and attribute vulnerability detection
-- **Django Templates** (.html) - Template injection and XSS detection
+
+| Language | Parsing | Bundled Rules |
+|---|---|---|
+| Python (`.py`)            | ✅ | ✅ |
+| JavaScript (`.js`)        | ✅ | ✅ |
+| Java (`.java`)            | ✅ | — (parser only; bring your own rules) |
+| TypeScript / TSX (`.tsx`) | ✅ | — (parser only) |
+| HTML (`.html`)            | ✅ | — (parser only) |
+| Django templates          | ✅ | — (parser only) |
+
+Python and JavaScript ship with curated rule sets. The remaining languages have
+working tree-sitter parsers but no bundled rules yet — point Sighthound at your
+own `.ron` rules to scan them.
 
 ### Scanning Modes
 - **Auto-Detection Mode**: Automatically detects languages and loads appropriate rules
@@ -43,7 +50,7 @@ A high-performance vulnerability scanner for source code using tree-sitter parsi
 
 ### Build from Source
 ```bash
-git clone https://github.com/corgea/Sighthound.git
+git clone https://github.com/Corgea/Sighthound.git
 cd Sighthound
 cargo build --release
 ```
@@ -61,22 +68,6 @@ DOCKER_BUILDKIT=1 docker build \
   .
 ```
 Then binary `sighthound` would be exported at the current folder.
-
-### Development Setup
-```bash
-# Clone and setup
-git clone https://github.com/corgea/greppy_prototype.git
-cd greppy_prototype
-
-# Install dependencies and build
-cargo build
-
-# Run tests
-cargo test
-
-# Run with sample files
-cargo run -- tests/test_files/python
-```
 
 ## 🎯 Quick Start
 
@@ -153,7 +144,7 @@ export RAYON_NUM_THREADS=8
 
 ## 🔧 Rule System
 
-Greppy uses a unified rule system written in RON (Rusty Object Notation) format that supports both pattern-based detection and taint flow analysis.
+Sighthound uses a unified rule system written in RON (Rusty Object Notation) format that supports both pattern-based detection and taint flow analysis.
 
 ### Rule Structure
 ```ron
@@ -292,6 +283,11 @@ graph TD
 ## 🧪 Testing
 
 ### Running Tests
+
+> Note: the test harnesses are being realigned to the refactored rule API and
+> are not yet fully green. `cargo build --release` is the verified, CI-gated
+> command; the commands below are the intended test entry points.
+
 ```bash
 # Run all tests
 cargo test
@@ -327,7 +323,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
 3. Make your changes and add tests
-4. Run the test suite: `cargo test`
+4. Confirm the build: `cargo build --release` (the test suite is under repair)
 5. Submit a pull request
 
 ### Areas for Contribution
@@ -340,7 +336,6 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 📚 Documentation
 
 - [Rule Writing Guide](rules/RULE_WRITING_GUIDE.md) - Create custom security rules
-- [Multi-File Taint Analysis](MULTI_FILE_TAINT_PLAN.md) - Advanced taint flow capabilities
 - [Language Support](src/language.rs) - Adding new programming languages
 
 ## 🐛 Known Issues & Limitations
@@ -367,6 +362,8 @@ Developed by the [Corgea Team](https://github.com/corgea) as part of our mission
 - **Tree-sitter**: Excellent parsing library enabling multi-language support
 - **Rust Community**: Amazing ecosystem and tooling
 - **Security Researchers**: Vulnerability patterns and detection techniques
+
+Third-party license notices: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ---
 
