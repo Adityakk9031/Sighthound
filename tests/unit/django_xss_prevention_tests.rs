@@ -65,25 +65,24 @@ mod django_xss_tests {
 
     #[test]
     fn test_xss_prevention_rule_structure() {
-        // Test that we can at least try to load the XSS prevention rules
-        // Even if the file is absent or parsing fails, we should handle it gracefully.
-        // note: with the unified model, rules deserialize into a single `rules` list.
-        match Rules::load_from_file("rules/python/django/xss_prevention.ron") {
-            Ok(rules) => {
-                println!("Successfully loaded XSS prevention rules");
+        // The dedicated XSS-prevention ruleset isn't shipped in this layout, so loading it
+        // must surface a real error rather than be silently swallowed.
+        assert!(
+            Rules::load_from_file("rules/python/django/xss_prevention.ron").is_err(),
+            "Absent rules file should return an error"
+        );
 
-                // Check that rules parsed into the unified list and are well-formed
-                assert!(rules.count_rules() > 0, "Should have XSS prevention rules");
-
-                for rule in &rules.rules {
-                    assert!(rule.pattern.is_some() || rule.patterns.is_some(),
-                           "Each rule should have either pattern or patterns");
-                }
-            },
-            Err(e) => {
-                println!("Warning: Failed to load XSS prevention rules: {}", e);
-                // This is acceptable - the rules file may be absent in this layout.
-            }
+        // Structure coverage against the ruleset that *is* shipped: it must parse into the
+        // unified `rules` list, and every search-mode rule must carry a pattern or patterns.
+        // (taint-mode rules carry sources/sinks instead, so they're excluded from that check.)
+        let rules = Rules::load_from_file("rules/python/general_security.ron")
+            .expect("general_security.ron should load");
+        assert!(rules.count_rules() > 0, "Should have security rules");
+        for rule in rules.rules.iter().filter(|r| r.is_search_rule()) {
+            assert!(
+                rule.pattern.is_some() || rule.patterns.is_some(),
+                "Each search rule should have either pattern or patterns"
+            );
         }
     }
 

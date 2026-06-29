@@ -192,6 +192,14 @@ mod pattern_matching_tests {
         // Invalid regex inside the `patterns` list
         let invalid_regex_in_list = make_rule(None, Some(vec!["ok", "regex:(("]));
         assert!(validate_unified_rule_patterns(&invalid_regex_in_list).is_err());
+
+        // Contentless and empty-pattern search rules are accepted: the unified validator
+        // only checks regex compilation, so the old structural rejection no longer applies.
+        // These assert the current (permissive) contract, guarding against silent regressions.
+        assert!(validate_unified_rule_patterns(&make_rule(None, None)).is_ok());
+        assert!(validate_unified_rule_patterns(&make_rule(Some(""), None)).is_ok());
+        assert!(validate_unified_rule_patterns(&make_rule(None, Some(vec![]))).is_ok());
+        assert!(validate_unified_rule_patterns(&make_rule(None, Some(vec!["ok", ""]))).is_ok());
     }
 
     #[test]
