@@ -47,5 +47,38 @@ help:
 	@echo "  help        - Show this help message"
 	@echo ""
 	@echo "Quick commands:"
-	@echo "  make build  - Build the release binary"
-	@echo "  make test   - Run cargo test (under repair)"
+	@echo "  make              - Build and run all tests"
+	@echo "  make build        - Just build the binary"
+	@echo "  make test         - Run all tests"
+
+# ── Quality harness (delegates to the `cargo harness` runner in harness.rs) ──
+HARNESS := cargo harness
+HARNESS_TARGETS := check fix lint pre-commit pre-push ci audit post-edit \
+	stop-hook complexity coverage crap mutation acceptance arch \
+	agents-md-drift sync-agents-md setup-hooks
+
+.PHONY: bootstrap $(HARNESS_TARGETS)
+bootstrap: setup-hooks
+$(HARNESS_TARGETS):
+	$(HARNESS) $@
+
+# Development shortcuts
+dev-django:
+	@echo "🐍 Testing Django rules..."
+	./target/release/sighthound test_data/python/django python rules/python/django/ --threads 1
+
+dev-general:
+	@echo "🐍 Testing general Python rules..."
+	./target/release/sighthound test_data/python/general python rules/python/python/general.ron --threads 1
+
+dev-malicious:
+	@echo "🕵️ Testing malicious pattern detection..."
+	./target/release/sighthound test_data/python/malicious python rules/python/malicious/ --threads 1
+
+# Performance testing
+perf-test: build
+	@echo "⚡ Running performance tests..."
+	@echo "Testing parser pooling with 8 threads..."
+	time ./target/release/sighthound test_data/python python rules/python/python/general.ron --threads 8
+	@echo "Testing single-threaded performance..."
+	time ./target/release/sighthound test_data/python python rules/python/python/general.ron --threads 1

@@ -1,8 +1,8 @@
+use ron::error::SpannedError;
+use ron::from_str;
+use serde::Deserialize;
 use std::fs;
 use std::path::Path;
-use ron::from_str;
-use ron::error::SpannedError;
-use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 struct Condition {
@@ -72,8 +72,8 @@ fn test_basic_ron_structure() {
 #[test]
 fn test_dom_xss_ron_structure() {
     let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("dom_xss.ron"))
-        .expect("Failed to read dom_xss.ron");
+    let content =
+        fs::read_to_string(rules_dir.join("dom_xss.ron")).expect("Failed to read dom_xss.ron");
 
     let result: Result<DomXssRule, SpannedError> = from_str(&content);
     assert!(result.is_ok(), "Failed to parse dom_xss.ron");
@@ -82,7 +82,10 @@ fn test_dom_xss_ron_structure() {
         // Verify required fields
         assert!(!rule.dom_xss_sinks.is_empty(), "dom_xss_sinks should not be empty");
         assert!(!rule.sanitizers.is_empty(), "sanitizers should not be empty");
-        assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
+        assert!(
+            !rule.file_types.extensions.is_empty(),
+            "file_types.extensions should not be empty"
+        );
     }
 }
 
@@ -132,13 +135,13 @@ fn test_rule_file_parsing() {
         "unsafe_navigation.ron",
         "data_exposure.ron",
         "code_injection.ron",
-        "event_handler_injection.ron"
+        "event_handler_injection.ron",
     ];
 
     for file in files.iter() {
-        let content = fs::read_to_string(rules_dir.join(file))
-            .expect(&format!("Failed to read {}", file));
-        
+        let content =
+            fs::read_to_string(rules_dir.join(file)).expect(&format!("Failed to read {}", file));
+
         let result: Result<DomXssRule, SpannedError> = from_str(&content);
         assert!(result.is_ok(), "Failed to parse {}", file);
     }
@@ -147,8 +150,8 @@ fn test_rule_file_parsing() {
 #[test]
 fn test_ron_field_types() {
     let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("dom_xss.ron"))
-        .expect("Failed to read dom_xss.ron");
+    let content =
+        fs::read_to_string(rules_dir.join("dom_xss.ron")).expect("Failed to read dom_xss.ron");
 
     let result: Result<DomXssRule, SpannedError> = from_str(&content);
     assert!(result.is_ok(), "Failed to parse dom_xss.ron");
@@ -157,16 +160,22 @@ fn test_ron_field_types() {
         // Verify field types
         assert!(!rule.dom_xss_sinks.is_empty(), "dom_xss_sinks should not be empty");
         assert!(!rule.sanitizers.is_empty(), "sanitizers should not be empty");
-        assert!(!rule.file_types.extensions.is_empty(), "file_types.extensions should not be empty");
-        assert!(!rule.file_types.exclude_patterns.is_empty(), "file_types.exclude_patterns should not be empty");
+        assert!(
+            !rule.file_types.extensions.is_empty(),
+            "file_types.extensions should not be empty"
+        );
+        assert!(
+            !rule.file_types.exclude_patterns.is_empty(),
+            "file_types.exclude_patterns should not be empty"
+        );
     }
 }
 
 #[test]
 fn test_ron_condition_structure() {
     let rules_dir = Path::new("rules/javascript");
-    let content = fs::read_to_string(rules_dir.join("dom_xss.ron"))
-        .expect("Failed to read dom_xss.ron");
+    let content =
+        fs::read_to_string(rules_dir.join("dom_xss.ron")).expect("Failed to read dom_xss.ron");
 
     let result: Result<DomXssRule, SpannedError> = from_str(&content);
     assert!(result.is_ok(), "Failed to parse dom_xss.ron");
@@ -179,4 +188,4 @@ fn test_ron_condition_structure() {
             }
         }
     }
-} 
+}

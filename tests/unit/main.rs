@@ -1,6 +1,6 @@
 // Unit tests for the vulnerability scanner
-mod injection_pattern_tests;
 mod django_xss_prevention_tests;
+mod injection_pattern_tests;
 // TODO(onboarding): file_pattern_tests uses removed Rules::malware_detection schema; needs triage
 // mod file_pattern_tests;
 // TODO(onboarding): directory_loading_tests uses removed Rules::malware_detection schema; needs triage

@@ -1,15 +1,31 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+  pull_request:
+
 jobs:
-  build:
+  harness:
+    name: harness ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      # TODO(follow-up): re-add `- run: cargo test` once the test harnesses are
-      #   fully realigned to the refactored rule API and green (some modules are
-      #   currently disabled; tracked in a separate test-repair PR). Also add
-      #   `cargo fmt --check` and `cargo clippy -D warnings` once src/ is clean
-      #   (both dirty today), and a macos-latest matrix entry after the
-      #   build_all_platforms.sh macOS path fix is verified on CI.
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt, llvm-tools-preview
+
+      - name: Install uv (for uvx lizard)
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install cargo tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-llvm-cov,cargo-modules
+
+      - name: make ci
+        run: make ci
+
+      - name: make audit
+        run: make audit

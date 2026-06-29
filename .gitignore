@@ -60,3 +60,13 @@ target/
 debug/
 release/
 .DS_Store
+
+# cargo-mutants
+/mutants.out/
+/mutants.out.old/
+
+# Local agent config — materialized by `make setup-hooks`.
+# AGENTS.md is the committed source; CLAUDE.md is its local mirror.
+/.claude/
+/.codex/
+/CLAUDE.md
