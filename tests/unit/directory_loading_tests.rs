@@ -1,7 +1,7 @@
-use sighthound::rules::Rules;
 use sighthound::models::UnifiedRule;
-use tempfile::TempDir;
+use sighthound::rules::Rules;
 use std::fs;
+use tempfile::TempDir;
 
 // Build a minimal search-mode UnifiedRule (UnifiedRule does not derive Default).
 fn make_rule(pattern: &str, finding_type: &str) -> UnifiedRule {
@@ -165,21 +165,19 @@ mod directory_loading_tests {
 
         let result = Rules::load_from_path(file_path.to_str().unwrap());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported file format. Only .ron files are supported"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported file format. Only .ron files are supported"));
     }
 
     #[test]
     fn test_merge_rules() {
-        let rules1 = Rules {
-            rules: vec![make_rule("a", "type_a")],
-        };
+        let rules1 = Rules { rules: vec![make_rule("a", "type_a")] };
 
-        let rules2 = Rules {
-            rules: vec![make_rule("b", "type_b"), make_rule("c", "type_c")],
-        };
+        let rules2 = Rules { rules: vec![make_rule("b", "type_b"), make_rule("c", "type_c")] };
 
-        let merged = Rules::merge_rules(vec![rules1, rules2])
-            .expect("Failed to merge rules");
+        let merged = Rules::merge_rules(vec![rules1, rules2]).expect("Failed to merge rules");
 
         assert_eq!(merged.count_rules(), 3);
         let has_pattern = |p: &str| merged.rules.iter().any(|r| r.pattern.as_deref() == Some(p));

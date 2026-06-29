@@ -19,7 +19,11 @@ fn test_dom_xss_rules() {
     // Verify structure: the consolidated rule set is non-empty and XSS rules exist
     assert!(rules.count_rules() > 0, "frontend rules should not be empty");
     assert!(
-        rules.rules.iter().any(|r| r.finding_type.as_deref().map(|t| t.contains("XSS")).unwrap_or(false)
+        rules.rules.iter().any(|r| r
+            .finding_type
+            .as_deref()
+            .map(|t| t.contains("XSS"))
+            .unwrap_or(false)
             || r.category.as_deref() == Some("xss")),
         "should contain DOM XSS rules"
     );
@@ -70,8 +74,10 @@ fn test_rule_well_formedness() {
 
     for rule in &rules.rules {
         assert!(
-            rule.pattern.is_some() || rule.patterns.is_some()
-                || rule.sources.is_some() || rule.sinks.is_some(),
+            rule.pattern.is_some()
+                || rule.patterns.is_some()
+                || rule.sources.is_some()
+                || rule.sinks.is_some(),
             "each rule should declare a pattern or taint source/sink"
         );
     }
@@ -83,7 +89,9 @@ fn test_file_type_patterns() {
 
     // At least some rules declare file-type filters with JS/TS extensions
     assert!(
-        rules.rules.iter().any(|r| r.file_types.as_ref()
+        rules.rules.iter().any(|r| r
+            .file_types
+            .as_ref()
             .and_then(|ft| ft.extensions.as_ref())
             .map(|exts| !exts.is_empty())
             .unwrap_or(false)),

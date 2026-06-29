@@ -1,6 +1,6 @@
-use sighthound::rules::{Rules, rule_matches_pattern_unified, validate_unified_rule_patterns};
-use tempfile::NamedTempFile;
+use sighthound::rules::{rule_matches_pattern_unified, validate_unified_rule_patterns, Rules};
 use std::io::Write;
+use tempfile::NamedTempFile;
 
 // note: rules now live in a single unified `rules: [...]` list. Pattern matching uses
 // `rule_matches_pattern_unified` and validation uses `validate_unified_rule_patterns`
@@ -216,7 +216,8 @@ def malicious_functions():
         // "invalid" case below is a malformed regex rather than the old both-pattern case.
         let test_cases = vec![
             // Valid single pattern
-            (r#"(
+            (
+                r#"(
                 rules: [
                     (
                         pattern: Some("test_function"),
@@ -225,10 +226,12 @@ def malicious_functions():
                         file_types: None,
                     ),
                 ]
-            )"#, true),
-
+            )"#,
+                true,
+            ),
             // Valid multiple patterns
-            (r#"(
+            (
+                r#"(
                 rules: [
                     (
                         patterns: Some(["test1", "test2"]),
@@ -237,10 +240,12 @@ def malicious_functions():
                         file_types: None,
                     ),
                 ]
-            )"#, true),
-
+            )"#,
+                true,
+            ),
             // Invalid: malformed regex pattern (should parse but fail validation)
-            (r#"(
+            (
+                r#"(
                 rules: [
                     (
                         pattern: Some("regex:[unclosed"),
@@ -249,7 +254,9 @@ def malicious_functions():
                         file_types: None,
                     ),
                 ]
-            )"#, false),
+            )"#,
+                false,
+            ),
         ];
 
         for (rules_content, should_be_valid) in test_cases {
@@ -363,11 +370,10 @@ def malicious_functions():
 
         // Second condition with multiple patterns
         assert_eq!(conditions[1].pattern, None);
-        assert_eq!(conditions[1].patterns, Some(vec![
-            "*.exe*".to_string(),
-            "*.bat*".to_string(),
-            "*.cmd*".to_string(),
-        ]));
+        assert_eq!(
+            conditions[1].patterns,
+            Some(vec!["*.exe*".to_string(), "*.bat*".to_string(), "*.cmd*".to_string(),])
+        );
     }
 
     #[test]

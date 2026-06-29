@@ -1,5 +1,7 @@
-use sighthound::rules::{match_pattern, match_any_pattern, rule_matches_pattern_unified, validate_unified_rule_patterns};
 use sighthound::models::UnifiedRule;
+use sighthound::rules::{
+    match_any_pattern, match_pattern, rule_matches_pattern_unified, validate_unified_rule_patterns,
+};
 
 // Build a search-mode UnifiedRule carrying the given pattern/patterns.
 // UnifiedRule does not derive Default, so this helper fills the remaining fields.
@@ -38,9 +40,9 @@ mod pattern_matching_tests {
         // rather than exact equality as in the pre-refactor matcher.
         assert!(match_pattern("print", "print"));
         assert!(match_pattern("os.system", "os.system"));
-        assert!(match_pattern("print", "printf"));        // "printf" contains "print"
-        assert!(!match_pattern("os.system", "os.path"));  // not a substring
-        assert!(!match_pattern("printf", "print"));       // longer pattern is not contained
+        assert!(match_pattern("print", "printf")); // "printf" contains "print"
+        assert!(!match_pattern("os.system", "os.path")); // not a substring
+        assert!(!match_pattern("printf", "print")); // longer pattern is not contained
     }
 
     #[test]
@@ -95,11 +97,7 @@ mod pattern_matching_tests {
 
     #[test]
     fn test_match_any_pattern() {
-        let patterns = vec![
-            "print".to_string(),
-            "os.system".to_string(),
-            "*.exe".to_string(),
-        ];
+        let patterns = vec!["print".to_string(), "os.system".to_string(), "*.exe".to_string()];
 
         // Test matching different patterns
         assert!(match_any_pattern(&patterns, "print"));
@@ -129,12 +127,10 @@ mod pattern_matching_tests {
     #[test]
     fn test_multiple_patterns_rule() {
         // Create a rule with multiple patterns
-        let rule = make_rule(None, Some(vec![
-            "pyperclip.paste",
-            "pyperclip.copy",
-            "*.to_clipboard",
-            "win32clipboard",
-        ]));
+        let rule = make_rule(
+            None,
+            Some(vec!["pyperclip.paste", "pyperclip.copy", "*.to_clipboard", "win32clipboard"]),
+        );
 
         // Test all patterns match
         assert!(rule_matches_pattern_unified(&rule, "pyperclip.paste"));
@@ -149,11 +145,7 @@ mod pattern_matching_tests {
 
     #[test]
     fn test_wildcard_patterns_in_multiple_patterns() {
-        let rule = make_rule(None, Some(vec![
-            "*.tk*",
-            "*.exe*",
-            "keyboard.*",
-        ]));
+        let rule = make_rule(None, Some(vec!["*.tk*", "*.exe*", "keyboard.*"]));
 
         // Test wildcard matching
         assert!(rule_matches_pattern_unified(&rule, "malicious.tk"));
@@ -267,8 +259,16 @@ mod performance_tests {
         ];
 
         let test_strings = vec![
-            "print", "malware.exe", "hello", "os.system", "subprocess.call",
-            "safe_function", "file.txt", "HELLO", "os.path", "process.run",
+            "print",
+            "malware.exe",
+            "hello",
+            "os.system",
+            "subprocess.call",
+            "safe_function",
+            "file.txt",
+            "HELLO",
+            "os.path",
+            "process.run",
         ];
 
         let start = Instant::now();
@@ -291,22 +291,33 @@ mod performance_tests {
 
     #[test]
     fn test_multiple_patterns_performance() {
-        let rule = make_rule(None, Some(vec![
-            "print",
-            "*.exe",
-            "os.system",
-            "subprocess.*",
-            "*password*",
-            "regex:^[a-z]+$",
-            "eval",
-            "exec",
-            "*.dll",
-            "malloc",
-        ]));
+        let rule = make_rule(
+            None,
+            Some(vec![
+                "print",
+                "*.exe",
+                "os.system",
+                "subprocess.*",
+                "*password*",
+                "regex:^[a-z]+$",
+                "eval",
+                "exec",
+                "*.dll",
+                "malloc",
+            ]),
+        );
 
         let test_strings = vec![
-            "print", "malware.exe", "os.system", "subprocess.call", "get_password",
-            "hello", "eval", "exec", "library.dll", "malloc",
+            "print",
+            "malware.exe",
+            "os.system",
+            "subprocess.call",
+            "get_password",
+            "hello",
+            "eval",
+            "exec",
+            "library.dll",
+            "malloc",
         ];
 
         let start = Instant::now();

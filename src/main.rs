@@ -1,9 +1,10 @@
 use anyhow::Result;
-use env_logger;
-use log::LevelFilter;
 use clap::Parser;
-use sighthound::{Cli, CommonUtils, run_explicit_scan, run_auto_detection_scan, run_taint_analysis, run_taint_analysis_with_verbosity};
-use sighthound::scanner::core::{print_findings_json, print_findings_csv, print_findings_text, print_summary};
+use sighthound::scanner::core::{print_findings_csv, print_findings_json, print_findings_text};
+use sighthound::{
+    run_auto_detection_scan, run_explicit_scan, run_taint_analysis,
+    run_taint_analysis_with_verbosity, Cli, CommonUtils,
+};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -18,12 +19,18 @@ fn main() -> Result<()> {
 
     // Check if root_dir is provided (required for actual scanning)
     let root_dir = cli.root_dir.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("Root directory is required for scanning. Use --help for usage information.")
+        anyhow::anyhow!(
+            "Root directory is required for scanning. Use --help for usage information."
+        )
     })?;
 
     // Initialize logger (respect RUST_LOG or --verbose flag)
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(if cli.verbose { "debug" } else { "info" }))
-        .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(if cli.verbose {
+        "debug"
+    } else {
+        "info"
+    }))
+    .init();
     // Configure threading if specified
     if let Some(threads) = cli.threads {
         rayon::ThreadPoolBuilder::new()
@@ -33,10 +40,10 @@ fn main() -> Result<()> {
     }
 
     let start_time = std::time::Instant::now();
-    
+
     // Determine if we should show progress (suppress for structured output formats)
     let show_progress = !matches!(cli.output_format.as_str(), "json" | "csv");
-    
+
     // Validate CLI parameters
     if cli.taint_analysis && cli.simple_analysis {
         return Err(anyhow::anyhow!("Cannot specify both --taint-analysis and --simple-analysis. Use one or neither (default: both modes)."));
@@ -44,7 +51,7 @@ fn main() -> Result<()> {
 
     // Resolve the actual embedded rules setting (use_file_rules overrides use_embedded_rules)
     let should_use_embedded = cli.use_embedded_rules && !cli.use_file_rules;
-    
+
     // Validate CLI parameters using CommonUtils
     CommonUtils::validate_cli_params(&cli.language, &cli.rules_path, cli.use_embedded_rules, cli.use_file_rules)
         .map_err(|e| anyhow::anyhow!(
@@ -81,7 +88,7 @@ fn main() -> Result<()> {
         if show_progress {
             println!("🔍 Running comprehensive analysis (both simple and taint modes)");
         }
-        
+
         // Run simple analysis first
         let mut simple_findings = match (&cli.language, &cli.rules_path, should_use_embedded) {
             (Some(_), Some(_), false) => run_explicit_scan(&cli, root_dir, show_progress)?,
@@ -89,10 +96,11 @@ fn main() -> Result<()> {
             (None, None, _) => run_auto_detection_scan(&cli, root_dir, show_progress)?,
             _ => unreachable!(), // Validation above ensures this won't happen
         };
-        
+
         // Run taint analysis second (less verbose in combined mode)
-        let mut taint_findings = run_taint_analysis_with_verbosity(&cli, root_dir, show_progress, false)?;
-        
+        let mut taint_findings =
+            run_taint_analysis_with_verbosity(&cli, root_dir, show_progress, false)?;
+
         // Combine findings
         simple_findings.append(&mut taint_findings);
         simple_findings
@@ -100,7 +108,7 @@ fn main() -> Result<()> {
 
     // Output results
     let duration = start_time.elapsed();
-    
+
     // Only show completion message for text output
     if show_progress {
         println!();
@@ -111,8 +119,8 @@ fn main() -> Result<()> {
     match cli.output_format.as_str() {
         "json" => print_findings_json(&findings),
         "csv" => print_findings_csv(&findings),
-        "text" | _ => print_findings_text(&findings, cli.verbose, cli.summary_only, duration),
+        _ => print_findings_text(&findings, cli.verbose, cli.summary_only, duration),
     }
 
     Ok(())
-} 
+}

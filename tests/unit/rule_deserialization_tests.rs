@@ -1,6 +1,6 @@
 use sighthound::rules::Rules;
-use tempfile::NamedTempFile;
 use std::io::Write;
+use tempfile::NamedTempFile;
 
 // note: the categorized rule model (`malware_detection`, `injection_sinks`, ...) was
 // replaced by a single unified `rules: [...]` list of UnifiedRule. RON also dropped the
@@ -61,17 +61,21 @@ mod deserialization_tests {
             ]
         )"#;
 
-        let rules: Rules = ron::from_str(ron_content).expect("Failed to parse multiple patterns RON");
+        let rules: Rules =
+            ron::from_str(ron_content).expect("Failed to parse multiple patterns RON");
 
         assert_eq!(rules.rules.len(), 1);
 
         let rule = &rules.rules[0];
         assert_eq!(rule.pattern, None);
-        assert_eq!(rule.patterns, Some(vec![
-            "pyperclip.paste".to_string(),
-            "pyperclip.copy".to_string(),
-            "*.to_clipboard".to_string(),
-        ]));
+        assert_eq!(
+            rule.patterns,
+            Some(vec![
+                "pyperclip.paste".to_string(),
+                "pyperclip.copy".to_string(),
+                "*.to_clipboard".to_string(),
+            ])
+        );
         assert_eq!(rule.finding_type, Some("clipboard_access".to_string()));
     }
 
@@ -123,16 +127,16 @@ mod deserialization_tests {
         assert_eq!(rules.rules[1].patterns, None);
 
         assert_eq!(rules.rules[2].pattern, None);
-        assert_eq!(rules.rules[2].patterns, Some(vec![
-            "multi_pattern_1".to_string(),
-            "multi_pattern_2".to_string(),
-        ]));
+        assert_eq!(
+            rules.rules[2].patterns,
+            Some(vec!["multi_pattern_1".to_string(), "multi_pattern_2".to_string(),])
+        );
 
         assert_eq!(rules.rules[3].pattern, None);
-        assert_eq!(rules.rules[3].patterns, Some(vec![
-            "multi_pattern_3".to_string(),
-            "multi_pattern_4".to_string(),
-        ]));
+        assert_eq!(
+            rules.rules[3].patterns,
+            Some(vec!["multi_pattern_3".to_string(), "multi_pattern_4".to_string(),])
+        );
     }
 
     #[test]
@@ -181,10 +185,7 @@ mod deserialization_tests {
 
         // Second condition with multiple patterns
         assert_eq!(conditions[1].pattern, None);
-        assert_eq!(conditions[1].patterns, Some(vec![
-            "*.exe*".to_string(),
-            "*.bat*".to_string(),
-        ]));
+        assert_eq!(conditions[1].patterns, Some(vec!["*.exe*".to_string(), "*.bat*".to_string(),]));
 
         // Test file types
         let file_types = rule.file_types.as_ref().unwrap();
@@ -246,11 +247,14 @@ mod deserialization_tests {
         assert_eq!(rules.rules.len(), 2);
 
         let keylogger_rule = &rules.rules[0];
-        assert_eq!(keylogger_rule.patterns, Some(vec![
-            "keyboard.hook".to_string(),
-            "keyboard.on_press".to_string(),
-            "pynput.*".to_string(),
-        ]));
+        assert_eq!(
+            keylogger_rule.patterns,
+            Some(vec![
+                "keyboard.hook".to_string(),
+                "keyboard.on_press".to_string(),
+                "pynput.*".to_string(),
+            ])
+        );
         assert_eq!(keylogger_rule.severity, Some("high".to_string()));
         assert_eq!(keylogger_rule.confidence, Some("medium".to_string()));
 
@@ -276,7 +280,10 @@ mod deserialization_tests {
         )"#;
 
         let rules: Result<Rules, _> = ron::from_str(ron_content);
-        assert!(rules.is_ok(), "RON parsing should succeed even with both pattern and patterns set");
+        assert!(
+            rules.is_ok(),
+            "RON parsing should succeed even with both pattern and patterns set"
+        );
     }
 
     #[test]
@@ -306,8 +313,8 @@ mod deserialization_tests {
             ]
         )"#;
 
-        let rules: Rules = ron::from_str(ron_content)
-            .expect("Failed to parse explicit Option syntax RON");
+        let rules: Rules =
+            ron::from_str(ron_content).expect("Failed to parse explicit Option syntax RON");
 
         assert_eq!(rules.rules.len(), 1);
 
@@ -337,7 +344,8 @@ mod deserialization_tests {
             ]
         )"#;
 
-        let rules: Rules = ron::from_str(ron_content).expect("Failed to parse RON with None values");
+        let rules: Rules =
+            ron::from_str(ron_content).expect("Failed to parse RON with None values");
 
         assert_eq!(rules.rules.len(), 1);
 
@@ -366,7 +374,8 @@ mod deserialization_tests {
             ]
         )"#;
 
-        let rules: Rules = ron::from_str(ron_content).expect("Failed to parse RON with empty arrays");
+        let rules: Rules =
+            ron::from_str(ron_content).expect("Failed to parse RON with empty arrays");
 
         assert_eq!(rules.rules.len(), 1);
 

@@ -100,16 +100,18 @@ mod django_xss_tests {
                 println!("Loaded {} total rules from Django directory", total_rules);
 
                 // Test scanning with these rules using existing test data
-                let scanner = VulnerabilityScanner::new("python", rules)
-                    .expect("Failed to create scanner");
-                let results = scanner.find_vulnerabilities_single_threaded(
-                    "tests/test_files/python/django",
-                    "python"
-                ).expect("Failed to scan directory");
+                let scanner =
+                    VulnerabilityScanner::new("python", rules).expect("Failed to create scanner");
+                let results = scanner
+                    .find_vulnerabilities_single_threaded(
+                        "tests/test_files/python/django",
+                        "python",
+                    )
+                    .expect("Failed to scan directory");
 
                 println!("Found {} vulnerabilities with Django rules", results.len());
                 assert!(results.len() >= 1, "Should detect at least one vulnerability");
-            },
+            }
             Err(e) => {
                 println!("Warning: Failed to load Django rules directory: {}", e);
                 // Don't fail the test - this indicates a rules configuration issue

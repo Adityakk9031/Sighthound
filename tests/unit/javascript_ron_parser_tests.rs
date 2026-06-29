@@ -1,7 +1,7 @@
-use sighthound::rules::Rules;
-use ron::from_str;
 use ron::error::SpannedError;
+use ron::from_str;
 use serde::Deserialize;
+use sighthound::rules::Rules;
 
 // note: the categorized JavaScript rule files (dom_xss.ron, unsafe_object_operations.ron,
 // ...) with `dom_xss_sinks`/`sanitizers` schemas were consolidated into the unified
@@ -34,8 +34,11 @@ fn test_basic_ron_structure() {
         field: String,
     }
 
-    let result: Result<SimpleStruct, SpannedError> = from_str(simple_ron);
-    assert!(result.is_ok(), "Failed to parse basic RON structure");
+    let parsed: SimpleStruct = from_str(simple_ron).expect("Failed to parse basic RON structure");
+    assert_eq!(parsed.key, "value");
+    assert_eq!(parsed.number, 42);
+    assert_eq!(parsed.array, vec![1, 2, 3]);
+    assert_eq!(parsed.nested.field, "nested_value");
 }
 
 #[test]
@@ -46,9 +49,13 @@ fn test_frontend_rules_structure() {
     // Verify the unified JS rules parsed and look well-formed
     assert!(rules.count_rules() > 0, "frontend_security rules should not be empty");
     for rule in &rules.rules {
-        assert!(rule.pattern.is_some() || rule.patterns.is_some()
-                || rule.sources.is_some() || rule.sinks.is_some(),
-                "each rule should declare a pattern or taint source/sink");
+        assert!(
+            rule.pattern.is_some()
+                || rule.patterns.is_some()
+                || rule.sources.is_some()
+                || rule.sinks.is_some(),
+            "each rule should declare a pattern or taint source/sink"
+        );
     }
 }
 
@@ -74,8 +81,10 @@ fn test_ron_syntax_validation() {
         nested: String,
     }
 
-    let result: Result<TestStruct, SpannedError> = from_str(valid_ron);
-    assert!(result.is_ok(), "Failed to parse valid RON syntax");
+    let parsed: TestStruct = from_str(valid_ron).expect("Failed to parse valid RON syntax");
+    assert_eq!(parsed.field, "value");
+    assert_eq!(parsed.array, vec![1, 2, 3]);
+    assert_eq!(parsed.object.nested, "value");
 
     let invalid_ron = r#"{
         field: "value",
@@ -91,10 +100,7 @@ fn test_ron_syntax_validation() {
 
 #[test]
 fn test_rule_file_parsing() {
-    let files = [
-        "frontend_security.ron",
-        "frontend_taint_security.ron",
-    ];
+    let files = ["frontend_security.ron", "frontend_taint_security.ron"];
 
     for file in files.iter() {
         let path = format!("rules/javascript/{}", file);
@@ -110,10 +116,11 @@ fn test_ron_field_types() {
         .expect("Failed to load frontend_security.ron");
 
     // Verify field types: rules carry finding types and file-type filters
-    assert!(rules.rules.iter().any(|r| r.finding_type.is_some()),
-            "rules should declare finding types");
-    assert!(rules.rules.iter().any(|r| r.file_types.is_some()),
-            "rules should declare file types");
+    assert!(
+        rules.rules.iter().any(|r| r.finding_type.is_some()),
+        "rules should declare finding types"
+    );
+    assert!(rules.rules.iter().any(|r| r.file_types.is_some()), "rules should declare file types");
 }
 
 #[test]
@@ -122,6 +129,8 @@ fn test_ron_mode_classification() {
     let rules = Rules::load_from_file("rules/javascript/frontend_taint_security.ron")
         .expect("Failed to load frontend_taint_security.ron");
 
-    assert!(!rules.get_taint_rules().is_empty(),
-            "frontend_taint_security should contain taint-mode rules");
+    assert!(
+        !rules.get_taint_rules().is_empty(),
+        "frontend_taint_security should contain taint-mode rules"
+    );
 }

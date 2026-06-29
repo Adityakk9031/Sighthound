@@ -1,8 +1,8 @@
-use sighthound::VulnerabilityScanner;
 use sighthound::rules::Rules;
-use tempfile::{TempDir, NamedTempFile};
+use sighthound::VulnerabilityScanner;
 use std::fs;
 use std::io::Write;
+use tempfile::{NamedTempFile, TempDir};
 
 // note: the dedicated injection-sink analyzer was folded into the unified search scanner.
 // Search rules tagged `category: "injection"` are gated by `has_injection_pattern`, which
@@ -81,7 +81,9 @@ mod end_to_end_injection_tests {
     #[cfg(feature = "python")]
     fn test_python_sql_injection_detection() {
         let python_files = vec![
-            ("vulnerable.py", r#"
+            (
+                "vulnerable.py",
+                r#"
 import sqlite3
 
 def get_user_vulnerable(user_id):
@@ -111,8 +113,11 @@ def get_user_safe():
     # Literal string - should NOT be detected
     cursor.execute("SELECT * FROM users")
     return cursor.fetchall()
-"#),
-            ("safe.py", r#"
+"#,
+            ),
+            (
+                "safe.py",
+                r#"
 import sqlite3
 
 def get_all_users():
@@ -126,7 +131,8 @@ def count_users():
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM users")
     return cursor.fetchone()[0]
-"#),
+"#,
+            ),
         ];
 
         let temp_dir = create_temp_dir_with_files(python_files);
@@ -135,48 +141,45 @@ def count_users():
         // Load rules and create scanner
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        let scanner = VulnerabilityScanner::new("python", rules)
-            .expect("Failed to create scanner");
+        let scanner = VulnerabilityScanner::new("python", rules).expect("Failed to create scanner");
 
         // Scan the directory
-        let findings = scanner.find_vulnerabilities_single_threaded(
-            temp_dir.path().to_str().unwrap(),
-            "python"
-        ).expect("Failed to scan directory");
+        let findings = scanner
+            .find_vulnerabilities_single_threaded(temp_dir.path().to_str().unwrap(), "python")
+            .expect("Failed to scan directory");
 
         println!("Found {} findings", findings.len());
         for finding in &findings {
-            println!("Finding: {} in {} at line {} - {}",
-                finding.finding_type, finding.file, finding.line, finding.snippet);
+            println!(
+                "Finding: {} in {} at line {} - {}",
+                finding.finding_type, finding.file, finding.line, finding.snippet
+            );
         }
 
         // Should find 3 vulnerabilities in vulnerable.py, none in safe.py
         assert!(findings.len() >= 3, "Should find at least 3 SQL injection vulnerabilities");
 
         // Verify all findings are SQL injection
-        let sql_injection_count = findings.iter()
-            .filter(|f| f.finding_type == "sql_injection")
-            .count();
+        let sql_injection_count =
+            findings.iter().filter(|f| f.finding_type == "sql_injection").count();
         assert!(sql_injection_count >= 3, "Should find at least 3 SQL injection vulnerabilities");
 
         // Verify findings are in the vulnerable file
-        let vulnerable_findings = findings.iter()
-            .filter(|f| f.file.contains("vulnerable.py"))
-            .count();
+        let vulnerable_findings =
+            findings.iter().filter(|f| f.file.contains("vulnerable.py")).count();
         assert!(vulnerable_findings >= 3, "Should find vulnerabilities in vulnerable.py");
 
         // Verify no findings in safe file (literal-string queries are not flagged)
-        let safe_findings = findings.iter()
-            .filter(|f| f.file.contains("safe.py"))
-            .count();
+        let safe_findings = findings.iter().filter(|f| f.file.contains("safe.py")).count();
         assert_eq!(safe_findings, 0, "Should find no vulnerabilities in safe.py");
     }
 
     #[test]
     #[cfg(feature = "python")]
     fn test_python_command_injection_detection() {
-        let python_files = vec![
-            ("cmd_vulnerable.py", r#"
+        let python_files = vec![(
+            "cmd_vulnerable.py",
+            r#"
 import os
 import subprocess
 
@@ -195,34 +198,33 @@ def run_command_vulnerable3(file):
 def run_safe_command():
     # Literal string - should NOT be detected
     os.system("ls -la")
-"#),
-        ];
+"#,
+        )];
 
         let temp_dir = create_temp_dir_with_files(python_files);
         let rules_file = create_test_rules();
 
         let rules = Rules::load_from_file(rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        let scanner = VulnerabilityScanner::new("python", rules)
-            .expect("Failed to create scanner");
+        let scanner = VulnerabilityScanner::new("python", rules).expect("Failed to create scanner");
 
-        let findings = scanner.find_vulnerabilities_single_threaded(
-            temp_dir.path().to_str().unwrap(),
-            "python"
-        ).expect("Failed to scan directory");
+        let findings = scanner
+            .find_vulnerabilities_single_threaded(temp_dir.path().to_str().unwrap(), "python")
+            .expect("Failed to scan directory");
 
         println!("Found {} command injection findings", findings.len());
         for finding in &findings {
-            println!("Finding: {} in {} at line {} - {}",
-                finding.finding_type, finding.file, finding.line, finding.snippet);
+            println!(
+                "Finding: {} in {} at line {} - {}",
+                finding.finding_type, finding.file, finding.line, finding.snippet
+            );
         }
 
         // Should find command injection vulnerabilities
         assert!(findings.len() >= 2, "Should find at least 2 command injection vulnerabilities");
 
-        let cmd_injection_count = findings.iter()
-            .filter(|f| f.finding_type == "command_injection")
-            .count();
+        let cmd_injection_count =
+            findings.iter().filter(|f| f.finding_type == "command_injection").count();
         assert!(cmd_injection_count >= 2, "Should find command injection vulnerabilities");
     }
 
@@ -232,8 +234,9 @@ def run_safe_command():
         // For this test, we'll use a direct validation approach rather than using the scanner
 
         // 1. Create our test files
-        let java_files = vec![
-            ("VulnerableService.java", r#"
+        let java_files = vec![(
+            "VulnerableService.java",
+            r#"
 package com.example;
 import java.sql.*;
 import java.io.*;
@@ -260,8 +263,8 @@ public class VulnerableService {
         stmt.execute("SELECT COUNT(*) FROM users");
     }
 }
-"#),
-        ];
+"#,
+        )];
 
         let temp_dir = create_temp_dir_with_files(java_files);
         println!("Java test files created at: {}", temp_dir.path().display());
@@ -269,10 +272,10 @@ public class VulnerableService {
         // 2. Directly validate the injection pattern detection logic
         #[cfg(feature = "java")]
         {
-            use sighthound::parser::LanguageParser;
             use sighthound::language::LanguageSupport;
-            use sighthound::rules::check_for_injection_pattern;
             use sighthound::models::Finding;
+            use sighthound::parser::LanguageParser;
+            use sighthound::rules::check_for_injection_pattern;
 
             // Create findings vector to store our results
             let mut findings = Vec::new();
@@ -300,7 +303,8 @@ public class VulnerableService {
 
                 // Check if this node is a method invocation
                 if node.kind() == "method_invocation" {
-                    let node_text = String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
+                    let node_text =
+                        String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
                     let line = node.start_position().row + 1;
 
                     // If this is an execute() method, check its arguments for injection patterns
@@ -312,10 +316,15 @@ public class VulnerableService {
                             if let Some(args_node) = language_support.get_arguments_node(node) {
                                 for i in 0..args_node.named_child_count() {
                                     if let Some(arg) = args_node.named_child(i) {
-                                        let arg_text = String::from_utf8_lossy(&source[arg.start_byte()..arg.end_byte()]);
+                                        let arg_text = String::from_utf8_lossy(
+                                            &source[arg.start_byte()..arg.end_byte()],
+                                        );
                                         let arg_kind = arg.kind();
 
-                                        println!("{}Argument {}: {} (kind: {})", indent, i, arg_text, arg_kind);
+                                        println!(
+                                            "{}Argument {}: {} (kind: {})",
+                                            indent, i, arg_text, arg_kind
+                                        );
 
                                         // Check for signs of injection vulnerability
                                         let is_vulnerable = arg_kind == "binary_expression" || // String concatenation
@@ -354,10 +363,15 @@ public class VulnerableService {
                             if let Some(args_node) = language_support.get_arguments_node(node) {
                                 for i in 0..args_node.named_child_count() {
                                     if let Some(arg) = args_node.named_child(i) {
-                                        let arg_text = String::from_utf8_lossy(&source[arg.start_byte()..arg.end_byte()]);
+                                        let arg_text = String::from_utf8_lossy(
+                                            &source[arg.start_byte()..arg.end_byte()],
+                                        );
                                         let arg_kind = arg.kind();
 
-                                        println!("{}Argument {}: {} (kind: {})", indent, i, arg_text, arg_kind);
+                                        println!(
+                                            "{}Argument {}: {} (kind: {})",
+                                            indent, i, arg_text, arg_kind
+                                        );
 
                                         // Check for signs of injection vulnerability
                                         let is_vulnerable = arg_kind == "binary_expression" || // String concatenation
@@ -366,7 +380,10 @@ public class VulnerableService {
                                                            check_for_injection_pattern(&arg_text, language_support);
 
                                         if is_vulnerable {
-                                            println!("{}VULNERABLE: Command injection found", indent);
+                                            println!(
+                                                "{}VULNERABLE: Command injection found",
+                                                indent
+                                            );
 
                                             findings.push(Finding {
                                                 file: filepath.to_string(),
@@ -397,30 +414,44 @@ public class VulnerableService {
                 // Recursively process all children
                 for i in 0..node.child_count() {
                     if let Some(child) = node.child(i) {
-                        find_vulnerabilities(&child, &source, filepath, language_support, findings, depth + 1);
+                        find_vulnerabilities(
+                            &child,
+                            &source,
+                            filepath,
+                            language_support,
+                            findings,
+                            depth + 1,
+                        );
                     }
                 }
             }
 
             // Analyze the Java file directly
-            find_vulnerabilities(&root_node, &source, &filepath, language_support, &mut findings, 0);
+            find_vulnerabilities(
+                &root_node,
+                &source,
+                &filepath,
+                language_support,
+                &mut findings,
+                0,
+            );
 
             // Display findings
             println!("\nFound {} Java findings", findings.len());
             for finding in &findings {
-                println!("Finding: {} in {} at line {} - {}",
-                    finding.finding_type, finding.file, finding.line, finding.snippet);
+                println!(
+                    "Finding: {} in {} at line {} - {}",
+                    finding.finding_type, finding.file, finding.line, finding.snippet
+                );
             }
 
             // Verify results
             assert!(findings.len() >= 3, "Should find at least 3 vulnerabilities in Java code");
 
-            let sql_findings = findings.iter()
-                .filter(|f| f.finding_type == "sql_injection")
-                .count();
-            let cmd_findings = findings.iter()
-                .filter(|f| f.finding_type == "command_injection")
-                .count();
+            let sql_findings =
+                findings.iter().filter(|f| f.finding_type == "sql_injection").count();
+            let cmd_findings =
+                findings.iter().filter(|f| f.finding_type == "command_injection").count();
 
             assert!(sql_findings >= 2, "Should find at least 2 SQL injection vulnerabilities");
             assert!(cmd_findings >= 1, "Should find at least 1 command injection vulnerability");
@@ -436,8 +467,9 @@ public class VulnerableService {
     #[test]
     #[cfg(feature = "javascript")]
     fn test_javascript_injection_detection() {
-        let js_files = vec![
-            ("vulnerable.js", r#"
+        let js_files = vec![(
+            "vulnerable.js",
+            r#"
 const db = require('db');
 
 function getUserVulnerable1(userId) {
@@ -459,8 +491,8 @@ function safeQuery() {
     // This should NOT be detected - literal string
     db.execute("SELECT COUNT(*) FROM users");
 }
-"#),
-        ];
+"#,
+        )];
 
         let temp_dir = create_temp_dir_with_files(js_files);
 
@@ -491,23 +523,25 @@ function safeQuery() {
             ]
         )"#;
 
-        let mut js_rules_file = NamedTempFile::with_suffix(".ron").expect("Failed to create temp file");
+        let mut js_rules_file =
+            NamedTempFile::with_suffix(".ron").expect("Failed to create temp file");
         write!(js_rules_file, "{}", js_rules_content).expect("Failed to write rules");
 
         let rules = Rules::load_from_file(js_rules_file.path().to_str().unwrap())
             .expect("Failed to load rules");
-        let scanner = VulnerabilityScanner::new("javascript", rules)
-            .expect("Failed to create scanner");
+        let scanner =
+            VulnerabilityScanner::new("javascript", rules).expect("Failed to create scanner");
 
-        let findings = scanner.find_vulnerabilities_single_threaded(
-            temp_dir.path().to_str().unwrap(),
-            "javascript"
-        ).expect("Failed to scan directory");
+        let findings = scanner
+            .find_vulnerabilities_single_threaded(temp_dir.path().to_str().unwrap(), "javascript")
+            .expect("Failed to scan directory");
 
         println!("Found {} JavaScript findings", findings.len());
         for finding in &findings {
-            println!("Finding: {} in {} at line {} - {}",
-                finding.finding_type, finding.file, finding.line, finding.snippet);
+            println!(
+                "Finding: {} in {} at line {} - {}",
+                finding.finding_type, finding.file, finding.line, finding.snippet
+            );
         }
 
         // Should find multiple vulnerabilities
@@ -518,14 +552,17 @@ function safeQuery() {
         let has_code_injection = findings.iter().any(|f| f.finding_type == "code_injection");
         let has_xss = findings.iter().any(|f| f.finding_type == "xss");
 
-        assert!(has_sql_injection || has_code_injection || has_xss,
-               "Should find different types of injection vulnerabilities");
+        assert!(
+            has_sql_injection || has_code_injection || has_xss,
+            "Should find different types of injection vulnerabilities"
+        );
     }
 
     #[test]
     fn test_no_false_positives_on_safe_code() {
-        let safe_files = vec![
-            ("SafePython.py", r#"
+        let safe_files = vec![(
+            "SafePython.py",
+            r#"
 import sqlite3
 
 def get_all_users():
@@ -544,8 +581,8 @@ def safe_print():
     print("Hello World")
     print(f"Static message")
     print("Value: {}".format(42))
-"#),
-        ];
+"#,
+        )];
 
         let temp_dir = create_temp_dir_with_files(safe_files);
         let rules_file = create_test_rules();
@@ -555,18 +592,19 @@ def safe_print():
 
         #[cfg(feature = "python")]
         {
-            let scanner = VulnerabilityScanner::new("python", rules)
-                .expect("Failed to create scanner");
+            let scanner =
+                VulnerabilityScanner::new("python", rules).expect("Failed to create scanner");
 
-            let findings = scanner.find_vulnerabilities_single_threaded(
-                temp_dir.path().to_str().unwrap(),
-                "python"
-            ).expect("Failed to scan directory");
+            let findings = scanner
+                .find_vulnerabilities_single_threaded(temp_dir.path().to_str().unwrap(), "python")
+                .expect("Failed to scan directory");
 
             println!("Found {} findings in safe code (should be 0)", findings.len());
             for finding in &findings {
-                println!("Unexpected finding: {} in {} at line {} - {}",
-                    finding.finding_type, finding.file, finding.line, finding.snippet);
+                println!(
+                    "Unexpected finding: {} in {} at line {} - {}",
+                    finding.finding_type, finding.file, finding.line, finding.snippet
+                );
             }
 
             // Should find no vulnerabilities in safe code
