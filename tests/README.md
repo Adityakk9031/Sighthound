@@ -39,12 +39,15 @@ cargo test pattern_matching
 
 ## Test Fixtures
 
-Test fixtures (sample code and rule files) are located in the `test_fixtures/` directory at the project root.
+Sample code fixtures live under `tests/test_files/`, organized by language:
 
-- `test_fixtures/python/`: Python test files
-- `test_fixtures/java/`: Java test files
-- `test_fixtures/rules/`: Rule files for testing
+- `tests/test_files/python/`: Python test files
+- `tests/test_files/java/`: Java test files
+- `tests/test_files/javascript/`: JavaScript/TypeScript test files
+
+Rule files used by the scanner live in the top-level `rules/` directory.
 
 ## Test Scripts
 
-Test scripts and utilities are located in the `test_scripts/` directory at the project root. 
+Helper scripts (e.g. `run_comprehensive_tests.py`) live alongside the fixtures they
+exercise, such as `tests/test_files/multi_file_taint_tests/`. 
