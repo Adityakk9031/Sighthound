@@ -4,7 +4,7 @@ This directory contains a comprehensive test suite designed to validate the mult
 
 ## 🎯 **Test Strategy Overview**
 
-The test suite implements the testing strategy defined in `../../TAINT_TESTING_STRATEGY.md` and focuses on 5 critical categories:
+The test suite focuses on 5 critical categories:
 
 ### **Category 1: Valid Cross-File Flows** (Should DETECT ✅)
 - **Test 1.1**: Direct function import flow
@@ -46,13 +46,13 @@ python3 run_comprehensive_tests.py
 ### **Manual Individual Tests**
 ```bash
 # Test valid flow detection
-cargo run -- --taint-analysis category1_valid/test1_1_source_module.py category1_valid/test1_1_sink_module.py
+cargo run --bin sighthound -- --taint-analysis category1_valid/test1_1_source_module.py category1_valid/test1_1_sink_module.py
 
 # Test phantom flow rejection  
-cargo run -- --taint-analysis category2_invalid/test2_1_module_a.py category2_invalid/test2_1_module_b.py
+cargo run --bin sighthound -- --taint-analysis category2_invalid/test2_1_module_a.py category2_invalid/test2_1_module_b.py
 
 # Test configuration safety
-cargo run -- --taint-analysis category4_config/test4_1_config_manager.py category4_config/test4_1_app_initializer.py
+cargo run --bin sighthound -- --taint-analysis category4_config/test4_1_config_manager.py category4_config/test4_1_app_initializer.py
 ```
 
 ## 📊 **Success Criteria**
@@ -94,7 +94,6 @@ tests/test_files/multi_file_taint_tests/
 │   ├── test5_1_data_processor.py
 │   └── test5_1_command_runner.py
 ├── run_comprehensive_tests.py # Test runner
-├── TAINT_TESTING_STRATEGY.md  # Full strategy document
 └── README.md                  # This file
 ```
 

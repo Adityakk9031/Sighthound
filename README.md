@@ -6,7 +6,7 @@
 
 A high-performance vulnerability scanner for source code using tree-sitter parsing and advanced taint flow analysis.
 
-[![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/Corgea/Sighthound/actions/workflows/ci.yml/badge.svg)](https://github.com/Corgea/Sighthound/actions/workflows/ci.yml)
 
@@ -29,13 +29,13 @@ A high-performance vulnerability scanner for source code using tree-sitter parsi
 | Python (`.py`)            | ✅ | ✅ |
 | JavaScript (`.js`)        | ✅ | ✅ |
 | Java (`.java`)            | ✅ | — (parser only; bring your own rules) |
-| TypeScript / TSX (`.tsx`) | ✅ | — (parser only) |
+| TypeScript / TSX (`.tsx`) | ✅ | ✅ (shares JavaScript rules) |
 | HTML (`.html`)            | ✅ | — (parser only) |
 | Django templates          | ✅ | — (parser only) |
 
-Python and JavaScript ship with curated rule sets. The remaining languages have
-working tree-sitter parsers but no bundled rules yet — point Sighthound at your
-own `.ron` rules to scan them.
+Python, JavaScript, and TypeScript/TSX ship with curated rule sets (TSX reuses the
+JavaScript rules). The remaining languages have working tree-sitter parsers but no
+bundled rules yet — point Sighthound at your own `.ron` rules to scan them.
 
 ### Scanning Modes
 - **Auto-Detection Mode**: Automatically detects languages and loads appropriate rules
@@ -45,7 +45,7 @@ own `.ron` rules to scan them.
 ## 📦 Installation
 
 ### Prerequisites
-- Rust 1.70+ (install from [rustup.rs](https://rustup.rs/))
+- Rust 1.85+ (install from [rustup.rs](https://rustup.rs/))
 - Git
 
 ### Build from Source
@@ -67,23 +67,23 @@ DOCKER_BUILDKIT=1 docker build \
   --output type=local,dest=./sighthound_release \
   .
 ```
-Then binary `sighthound` would be exported at the current folder.
+The `sighthound` binary (plus the bundled `rules/`) is exported to `./sighthound_release/`.
 
 ## 🎯 Quick Start
 
 ### Basic Usage
 ```bash
 # Auto-detect languages and scan with default rules
-cargo run -- /path/to/your/project
+cargo run --bin sighthound -- /path/to/your/project
 
 # Scan specific language with custom rules
-cargo run -- /path/to/project python rules/python/command_injection.ron
+cargo run --bin sighthound -- /path/to/project python rules/python/command_injection.ron
 
 # Enable taint analysis for deep vulnerability detection
-cargo run -- --taint-analysis /path/to/project
+cargo run --bin sighthound -- --taint-analysis /path/to/project
 
 # Output results in JSON format
-cargo run -- --output-format json /path/to/project > results.json
+cargo run --bin sighthound -- --output-format json /path/to/project > results.json
 ```
 
 ### Example Output
@@ -128,10 +128,18 @@ OPTIONS:
     -s, --summary-only              Only show vulnerability summary
         --single-threaded           Disable parallel processing
         --threads <NUM>             Number of threads for parallel processing
-        --taint-analysis            Enable taint analysis for data flow tracking
-        --skip-minified             Skip minified JavaScript files [default: true]
+        --taint-analysis            Run only taint analysis (data flow tracking)
+        --simple-analysis           Run only pattern-based search
+        --skip-minified <BOOL>      Skip minified JavaScript files (default: true)
+        --code-type <TYPE>          Filter by code type: frontend, backend, or both
+        --language-filter <LANG>    Restrict scanning to a single language
+        --rules-dir <PATH>          Custom rules directory (used with --use-file-rules)
+        --use-file-rules            Load rules from files instead of embedded rules
     -h, --help                      Print help information
+        --version                   Print version, commit hash, and build date
 ```
+
+With no analysis flag, Sighthound runs both pattern search and taint analysis.
 
 ### Environment Variables
 ```bash
@@ -228,6 +236,7 @@ See [Rule Writing Guide](rules/RULE_WRITING_GUIDE.md) for detailed instructions 
 ```
 src/
 ├── main.rs              # CLI entry point and orchestration
+├── cli.rs               # CLI argument definitions (re-exported from models)
 ├── lib.rs               # Library interface and exports
 ├── models.rs            # Core data structures (Finding, TaintFlow, etc.)
 ├── language.rs          # Language-specific parsers and support
@@ -235,6 +244,7 @@ src/
 ├── parser.rs            # Tree-sitter AST parsing utilities
 ├── common.rs            # Shared utilities and helpers
 ├── config.rs            # Configuration and defaults
+├── code_type_detector.rs  # Frontend/backend code-type detection
 └── scanner/
     ├── core.rs          # Main scanning engine and algorithms
     ├── modes.rs         # Scanning mode implementations
@@ -277,16 +287,11 @@ graph TD
 ### Optimization Features
 - **Memory Mapping**: Efficient file reading for large files
 - **Prefiltering**: Skip irrelevant files and functions early
-- **Incremental Analysis**: Cache results for unchanged files
 - **Smart Threading**: Avoid over-subscription and contention
 
 ## 🧪 Testing
 
 ### Running Tests
-
-> Note: the test harnesses are being realigned to the refactored rule API and
-> are not yet fully green. `cargo build --release` is the verified, CI-gated
-> command; the commands below are the intended test entry points.
 
 ```bash
 # Run all tests
@@ -298,7 +303,7 @@ cargo test --test integration_tests
 cargo test --test end_to_end_tests
 
 # Test with specific files
-cargo run -- tests/test_files/python/comprehensive_taint_test.py
+cargo run --bin sighthound -- tests/test_files/python/comprehensive_taint_test.py
 ```
 
 ### Test Coverage
@@ -323,7 +328,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
 3. Make your changes and add tests
-4. Confirm the build: `cargo build --release` (the test suite is under repair)
+4. Confirm the build and tests: `cargo build --release && cargo test`
 5. Submit a pull request
 
 ### Areas for Contribution
