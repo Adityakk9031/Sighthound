@@ -4580,6 +4580,119 @@ impl DataFlowTracer {
     }
 
     /// Actually analyze how a variable gets its value within a function
+    /// Scope the assignment search to the enclosing function's body so a same-named local
+    /// variable in an EARLIER function can't shadow the real assignment in the target function.
+    /// Each body line's 0-based index `i` maps to absolute file line `start_line + i`. Falls
+    /// back to a whole-file scan (never regressing detection) when the function body can't be
+    /// located.
+    fn build_scoped_lines(&self, source_text: &str, function_name: &str) -> Vec<(usize, String)> {
+        match self.extract_function_body(source_text, function_name) {
+            Some((body, start_line)) => body
+                .lines()
+                .enumerate()
+                .map(|(i, line)| (start_line + i, line.to_string()))
+                .collect(),
+            None => {
+                source_text.lines().enumerate().map(|(i, line)| (i + 1, line.to_string())).collect()
+            }
+        }
+    }
+
+    /// Classify an assignment's right-hand side: proven-safe/tainted (via
+    /// [`Self::classify_value_source`]), a direct source-pattern match, a function-call
+    /// assignment, or a plain local assignment.
+    fn classify_assignment_rhs(
+        &self,
+        rhs: &str,
+        file_line: usize,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> VariableSource {
+        match self.classify_value_source(rhs, rule_deduplicator) {
+            ValueSourceClassification::Safe(reason) => {
+                log::debug!("[COMPUTE_VARIABLE_SOURCE] Proven-safe assignment: {}", reason);
+                return VariableSource::KnownSafe { reason, line: file_line };
+            }
+            ValueSourceClassification::Tainted(source_pattern) => {
+                log::debug!("[COMPUTE_VARIABLE_SOURCE] Direct taint source: '{}'", source_pattern);
+                return VariableSource::DirectTaintSource {
+                    pattern: source_pattern,
+                    line: file_line,
+                };
+            }
+            ValueSourceClassification::Unknown => {}
+        }
+
+        // Check if RHS is a direct taint source
+        if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(rhs) {
+            log::debug!("[COMPUTE_VARIABLE_SOURCE] Direct taint source: '{}'", source_pattern);
+            return VariableSource::DirectTaintSource { pattern: source_pattern, line: file_line };
+        }
+
+        // Check if RHS is a function call
+        if rhs.contains('(') && rhs.contains(')') {
+            let function_name = rhs.split('(').next().unwrap_or("").trim();
+            log::debug!("[COMPUTE_VARIABLE_SOURCE] Function call assignment: '{}'", function_name);
+            return VariableSource::LocalAssignment {
+                source_expression: rhs.to_string(),
+                line: file_line,
+            };
+        }
+
+        // Otherwise, it's a simple local assignment
+        log::debug!("[COMPUTE_VARIABLE_SOURCE] Local assignment: '{}'", rhs);
+        VariableSource::LocalAssignment { source_expression: rhs.to_string(), line: file_line }
+    }
+
+    /// Find the assignment to `variable_name` in `scoped_lines` (searched in order) and
+    /// classify its source. Returns `None` when no assignment is found.
+    fn find_assignment_source(
+        &self,
+        scoped_lines: &[(usize, String)],
+        variable_name: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<VariableSource> {
+        // Simple text-based analysis for now
+        // Look for assignment patterns like "variable_name = something"
+        for (file_line, line) in scoped_lines {
+            let file_line = *file_line;
+            let line = line.trim();
+            // Note: augmented assignments (`x += ...`, `x -= ...`) are intentionally
+            // not matched by this `{} =` guard and are not handled by this path.
+            if !line.starts_with(&format!("{} =", variable_name)) {
+                continue;
+            }
+            // Split on the FIRST '=' only so the full RHS is preserved even when
+            // it contains '==' or kwarg '=' (e.g. `x = a == b`, `x = f(k=v)`), then
+            // strip any trailing inline comment.
+            let rhs = TaintExpressionUtils::strip_inline_comment(
+                line.split_once('=').map(|(_, rhs)| rhs).unwrap_or("").trim(),
+            );
+            log::debug!("[COMPUTE_VARIABLE_SOURCE] Found assignment: {} = {}", variable_name, rhs);
+
+            return Some(self.classify_assignment_rhs(rhs, file_line, rule_deduplicator));
+        }
+        None
+    }
+
+    /// Whether `variable_name` is a parameter of `function_name`'s definition, and if so, at
+    /// what index.
+    fn find_function_parameter_index(
+        source_text: &str,
+        function_name: &str,
+        variable_name: &str,
+    ) -> Option<usize> {
+        let func_line = source_text
+            .lines()
+            .find(|line| line.trim().starts_with(&format!("def {}(", function_name)))?;
+        if !func_line.contains(variable_name) {
+            return None;
+        }
+        let params_part = func_line.split('(').nth(1)?;
+        let params_only = params_part.split(')').next()?;
+        let params: Vec<&str> = params_only.split(',').map(|p| p.trim()).collect();
+        params.iter().position(|param| param == &variable_name)
+    }
+
     fn compute_variable_source(
         &self,
         file_path: &str,
@@ -4595,130 +4708,29 @@ impl DataFlowTracer {
         );
 
         // Read the source code as text and do simple string analysis
-        let source_text = match std::fs::read_to_string(file_path) {
-            Ok(content) => content,
-            Err(_) => {
-                log::debug!("[COMPUTE_VARIABLE_SOURCE] Could not read file: {}", file_path);
-                return VariableSource::FunctionParameter { parameter_index: 0 };
-            }
+        let Ok(source_text) = std::fs::read_to_string(file_path) else {
+            log::debug!("[COMPUTE_VARIABLE_SOURCE] Could not read file: {}", file_path);
+            return VariableSource::FunctionParameter { parameter_index: 0 };
         };
 
-        // Scope the assignment search to the enclosing function's body so a
-        // same-named local variable in an EARLIER function can't shadow the
-        // real assignment in the target function. Each body line's 0-based
-        // index `i` maps to absolute file line `start_line + i`.
-        //
-        // Build (line, absolute_file_line) pairs to search. If the function
-        // body can't be located, fall back to the whole-file scan so we never
-        // regress detection (preserves the previous behavior).
-        let scoped_lines: Vec<(usize, String)> =
-            match self.extract_function_body(&source_text, function_name) {
-                Some((body, start_line)) => body
-                    .lines()
-                    .enumerate()
-                    .map(|(i, line)| (start_line + i, line.to_string()))
-                    .collect::<Vec<_>>(),
-                None => source_text
-                    .lines()
-                    .enumerate()
-                    .map(|(i, line)| (i + 1, line.to_string()))
-                    .collect::<Vec<_>>(),
-            };
+        let scoped_lines = self.build_scoped_lines(&source_text, function_name);
 
-        // Simple text-based analysis for now
-        // Look for assignment patterns like "variable_name = something"
-        for (file_line, line) in &scoped_lines {
-            let file_line = *file_line;
-            let line = line.trim();
-            // Note: augmented assignments (`x += ...`, `x -= ...`) are intentionally
-            // not matched by this `{} =` guard and are not handled by this path.
-            if line.starts_with(&format!("{} =", variable_name)) {
-                // Split on the FIRST '=' only so the full RHS is preserved even when
-                // it contains '==' or kwarg '=' (e.g. `x = a == b`, `x = f(k=v)`), then
-                // strip any trailing inline comment.
-                let rhs = TaintExpressionUtils::strip_inline_comment(
-                    line.split_once('=').map(|(_, rhs)| rhs).unwrap_or("").trim(),
-                );
-                log::debug!(
-                    "[COMPUTE_VARIABLE_SOURCE] Found assignment: {} = {}",
-                    variable_name,
-                    rhs
-                );
-
-                match self.classify_value_source(rhs, rule_deduplicator) {
-                    ValueSourceClassification::Safe(reason) => {
-                        log::debug!("[COMPUTE_VARIABLE_SOURCE] Proven-safe assignment: {}", reason);
-                        return VariableSource::KnownSafe { reason, line: file_line };
-                    }
-                    ValueSourceClassification::Tainted(source_pattern) => {
-                        log::debug!(
-                            "[COMPUTE_VARIABLE_SOURCE] Direct taint source: '{}'",
-                            source_pattern
-                        );
-                        return VariableSource::DirectTaintSource {
-                            pattern: source_pattern,
-                            line: file_line,
-                        };
-                    }
-                    ValueSourceClassification::Unknown => {}
-                }
-
-                // Check if RHS is a direct taint source
-                if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(rhs) {
-                    log::debug!(
-                        "[COMPUTE_VARIABLE_SOURCE] Direct taint source: '{}'",
-                        source_pattern
-                    );
-                    return VariableSource::DirectTaintSource {
-                        pattern: source_pattern,
-                        line: file_line,
-                    };
-                }
-
-                // Check if RHS is a function call
-                if rhs.contains('(') && rhs.contains(')') {
-                    let function_name = rhs.split('(').next().unwrap_or("").trim();
-                    log::debug!(
-                        "[COMPUTE_VARIABLE_SOURCE] Function call assignment: '{}'",
-                        function_name
-                    );
-                    return VariableSource::LocalAssignment {
-                        source_expression: rhs.to_string(),
-                        line: file_line,
-                    };
-                }
-
-                // Otherwise, it's a simple local assignment
-                log::debug!("[COMPUTE_VARIABLE_SOURCE] Local assignment: '{}'", rhs);
-                return VariableSource::LocalAssignment {
-                    source_expression: rhs.to_string(),
-                    line: file_line,
-                };
-            }
+        if let Some(source) =
+            self.find_assignment_source(&scoped_lines, variable_name, rule_deduplicator)
+        {
+            return source;
         }
 
         // Check if it might be a function parameter by looking for function definition
-        if let Some(func_line) = source_text
-            .lines()
-            .find(|line| line.trim().starts_with(&format!("def {}(", function_name)))
+        if let Some(parameter_index) =
+            Self::find_function_parameter_index(&source_text, function_name, variable_name)
         {
-            if func_line.contains(variable_name) {
-                // Simple parameter detection
-                if let Some(params_part) = func_line.split('(').nth(1) {
-                    if let Some(params_only) = params_part.split(')').next() {
-                        let params: Vec<&str> = params_only.split(',').map(|p| p.trim()).collect();
-                        for (index, param) in params.iter().enumerate() {
-                            if param == &variable_name {
-                                log::debug!("[COMPUTE_VARIABLE_SOURCE] Variable '{}' is function parameter at index {}", 
-                                    variable_name, index);
-                                return VariableSource::FunctionParameter {
-                                    parameter_index: index,
-                                };
-                            }
-                        }
-                    }
-                }
-            }
+            log::debug!(
+                "[COMPUTE_VARIABLE_SOURCE] Variable '{}' is function parameter at index {}",
+                variable_name,
+                parameter_index
+            );
+            return VariableSource::FunctionParameter { parameter_index };
         }
 
         // Default case - treat as parameter 0
@@ -4727,6 +4739,51 @@ impl DataFlowTracer {
             variable_name
         );
         VariableSource::FunctionParameter { parameter_index: 0 }
+    }
+
+    /// Classify an expression that reads an environment variable: user-controlled keys are
+    /// tainted, known config keys are safe, anything else falls through (`None`).
+    fn classify_env_key_expression(
+        expr: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<ValueSourceClassification> {
+        let env_key = Self::extract_env_key(expr)?;
+
+        if Self::is_user_controlled_env_key(&env_key) {
+            let source_pattern = rule_deduplicator
+                .matches_source_pattern(expr)
+                .unwrap_or_else(|| format!("env:{}", env_key));
+            return Some(ValueSourceClassification::Tainted(source_pattern));
+        }
+
+        if Self::is_config_env_key(&env_key) {
+            return Some(ValueSourceClassification::Safe(format!(
+                "static configuration environment key {}",
+                env_key
+            )));
+        }
+
+        None
+    }
+
+    /// Classify an expression containing a well-known taint-indicator substring (`input(`,
+    /// `sys.argv`, `request.`, ...) as tainted when it also matches a configured source
+    /// pattern; falls through (`None`) otherwise.
+    fn classify_known_source_indicators(
+        expr: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<ValueSourceClassification> {
+        let lower_expr = expr.to_ascii_lowercase();
+        let has_indicator = lower_expr.contains("input(")
+            || lower_expr.contains("raw_input(")
+            || lower_expr.contains("sys.argv")
+            || lower_expr.contains("request.")
+            || lower_expr.contains("flask.request");
+        if !has_indicator {
+            return None;
+        }
+
+        rule_deduplicator.matches_source_pattern(expr).map(ValueSourceClassification::Tainted)
     }
 
     fn classify_value_source(
@@ -4762,32 +4819,14 @@ impl DataFlowTracer {
             return ValueSourceClassification::Safe("static config/template file read".to_string());
         }
 
-        if let Some(env_key) = Self::extract_env_key(expr) {
-            if Self::is_user_controlled_env_key(&env_key) {
-                let source_pattern = rule_deduplicator
-                    .matches_source_pattern(expr)
-                    .unwrap_or_else(|| format!("env:{}", env_key));
-                return ValueSourceClassification::Tainted(source_pattern);
-            }
-
-            if Self::is_config_env_key(&env_key) {
-                return ValueSourceClassification::Safe(format!(
-                    "static configuration environment key {}",
-                    env_key
-                ));
-            }
+        if let Some(classification) = Self::classify_env_key_expression(expr, rule_deduplicator) {
+            return classification;
         }
 
-        let lower_expr = expr.to_ascii_lowercase();
-        if lower_expr.contains("input(")
-            || lower_expr.contains("raw_input(")
-            || lower_expr.contains("sys.argv")
-            || lower_expr.contains("request.")
-            || lower_expr.contains("flask.request")
+        if let Some(classification) =
+            Self::classify_known_source_indicators(expr, rule_deduplicator)
         {
-            if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(expr) {
-                return ValueSourceClassification::Tainted(source_pattern);
-            }
+            return classification;
         }
 
         if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(expr) {
