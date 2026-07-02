@@ -4008,6 +4008,33 @@ impl MultiFileTaintAnalyzer {
     }
 
     /// Build import/export maps for all files
+    /// Parse one file and feed it into [`Self::analyze_file_imports_exports`] for
+    /// import/export/taint-sink discovery.
+    fn analyze_file_for_imports_exports(
+        &mut self,
+        file_path: &std::path::Path,
+        language: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Result<()> {
+        let filepath = file_path.to_string_lossy();
+        let source = std::fs::read(file_path)?;
+
+        crate::scanner::core::with_local_parser(language, |parser| {
+            let tree = parser.parse(&source)?;
+            let language_support = crate::language::get_language_support(language)?;
+
+            self.analyze_file_imports_exports(
+                &filepath,
+                &source,
+                &tree,
+                rule_deduplicator,
+                language_support.as_ref(),
+            );
+
+            Ok(())
+        })
+    }
+
     fn build_import_export_maps(
         &mut self,
         files_by_language: &std::collections::BTreeMap<String, Vec<std::path::PathBuf>>,
@@ -4021,23 +4048,11 @@ impl MultiFileTaintAnalyzer {
             // If language_filter is specified, use that language exclusively
             if let Some(files) = files_by_language.get(filter_lang) {
                 for file_path in files {
-                    let filepath = file_path.to_string_lossy();
-                    let source = std::fs::read(file_path)?;
-
-                    crate::scanner::core::with_local_parser(filter_lang, |parser| {
-                        let tree = parser.parse(&source)?;
-                        let language_support = crate::language::get_language_support(filter_lang)?;
-
-                        self.analyze_file_imports_exports(
-                            &filepath,
-                            &source,
-                            &tree,
-                            &rule_deduplicator,
-                            language_support.as_ref(),
-                        );
-
-                        Ok(())
-                    })?;
+                    self.analyze_file_for_imports_exports(
+                        file_path,
+                        filter_lang,
+                        &rule_deduplicator,
+                    )?;
                 }
             }
         } else {
@@ -4045,23 +4060,11 @@ impl MultiFileTaintAnalyzer {
             for (language, files) in files_by_language {
                 if language == "javascript" || language == "python" {
                     for file_path in files {
-                        let filepath = file_path.to_string_lossy();
-                        let source = std::fs::read(file_path)?;
-
-                        crate::scanner::core::with_local_parser(language, |parser| {
-                            let tree = parser.parse(&source)?;
-                            let language_support = crate::language::get_language_support(language)?;
-
-                            self.analyze_file_imports_exports(
-                                &filepath,
-                                &source,
-                                &tree,
-                                &rule_deduplicator,
-                                language_support.as_ref(),
-                            );
-
-                            Ok(())
-                        })?;
+                        self.analyze_file_for_imports_exports(
+                            file_path,
+                            language,
+                            &rule_deduplicator,
+                        )?;
                     }
                 }
             }
@@ -4268,48 +4271,62 @@ impl MultiFileTaintAnalyzer {
     }
 
     /// Extract import information from node text - FIXED for multi-line imports and parentheses
-    fn extract_import_info(text: &str) -> Option<Vec<(String, String)>> {
+    /// Parse `from module import a, b, c` into `[(name, module), ...]`, skipping quoted or
+    /// `__all__`-style entries. Empty when `trimmed_text` isn't a `from ... import ...` line.
+    fn parse_from_import(trimmed_text: &str) -> Vec<(String, String)> {
         let mut imports = Vec::new();
+        if !(trimmed_text.starts_with("from ") && trimmed_text.contains(" import ")) {
+            return imports;
+        }
+        let Some(from_start) = trimmed_text.find("from ") else {
+            return imports;
+        };
+        let Some(import_start) = trimmed_text.find(" import ") else {
+            return imports;
+        };
+
+        let module_part = trimmed_text[from_start + 5..import_start].trim();
+        let import_part = trimmed_text[import_start + 8..].trim();
+
+        // Clean up import part - remove parentheses and newlines
+        let cleaned_import_part = import_part.replace(['(', ')'], "").replace(['\n', '\r'], " ");
+
+        // Handle multiple imports: "from module import func1, func2"
+        for import in cleaned_import_part.split(',') {
+            let func_name = import.trim();
+            if !func_name.is_empty()
+                && !func_name.starts_with('"')
+                && !func_name.starts_with('\'')
+                && !func_name.contains("__")
+            {
+                // Skip __all__ etc
+                imports.push((func_name.to_string(), module_part.to_string()));
+            }
+        }
+        imports
+    }
+
+    /// Parse `import module` (module-level import, no `from`) into `[(module, module)]`. Empty
+    /// when `trimmed_text` isn't a bare `import ...` line.
+    fn parse_bare_import(trimmed_text: &str) -> Vec<(String, String)> {
+        if !trimmed_text.starts_with("import ") || trimmed_text.contains(" from ") {
+            return Vec::new();
+        }
+        let module_part = trimmed_text[7..].trim();
+        if module_part.is_empty() || module_part.starts_with('"') || module_part.starts_with('\'') {
+            return Vec::new();
+        }
+        // For module imports, we'll track the module name itself
+        vec![(module_part.to_string(), module_part.to_string())]
+    }
+
+    fn extract_import_info(text: &str) -> Option<Vec<(String, String)>> {
         let trimmed_text = text.trim();
 
         // Only parse actual import statements, not string literals
-        if trimmed_text.starts_with("from ") && trimmed_text.contains(" import ") {
-            if let Some(from_start) = trimmed_text.find("from ") {
-                if let Some(import_start) = trimmed_text.find(" import ") {
-                    let module_part = &trimmed_text[from_start + 5..import_start].trim();
-                    let import_part = &trimmed_text[import_start + 8..].trim();
-
-                    // Clean up import part - remove parentheses and newlines
-                    let cleaned_import_part =
-                        import_part.replace(['(', ')'], "").replace(['\n', '\r'], " ");
-
-                    // Handle multiple imports: "from module import func1, func2"
-                    for import in cleaned_import_part.split(',') {
-                        let func_name = import.trim();
-                        if !func_name.is_empty()
-                            && !func_name.starts_with('"')
-                            && !func_name.starts_with("'")
-                            && !func_name.contains("__")
-                        {
-                            // Skip __all__ etc
-                            imports.push((func_name.to_string(), module_part.to_string()));
-                        }
-                    }
-                }
-            }
-        }
-
+        let mut imports = Self::parse_from_import(trimmed_text);
         // Handle "import module" pattern (for module-level imports)
-        if trimmed_text.starts_with("import ") && !trimmed_text.contains(" from ") {
-            let module_part = &trimmed_text[7..].trim();
-            if !module_part.is_empty()
-                && !module_part.starts_with('"')
-                && !module_part.starts_with("'")
-            {
-                // For module imports, we'll track the module name itself
-                imports.push((module_part.to_string(), module_part.to_string()));
-            }
-        }
+        imports.extend(Self::parse_bare_import(trimmed_text));
 
         if imports.is_empty() {
             None
