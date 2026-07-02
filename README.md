@@ -24,18 +24,23 @@ A high-performance vulnerability scanner for source code using tree-sitter parsi
 
 ### Language Support
 
-| Language | Parsing | Bundled Rules |
-|---|---|---|
-| Python (`.py`)            | ✅ | ✅ |
-| JavaScript (`.js`)        | ✅ | ✅ |
-| Java (`.java`)            | ✅ | — (parser only; bring your own rules) |
-| TypeScript / TSX (`.tsx`) | ✅ | ✅ (shares JavaScript rules) |
-| HTML (`.html`)            | ✅ | — (parser only) |
-| Django templates          | ✅ | — (parser only) |
+| Language | Extensions | Parsing | Bundled Rules |
+|---|---|---|---|
+| Python | `.py`, `.pyw`, `.pyi`, `.pyx` | ✅ | ✅ |
+| JavaScript | `.js`, `.mjs`, `.cjs`, `.jsx`, `.vue`, `.svelte` | ✅ | ✅ |
+| TypeScript / TSX | `.ts`, `.tsx`, `.mts`, `.cts` | ✅ | ✅ (reuses JavaScript rules) |
+| Java | `.java` | ✅ | ✅ |
+| PHP | `.php`, `.phtml` | ✅ | ✅ |
+| C# | `.cs`, `.csx` | ✅ | ✅ |
+| Go | `.go` | ✅ | ✅ |
+| Ruby | `.rb` | ✅ | ✅ |
+| HTML | `.html`, `.htm`, `.twig`, `.ejs`, `.hbs`, … | ✅ | ✅ |
+| Django templates | `.html` (Django syntax) | ✅ | ✅ (reuses HTML rules) |
 
-Python, JavaScript, and TypeScript/TSX ship with curated rule sets (TSX reuses the
-JavaScript rules). The remaining languages have working tree-sitter parsers but no
-bundled rules yet — point Sighthound at your own `.ron` rules to scan them.
+All listed languages ship with curated embedded rule packs and tree-sitter parsers.
+Auto-detection loads the right rules per file extension.
+
+**Not yet supported**: Razor (`.cshtml`), C/C++ (`.c`, `.h`).
 
 ### Scanning Modes
 - **Auto-Detection Mode**: Automatically detects languages and loads appropriate rules
@@ -119,7 +124,7 @@ USAGE:
 
 ARGS:
     <ROOT_DIR>     Root directory to scan for vulnerabilities
-    [LANGUAGE]     Programming language (python, java, javascript, tsx, html, django)
+    [LANGUAGE]     Programming language (python, java, javascript, tsx, php, csharp, go, ruby, html, django)
     [RULES_PATH]   Path to rules file (.ron) or directory containing rules
 
 OPTIONS:
@@ -278,12 +283,6 @@ graph TD
 
 ## 📊 Performance
 
-### Benchmarks
-- **Large Codebase**: ~100,000 files scanned in under 2 minutes
-- **Memory Usage**: ~50MB for typical enterprise applications
-- **Accuracy**: 95%+ precision with advanced taint analysis
-- **Parallelization**: Linear scaling up to available CPU cores
-
 ### Optimization Features
 - **Memory Mapping**: Efficient file reading for large files
 - **Prefiltering**: Skip irrelevant files and functions early
@@ -346,18 +345,21 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 🐛 Known Issues & Limitations
 
 ### Current Limitations
-- **JavaScript Minified Files**: May produce false positives (use `--skip-minified`). This needs improving as it currently relies on file name only.
-- **Multi-file Taint**: Requires more testing
-- **Dynamic Languages**: Runtime-only vulnerabilities may not be detected
-- **Performance**: Very large files (>10MB) may impact scanning speed
+- **Razor / ASP.NET views**: `.cshtml` files are not detected or scanned.
+- **JavaScript minified files**: May produce false positives (use `--skip-minified`).
+  Detection currently relies on file naming patterns.
+- **Multi-file taint**: Requires more testing.
+- **Dynamic languages**: Runtime-only vulnerabilities may not be detected.
+- **Performance**: Very large files (>10MB) may impact scanning speed.
 
 
 ### Roadmap
-- [ ] **IDE Integration**: VS Code and JetBrains plugins
-- [ ] **CI/CD Integration**: GitHub Actions, GitLab CI templates
-- [ ] **Additional Languages**: Go, C/C++, PHP, Ruby support
-- [ ] **Advanced Analysis**: Control flow and symbolic execution
-- [ ] **Incremental Scanning**: Cache and diff-based analysis
+- [ ] **Razor support**: `.cshtml` detection and view-layer XSS/CSRF rules
+- [ ] **C/C++ support**: Parsers and rule packs for `.c` / `.h`
+- [ ] **IDE integration**: VS Code and JetBrains plugins
+- [ ] **CI/CD integration**: GitHub Actions, GitLab CI templates
+- [ ] **Advanced analysis**: Control flow and symbolic execution
+- [ ] **Incremental scanning**: Cache and diff-based analysis
 
 ## 🏢 Credits
 
