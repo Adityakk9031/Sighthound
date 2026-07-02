@@ -3722,6 +3722,22 @@ struct VerifiedTaintFlow {
     call_chain_len: usize,
 }
 
+/// Invariant context for
+/// [`MultiFileTaintAnalyzer::analyze_function_taint_behavior`]'s per-line helpers: the
+/// file/function whose body is being analyzed.
+struct FunctionAnalysisSite<'a> {
+    file_path: &'a str,
+    function_name: &'a str,
+}
+
+/// Accumulated taint state (tainted locals so far, and any "ambient" taint source) passed to
+/// [`MultiFileTaintAnalyzer::check_return_statement_taint`], bundled to keep that function's
+/// parameter count small.
+struct FunctionTaintScanState<'a> {
+    tainted_locals: &'a std::collections::BTreeMap<String, VerifiedTaintFlow>,
+    ambient_taint: &'a Option<VerifiedTaintFlow>,
+}
+
 /// Sink-side identity shared across [`MultiFileTaintAnalyzer::trace_local_assignment_taint`]'s
 /// helpers: the file/function being traced and the sink being fed.
 struct TraceSinkSite<'a> {
@@ -5368,6 +5384,226 @@ impl DataFlowTracer {
     }
 
     /// Analyze whether a function in a given file returns tainted data
+    /// If `ambient_taint` isn't set yet and `line` classifies as tainted, record it as the
+    /// "ambient" taint source that any subsequent `return` in this function inherits.
+    fn track_ambient_taint(
+        &self,
+        site: &FunctionAnalysisSite,
+        line: &str,
+        line_num: usize,
+        rule_deduplicator: &TaintRuleDeduplicator,
+        ambient_taint: &mut Option<VerifiedTaintFlow>,
+    ) {
+        if ambient_taint.is_some() {
+            return;
+        }
+        let ValueSourceClassification::Tainted(source_pattern) =
+            self.classify_value_source(line, rule_deduplicator)
+        else {
+            return;
+        };
+        *ambient_taint = Some(VerifiedTaintFlow {
+            source_file: site.file_path.to_string(),
+            source_function: site.function_name.to_string(),
+            source_line: line_num + 1,
+            source_pattern,
+            sink_file: site.file_path.to_string(),
+            sink_function: site.function_name.to_string(),
+            sink_line: line_num + 1,
+            sink_variable: "return_value".to_string(),
+            sink_pattern: "function_return".to_string(),
+            call_chain_len: 0,
+        });
+    }
+
+    /// If `line` is a valid assignment, trace its RHS's taint and update `tainted_locals`
+    /// accordingly (insert when tainted, remove when proven safe, or inherit from an existing
+    /// tainted local referenced on the RHS when inconclusive).
+    fn track_local_assignment_in_function(
+        &mut self,
+        site: &FunctionAnalysisSite,
+        line: &str,
+        line_num: usize,
+        rule_deduplicator: &TaintRuleDeduplicator,
+        visited: &mut std::collections::BTreeSet<(String, String)>,
+        tainted_locals: &mut std::collections::BTreeMap<String, VerifiedTaintFlow>,
+    ) {
+        if !CommonUtils::is_valid_assignment_text(line) {
+            return;
+        }
+        let Some(eq_pos) = line.find('=') else {
+            return;
+        };
+        let lhs = line[..eq_pos].trim();
+        let rhs = TaintExpressionUtils::strip_inline_comment(line[eq_pos + 1..].trim());
+        if !CommonUtils::is_valid_variable_name(lhs) {
+            return;
+        }
+
+        match self.trace_local_assignment_taint(
+            TraceSinkSite {
+                file_path: site.file_path,
+                function_name: site.function_name,
+                sink_pattern: "function_return",
+                sink_line: line_num + 1,
+                sink_variable: lhs,
+            },
+            rhs,
+            line_num + 1,
+            rule_deduplicator,
+            visited,
+        ) {
+            AnalysisResult::DefinitelyTainted { flow } => {
+                tainted_locals.insert(lhs.to_string(), flow);
+            }
+            AnalysisResult::DefinitelySafe => {
+                tainted_locals.remove(lhs);
+            }
+            AnalysisResult::Unknown { .. } => {
+                for (tainted_var, flow) in &*tainted_locals {
+                    if TaintExpressionUtils::expression_references_variable(rhs, tainted_var) {
+                        tainted_locals.insert(lhs.to_string(), flow.clone());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle a `return <expr>` line: checks (in order) whether the expression is proven safe,
+    /// a direct taint source, references a tainted local, follows an ambient taint source,
+    /// matches a source pattern directly, or calls another (possibly tainted) function. Returns
+    /// `Some` to return from the enclosing analysis immediately, `None` to keep scanning
+    /// subsequent lines.
+    fn check_return_statement_taint(
+        &mut self,
+        site: &FunctionAnalysisSite,
+        return_expr: &str,
+        line_num: usize,
+        file_line: usize,
+        rule_deduplicator: &TaintRuleDeduplicator,
+        visited: &mut std::collections::BTreeSet<(String, String)>,
+        state: FunctionTaintScanState,
+    ) -> Option<AnalysisResult> {
+        log::debug!("[ANALYZE_FUNCTION] Found return statement: \"{}\"", return_expr);
+
+        match self.classify_value_source(return_expr, rule_deduplicator) {
+            ValueSourceClassification::Safe(reason) => {
+                log::debug!("[ANALYZE_FUNCTION] Function return is proven safe: {}", reason);
+                return None;
+            }
+            ValueSourceClassification::Tainted(source_pattern) => {
+                log::debug!(
+                    "[ANALYZE_FUNCTION] Function returns direct taint source: \"{}\"",
+                    source_pattern
+                );
+
+                let flow = VerifiedTaintFlow {
+                    source_file: site.file_path.to_string(),
+                    source_function: site.function_name.to_string(),
+                    source_line: line_num + 1,
+                    source_pattern: source_pattern.clone(),
+                    sink_file: site.file_path.to_string(),
+                    sink_function: site.function_name.to_string(),
+                    sink_line: line_num + 1,
+                    sink_variable: "return_value".to_string(),
+                    sink_pattern: "function_return".to_string(),
+                    call_chain_len: 0,
+                };
+                return Some(AnalysisResult::DefinitelyTainted { flow });
+            }
+            ValueSourceClassification::Unknown => {}
+        }
+
+        for (var_name, flow) in state.tainted_locals {
+            if TaintExpressionUtils::expression_references_variable(return_expr, var_name) {
+                log::debug!(
+                    "[ANALYZE_FUNCTION] Return expression references tainted local '{}'",
+                    var_name
+                );
+                return Some(AnalysisResult::DefinitelyTainted { flow: flow.clone() });
+            }
+        }
+
+        if let Some(flow) = state.ambient_taint.clone() {
+            log::debug!("[ANALYZE_FUNCTION] Return expression follows earlier source access");
+            return Some(AnalysisResult::DefinitelyTainted { flow });
+        }
+
+        // Check if return expression is a direct taint source
+        if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(return_expr) {
+            log::debug!(
+                "[ANALYZE_FUNCTION] Function returns direct taint source: \"{}\"",
+                source_pattern
+            );
+
+            let flow = VerifiedTaintFlow {
+                source_file: site.file_path.to_string(),
+                source_function: site.function_name.to_string(),
+                source_line: file_line,
+                source_pattern: source_pattern.clone(),
+                sink_file: site.file_path.to_string(),
+                sink_function: site.function_name.to_string(),
+                sink_line: file_line,
+                sink_variable: "return_value".to_string(),
+                sink_pattern: "function_return".to_string(),
+                call_chain_len: 0,
+            };
+            return Some(AnalysisResult::DefinitelyTainted { flow });
+        }
+
+        // Check if return expression is another function call
+        self.check_return_expr_function_call(
+            site,
+            return_expr,
+            file_line,
+            rule_deduplicator,
+            visited,
+        )
+    }
+
+    /// If `return_expr` is another function call, trace whether that function's return value
+    /// is tainted, propagating the flow. Returns `None` when it isn't a call, or the nested
+    /// analysis is inconclusive.
+    fn check_return_expr_function_call(
+        &mut self,
+        site: &FunctionAnalysisSite,
+        return_expr: &str,
+        file_line: usize,
+        rule_deduplicator: &TaintRuleDeduplicator,
+        visited: &mut std::collections::BTreeSet<(String, String)>,
+    ) -> Option<AnalysisResult> {
+        if !(return_expr.contains('(') && return_expr.contains(')')) {
+            return None;
+        }
+        log::debug!("[ANALYZE_FUNCTION] Return calls another function: \"{}\"", return_expr);
+
+        let nested_result = self.trace_local_assignment_taint(
+            TraceSinkSite {
+                file_path: site.file_path,
+                function_name: site.function_name,
+                sink_pattern: "function_return",
+                sink_line: file_line,
+                sink_variable: "return_value",
+            },
+            return_expr,
+            file_line,
+            rule_deduplicator,
+            visited,
+        );
+
+        match nested_result {
+            AnalysisResult::DefinitelyTainted { flow } => {
+                log::debug!("[ANALYZE_FUNCTION] Nested function is tainted, propagating taint");
+                Some(AnalysisResult::DefinitelyTainted { flow })
+            }
+            _ => {
+                log::debug!("[ANALYZE_FUNCTION] Nested function analysis inconclusive");
+                None
+            }
+        }
+    }
+
     fn analyze_function_taint_behavior(
         &mut self,
         file_path: &str,
@@ -5399,214 +5635,72 @@ impl DataFlowTracer {
             };
         }
 
-        let source_text = match std::fs::read_to_string(file_path) {
-            Ok(content) => content,
-            Err(_) => {
-                log::debug!("[ANALYZE_FUNCTION] Could not read file: {}", file_path);
-                return AnalysisResult::Unknown {
-                    reason: format!("Could not read source file: {}", file_path),
-                };
-            }
+        let Ok(source_text) = std::fs::read_to_string(file_path) else {
+            log::debug!("[ANALYZE_FUNCTION] Could not read file: {}", file_path);
+            return AnalysisResult::Unknown {
+                reason: format!("Could not read source file: {}", file_path),
+            };
         };
 
-        if let Some((function_body, body_start_line)) =
+        let Some((function_body, body_start_line)) =
             self.extract_function_body(&source_text, function_name)
-        {
-            log::debug!("[ANALYZE_FUNCTION] Function body found, analyzing...");
+        else {
+            log::debug!(
+                "[ANALYZE_FUNCTION] Could not find function body for \"{}\"",
+                function_name
+            );
+            return AnalysisResult::Unknown {
+                reason: format!("Could not find function body for \"{}\"", function_name),
+            };
+        };
 
-            let mut tainted_locals: std::collections::BTreeMap<String, VerifiedTaintFlow> =
-                std::collections::BTreeMap::new();
-            let mut ambient_taint: Option<VerifiedTaintFlow> = None;
+        log::debug!("[ANALYZE_FUNCTION] Function body found, analyzing...");
 
-            for (line_num, line) in function_body.lines().enumerate() {
-                // Translate the 0-based body-relative index to the absolute,
-                // 1-based file line number using the body's start offset.
-                let file_line = body_start_line + line_num;
-                let line = line.trim();
+        let site = FunctionAnalysisSite { file_path, function_name };
+        let mut tainted_locals: std::collections::BTreeMap<String, VerifiedTaintFlow> =
+            std::collections::BTreeMap::new();
+        let mut ambient_taint: Option<VerifiedTaintFlow> = None;
 
-                if ambient_taint.is_none() {
-                    if let ValueSourceClassification::Tainted(source_pattern) =
-                        self.classify_value_source(line, rule_deduplicator)
-                    {
-                        ambient_taint = Some(VerifiedTaintFlow {
-                            source_file: file_path.to_string(),
-                            source_function: function_name.to_string(),
-                            source_line: line_num + 1,
-                            source_pattern,
-                            sink_file: file_path.to_string(),
-                            sink_function: function_name.to_string(),
-                            sink_line: line_num + 1,
-                            sink_variable: "return_value".to_string(),
-                            sink_pattern: "function_return".to_string(),
-                            call_chain_len: 0,
-                        });
-                    }
-                }
+        for (line_num, line) in function_body.lines().enumerate() {
+            // Translate the 0-based body-relative index to the absolute,
+            // 1-based file line number using the body's start offset.
+            let file_line = body_start_line + line_num;
+            let line = line.trim();
 
-                if CommonUtils::is_valid_assignment_text(line) {
-                    if let Some(eq_pos) = line.find('=') {
-                        let lhs = line[..eq_pos].trim();
-                        let rhs =
-                            TaintExpressionUtils::strip_inline_comment(line[eq_pos + 1..].trim());
-                        if CommonUtils::is_valid_variable_name(lhs) {
-                            match self.trace_local_assignment_taint(
-                                TraceSinkSite {
-                                    file_path,
-                                    function_name,
-                                    sink_pattern: "function_return",
-                                    sink_line: line_num + 1,
-                                    sink_variable: lhs,
-                                },
-                                rhs,
-                                line_num + 1,
-                                rule_deduplicator,
-                                visited,
-                            ) {
-                                AnalysisResult::DefinitelyTainted { flow } => {
-                                    tainted_locals.insert(lhs.to_string(), flow);
-                                }
-                                AnalysisResult::DefinitelySafe => {
-                                    tainted_locals.remove(lhs);
-                                }
-                                AnalysisResult::Unknown { .. } => {
-                                    for (tainted_var, flow) in &tainted_locals {
-                                        if TaintExpressionUtils::expression_references_variable(
-                                            rhs,
-                                            tainted_var,
-                                        ) {
-                                            tainted_locals.insert(lhs.to_string(), flow.clone());
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            self.track_ambient_taint(&site, line, line_num, rule_deduplicator, &mut ambient_taint);
+            self.track_local_assignment_in_function(
+                &site,
+                line,
+                line_num,
+                rule_deduplicator,
+                visited,
+                &mut tainted_locals,
+            );
 
-                if line.starts_with("return ") {
-                    let return_expr = line.strip_prefix("return ").unwrap_or("").trim();
-                    log::debug!("[ANALYZE_FUNCTION] Found return statement: \"{}\"", return_expr);
-
-                    match self.classify_value_source(return_expr, rule_deduplicator) {
-                        ValueSourceClassification::Safe(reason) => {
-                            log::debug!(
-                                "[ANALYZE_FUNCTION] Function return is proven safe: {}",
-                                reason
-                            );
-                            continue;
-                        }
-                        ValueSourceClassification::Tainted(source_pattern) => {
-                            log::debug!(
-                                "[ANALYZE_FUNCTION] Function returns direct taint source: \"{}\"",
-                                source_pattern
-                            );
-
-                            let flow = VerifiedTaintFlow {
-                                source_file: file_path.to_string(),
-                                source_function: function_name.to_string(),
-                                source_line: line_num + 1,
-                                source_pattern: source_pattern.clone(),
-                                sink_file: file_path.to_string(),
-                                sink_function: function_name.to_string(),
-                                sink_line: line_num + 1,
-                                sink_variable: "return_value".to_string(),
-                                sink_pattern: "function_return".to_string(),
-                                call_chain_len: 0,
-                            };
-                            return AnalysisResult::DefinitelyTainted { flow };
-                        }
-                        ValueSourceClassification::Unknown => {}
-                    }
-
-                    for (var_name, flow) in &tainted_locals {
-                        if TaintExpressionUtils::expression_references_variable(
-                            return_expr,
-                            var_name,
-                        ) {
-                            log::debug!(
-                                "[ANALYZE_FUNCTION] Return expression references tainted local '{}'",
-                                var_name
-                            );
-                            return AnalysisResult::DefinitelyTainted { flow: flow.clone() };
-                        }
-                    }
-
-                    if let Some(flow) = ambient_taint.clone() {
-                        log::debug!(
-                            "[ANALYZE_FUNCTION] Return expression follows earlier source access"
-                        );
-                        return AnalysisResult::DefinitelyTainted { flow };
-                    }
-
-                    // Check if return expression is a direct taint source
-                    if let Some(source_pattern) =
-                        rule_deduplicator.matches_source_pattern(return_expr)
-                    {
-                        log::debug!(
-                            "[ANALYZE_FUNCTION] Function returns direct taint source: \"{}\"",
-                            source_pattern
-                        );
-
-                        let flow = VerifiedTaintFlow {
-                            source_file: file_path.to_string(),
-                            source_function: function_name.to_string(),
-                            source_line: file_line,
-                            source_pattern: source_pattern.clone(),
-                            sink_file: file_path.to_string(),
-                            sink_function: function_name.to_string(),
-                            sink_line: file_line,
-                            sink_variable: "return_value".to_string(),
-                            sink_pattern: "function_return".to_string(),
-                            call_chain_len: 0,
-                        };
-                        return AnalysisResult::DefinitelyTainted { flow };
-                    }
-
-                    // Check if return expression is another function call
-                    if return_expr.contains('(') && return_expr.contains(')') {
-                        log::debug!(
-                            "[ANALYZE_FUNCTION] Return calls another function: \"{}\"",
-                            return_expr
-                        );
-
-                        let nested_result = self.trace_local_assignment_taint(
-                            TraceSinkSite {
-                                file_path,
-                                function_name,
-                                sink_pattern: "function_return",
-                                sink_line: file_line,
-                                sink_variable: "return_value",
-                            },
-                            return_expr,
-                            file_line,
-                            rule_deduplicator,
-                            visited,
-                        );
-
-                        match nested_result {
-                            AnalysisResult::DefinitelyTainted { flow } => {
-                                log::debug!("[ANALYZE_FUNCTION] Nested function is tainted, propagating taint");
-                                return AnalysisResult::DefinitelyTainted { flow };
-                            }
-                            _ => {
-                                log::debug!(
-                                    "[ANALYZE_FUNCTION] Nested function analysis inconclusive"
-                                );
-                            }
-                        }
-                    }
-                }
+            if !line.starts_with("return ") {
+                continue;
             }
+            let return_expr = line.strip_prefix("return ").unwrap_or("").trim();
 
-            log::debug!("[ANALYZE_FUNCTION] Function appears to be safe (no taint sources found)");
-            return AnalysisResult::DefinitelySafe;
+            let state = FunctionTaintScanState {
+                tainted_locals: &tainted_locals,
+                ambient_taint: &ambient_taint,
+            };
+            if let Some(result) = self.check_return_statement_taint(
+                &site,
+                return_expr,
+                line_num,
+                file_line,
+                rule_deduplicator,
+                visited,
+                state,
+            ) {
+                return result;
+            }
         }
 
-        log::debug!("[ANALYZE_FUNCTION] Could not find function body for \"{}\"", function_name);
-        AnalysisResult::Unknown {
-            reason: format!("Could not find function body for \"{}\"", function_name),
-        }
+        log::debug!("[ANALYZE_FUNCTION] Function appears to be safe (no taint sources found)");
+        AnalysisResult::DefinitelySafe
     }
 
     /// Extract the body of a function from source code.
