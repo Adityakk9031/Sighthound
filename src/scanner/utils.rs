@@ -126,6 +126,46 @@ pub fn rule_applies_to_file_path(file_types: Option<&FileTypes>, file_path: &Pat
 }
 
 /// Detect programming language from file path
+/// Detect language from a bundler config filename (webpack/rollup/vite `*.config.*`).
+fn detect_bundler_config_language(file_name: &str) -> Option<&'static str> {
+    let is_bundler_config =
+        file_name.contains("webpack") || file_name.contains("rollup") || file_name.contains("vite");
+    if !is_bundler_config {
+        return None;
+    }
+
+    if file_name.ends_with(".config.js")
+        || file_name.ends_with(".config.mjs")
+        || file_name.ends_with(".config.cjs")
+    {
+        return Some("javascript");
+    }
+    if file_name.ends_with(".config.ts")
+        || file_name.ends_with(".config.mts")
+        || file_name.ends_with(".config.cts")
+    {
+        return Some("tsx");
+    }
+
+    None
+}
+
+/// Detect language for filenames without a recognized extension (config files, etc.).
+fn detect_language_from_special_filename(file_name: &str) -> Option<&'static str> {
+    if let Some(lang) = detect_bundler_config_language(file_name) {
+        return Some(lang);
+    }
+
+    // Check for Python files with unusual extensions
+    if file_name.ends_with("file")
+        && (file_name.contains("requirements") || file_name.contains("Pipfile"))
+    {
+        return Some("python");
+    }
+
+    None
+}
+
 pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
     let file_name = file_path.file_name()?.to_str()?;
 
@@ -157,35 +197,7 @@ pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
         "svelte" => Some("javascript"),
 
         // Handle config files and other special cases
-        _ => {
-            // Check for JavaScript/TypeScript config files
-            if file_name.contains("webpack")
-                || file_name.contains("rollup")
-                || file_name.contains("vite")
-            {
-                if file_name.ends_with(".config.js")
-                    || file_name.ends_with(".config.mjs")
-                    || file_name.ends_with(".config.cjs")
-                {
-                    return Some("javascript");
-                }
-                if file_name.ends_with(".config.ts")
-                    || file_name.ends_with(".config.mts")
-                    || file_name.ends_with(".config.cts")
-                {
-                    return Some("tsx");
-                }
-            }
-
-            // Check for Python files with unusual extensions
-            if file_name.ends_with("file")
-                && (file_name.contains("requirements") || file_name.contains("Pipfile"))
-            {
-                return Some("python");
-            }
-
-            None
-        }
+        _ => detect_language_from_special_filename(file_name),
     }
 }
 
