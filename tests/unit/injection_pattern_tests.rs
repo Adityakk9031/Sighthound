@@ -480,120 +480,118 @@ function getUser(userId) {
         }
     }
 
-    #[test]
-    fn test_is_literal_node_function() {
-        #[cfg(feature = "python")]
-        {
-            let mut parser = LanguageParser::new("python").expect("Failed to create parser");
+    /// Depth-first visit of every node in the tree, invoking `callback` on each.
+    #[cfg(any(feature = "python", feature = "javascript"))]
+    fn visit_nodes<F>(node: &tree_sitter::Node, callback: &mut F)
+    where
+        F: FnMut(&tree_sitter::Node),
+    {
+        callback(node);
 
-            // note: the refactor classifies quoted string literals as literal nodes.
-            // Injection sensitivity for strings is now handled by inspecting the argument
-            // text (check_for_injection_pattern), not by is_literal_node.
-            let literal_string_code = r#"
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i as u32) {
+                visit_nodes(&child, callback);
+            }
+        }
+    }
+
+    #[cfg(feature = "python")]
+    fn check_python_literal_nodes() {
+        let mut parser = LanguageParser::new("python").expect("Failed to create parser");
+
+        // note: the refactor classifies quoted string literals as literal nodes.
+        // Injection sensitivity for strings is now handled by inspecting the argument
+        // text (check_for_injection_pattern), not by is_literal_node.
+        let literal_string_code = r#"
 def func():
     return "This is a literal string"
 "#;
-            let source = literal_string_code.as_bytes();
-            let tree = parser.parse(source).expect("Failed to parse code");
+        let source = literal_string_code.as_bytes();
+        let tree = parser.parse(source).expect("Failed to parse code");
 
-            let mut found_string_node = false;
-            fn visit_nodes<F>(node: &tree_sitter::Node, callback: &mut F)
-            where
-                F: FnMut(&tree_sitter::Node),
-            {
-                callback(node);
-
-                for i in 0..node.child_count() {
-                    if let Some(child) = node.child(i as u32) {
-                        visit_nodes(&child, callback);
-                    }
-                }
+        let mut found_string_node = false;
+        visit_nodes(&tree.root_node(), &mut |node| {
+            if node.kind() == "string" {
+                found_string_node = true;
+                assert!(is_literal_node(node), "String node is classified as a literal");
             }
+        });
 
-            visit_nodes(&tree.root_node(), &mut |node| {
-                if node.kind() == "string" {
-                    found_string_node = true;
-                    assert!(is_literal_node(node), "String node is classified as a literal");
-                }
-            });
+        assert!(found_string_node, "Should have found at least one string node");
 
-            assert!(found_string_node, "Should have found at least one string node");
-
-            // Test with numeric literals (should be literal nodes)
-            let numeric_code = r#"
+        // Test with numeric literals (should be literal nodes)
+        let numeric_code = r#"
 def func():
     return 42
 "#;
-            let source = numeric_code.as_bytes();
-            let tree = parser.parse(source).expect("Failed to parse code");
+        let source = numeric_code.as_bytes();
+        let tree = parser.parse(source).expect("Failed to parse code");
 
-            let mut found_integer_node = false;
-            visit_nodes(&tree.root_node(), &mut |node| {
-                if node.kind() == "integer" {
-                    found_integer_node = true;
-                    assert!(is_literal_node(node), "Integer node should be considered a literal");
-                }
-            });
+        let mut found_integer_node = false;
+        visit_nodes(&tree.root_node(), &mut |node| {
+            if node.kind() == "integer" {
+                found_integer_node = true;
+                assert!(is_literal_node(node), "Integer node should be considered a literal");
+            }
+        });
 
-            assert!(found_integer_node, "Should have found at least one integer node");
+        assert!(found_integer_node, "Should have found at least one integer node");
 
-            // f-strings are still classified as "string" nodes, hence literal nodes
-            let fstring_code = r#"
+        // f-strings are still classified as "string" nodes, hence literal nodes
+        let fstring_code = r#"
 def func(user_id):
     return f"User ID: {user_id}"
 "#;
-            let source = fstring_code.as_bytes();
-            let tree = parser.parse(source).expect("Failed to parse code");
+        let source = fstring_code.as_bytes();
+        let tree = parser.parse(source).expect("Failed to parse code");
 
-            let mut found_fstring_node = false;
-            visit_nodes(&tree.root_node(), &mut |node| {
-                if node.kind() == "string" && get_node_text(node, source).contains("f\"") {
-                    found_fstring_node = true;
-                    assert!(
-                        is_literal_node(node),
-                        "f-string node is classified as a literal string node"
-                    );
-                }
-            });
+        let mut found_fstring_node = false;
+        visit_nodes(&tree.root_node(), &mut |node| {
+            if node.kind() == "string" && get_node_text(node, source).contains("f\"") {
+                found_fstring_node = true;
+                assert!(
+                    is_literal_node(node),
+                    "f-string node is classified as a literal string node"
+                );
+            }
+        });
 
-            assert!(found_fstring_node, "Should have found at least one f-string node");
-        }
+        assert!(found_fstring_node, "Should have found at least one f-string node");
+    }
 
-        #[cfg(feature = "javascript")]
-        {
-            let mut parser = LanguageParser::new("javascript").expect("Failed to create parser");
+    #[cfg(feature = "javascript")]
+    fn check_javascript_literal_nodes() {
+        let mut parser = LanguageParser::new("javascript").expect("Failed to create parser");
 
-            // Template literals are NOT classified as literal nodes
-            let template_code = r#"
+        // Template literals are NOT classified as literal nodes
+        let template_code = r#"
 function greet(name) {
     return `Hello, ${name}`;
 }
 "#;
-            let source = template_code.as_bytes();
-            let tree = parser.parse(source).expect("Failed to parse code");
+        let source = template_code.as_bytes();
+        let tree = parser.parse(source).expect("Failed to parse code");
 
-            let mut found_template_node = false;
-            fn visit_nodes<F>(node: &tree_sitter::Node, callback: &mut F)
-            where
-                F: FnMut(&tree_sitter::Node),
-            {
-                callback(node);
-
-                for i in 0..node.child_count() {
-                    if let Some(child) = node.child(i as u32) {
-                        visit_nodes(&child, callback);
-                    }
-                }
+        let mut found_template_node = false;
+        visit_nodes(&tree.root_node(), &mut |node| {
+            if node.kind() == "template_string" {
+                found_template_node = true;
+                assert!(
+                    !is_literal_node(node),
+                    "Template literal should not be considered a literal for injection analysis"
+                );
             }
+        });
 
-            visit_nodes(&tree.root_node(), &mut |node| {
-                if node.kind() == "template_string" {
-                    found_template_node = true;
-                    assert!(!is_literal_node(node), "Template literal should not be considered a literal for injection analysis");
-                }
-            });
+        assert!(found_template_node, "Should have found at least one template string node");
+    }
 
-            assert!(found_template_node, "Should have found at least one template string node");
-        }
+    #[test]
+    fn test_is_literal_node_function() {
+        #[cfg(feature = "python")]
+        check_python_literal_nodes();
+
+        #[cfg(feature = "javascript")]
+        check_javascript_literal_nodes();
     }
 }
