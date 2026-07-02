@@ -1519,106 +1519,152 @@ impl ScanningLogic {
     }
 
     /// Detect taint propagation in expressions
+    /// Assignment right-hand-side propagation via an f-string/template literal, e.g.
+    /// `query = f"SELECT {username}"`.
+    fn detect_fstring_assignment_propagation(
+        left_side: &str,
+        right_side: &str,
+    ) -> Option<(String, Vec<String>)> {
+        if !(right_side.contains('{') && right_side.contains('}')) {
+            return None;
+        }
+        log::debug!("   Right side contains f-string braces");
+        let mut dependent_vars = CommonUtils::extract_f_string_variables(right_side);
+
+        // Also check for JavaScript/TypeScript template literals
+        if right_side.contains("${") {
+            log::debug!("   Right side contains template literal interpolation");
+            dependent_vars.extend(CommonUtils::extract_template_literal_variables(right_side));
+        }
+
+        log::debug!("   Extracted dependent_vars from interpolation: {:?}", dependent_vars);
+        if dependent_vars.is_empty() || !CommonUtils::is_valid_variable_name(left_side) {
+            return None;
+        }
+        log::debug!(
+            "[PROPAGATION_CHECK] Template/F-string assignment propagation detected: '{}' depends on {:?}",
+            left_side,
+            dependent_vars
+        );
+        Some((left_side.to_string(), dependent_vars))
+    }
+
+    /// Assignment right-hand-side propagation via a `.format(...)` call.
+    fn detect_format_assignment_propagation(
+        left_side: &str,
+        right_side: &str,
+    ) -> Option<(String, Vec<String>)> {
+        if !right_side.contains(".format(") {
+            return None;
+        }
+        log::debug!("   Right side contains .format( pattern");
+        let dependent_vars = CommonUtils::extract_format_variables(right_side);
+        log::debug!("   Extracted dependent_vars from format: {:?}", dependent_vars);
+        if dependent_vars.is_empty() || !CommonUtils::is_valid_variable_name(left_side) {
+            return None;
+        }
+        log::debug!(
+            "[PROPAGATION_CHECK] Format assignment propagation detected: '{}' depends on {:?}",
+            left_side,
+            dependent_vars
+        );
+        Some((left_side.to_string(), dependent_vars))
+    }
+
+    /// Fallback assignment propagation: any variables referenced on the right-hand side
+    /// (other than the target itself) taint the target.
+    fn detect_generic_assignment_propagation(
+        left_side: &str,
+        right_side: &str,
+    ) -> Option<(String, Vec<String>)> {
+        let target_var = TaintExpressionUtils::normalize_variable(left_side);
+        let mut dependent_vars = CommonUtils::extract_all_variables(right_side);
+        dependent_vars.extend(TaintExpressionUtils::extract_php_variables(right_side));
+        dependent_vars.retain(|var| var != &target_var);
+        dependent_vars.sort();
+        dependent_vars.dedup();
+
+        if target_var.is_empty() || dependent_vars.is_empty() {
+            return None;
+        }
+        log::debug!(
+            "[PROPAGATION_CHECK] Assignment propagation detected: '{}' depends on {:?}",
+            target_var,
+            dependent_vars
+        );
+        Some((target_var, dependent_vars))
+    }
+
+    /// Detect propagation via an assignment (e.g. `query = f"SELECT {username}"`), trying the
+    /// f-string/template, `.format(...)`, and generic-reference cases in turn.
+    fn detect_assignment_propagation(node_text: &str) -> Option<(String, Vec<String>)> {
+        if !node_text.contains('=') || node_text.contains("==") {
+            return None;
+        }
+        let eq_pos = node_text.find('=')?;
+        let left_side = node_text[..eq_pos].trim();
+        let right_side = node_text[eq_pos + 1..].trim();
+
+        log::debug!("   Found assignment: '{}' = '{}'", left_side, right_side);
+
+        Self::detect_fstring_assignment_propagation(left_side, right_side)
+            .or_else(|| Self::detect_format_assignment_propagation(left_side, right_side))
+            .or_else(|| Self::detect_generic_assignment_propagation(left_side, right_side))
+    }
+
+    /// Detect simple (non-assignment) f-string propagation, e.g. a sink call built directly
+    /// from an f-string/template literal referencing tainted variables.
+    fn detect_direct_fstring_propagation(node_text: &str) -> Option<(String, Vec<String>)> {
+        if !node_text.contains('{') || !node_text.contains('}') {
+            return None;
+        }
+        log::debug!("   Found f-string pattern with braces (non-assignment)");
+        let source_var = Self::extract_direct_variable(node_text)?;
+        let dependent_vars = CommonUtils::extract_f_string_variables(node_text);
+        log::debug!(
+            "   Extracted source_var: '{}', dependent_vars: {:?}",
+            source_var,
+            dependent_vars
+        );
+        if dependent_vars.is_empty() {
+            return None;
+        }
+        log::debug!("[PROPAGATION_CHECK] F-string propagation detected");
+        Some((source_var, dependent_vars))
+    }
+
+    /// Detect simple (non-assignment) `.format(...)` propagation.
+    fn detect_direct_format_propagation(node_text: &str) -> Option<(String, Vec<String>)> {
+        if !node_text.contains(".format(") {
+            return None;
+        }
+        log::debug!("   Found .format( pattern (non-assignment)");
+        let source_var = Self::extract_direct_variable(node_text)?;
+        let dependent_vars = CommonUtils::extract_format_variables(node_text);
+        log::debug!(
+            "   Extracted source_var: '{}', dependent_vars: {:?}",
+            source_var,
+            dependent_vars
+        );
+        if dependent_vars.is_empty() {
+            return None;
+        }
+        log::debug!("[PROPAGATION_CHECK] Format propagation detected");
+        Some((source_var, dependent_vars))
+    }
+
+    /// Detect taint propagation in expressions
     fn detect_taint_propagation(node_text: &str) -> Option<(String, Vec<String>)> {
         log::debug!("[PROPAGATION_CHECK] Checking for taint propagation in: '{}'", node_text);
 
-        // Check for assignment-based propagation (e.g., query = f"SELECT {username}")
-        if node_text.contains('=') && !node_text.contains("==") {
-            if let Some(eq_pos) = node_text.find('=') {
-                let left_side = node_text[..eq_pos].trim();
-                let right_side = node_text[eq_pos + 1..].trim();
+        let result = Self::detect_assignment_propagation(node_text)
+            .or_else(|| Self::detect_direct_fstring_propagation(node_text))
+            .or_else(|| Self::detect_direct_format_propagation(node_text));
 
-                log::debug!("   Found assignment: '{}' = '{}'", left_side, right_side);
-
-                // Check if right side has F-string propagation
-                if right_side.contains('{') && right_side.contains('}') {
-                    log::debug!("   Right side contains f-string braces");
-                    let mut dependent_vars = CommonUtils::extract_f_string_variables(right_side);
-
-                    // Also check for JavaScript/TypeScript template literals
-                    if right_side.contains("${") {
-                        log::debug!("   Right side contains template literal interpolation");
-                        dependent_vars
-                            .extend(CommonUtils::extract_template_literal_variables(right_side));
-                    }
-
-                    log::debug!(
-                        "   Extracted dependent_vars from interpolation: {:?}",
-                        dependent_vars
-                    );
-                    if !dependent_vars.is_empty() && CommonUtils::is_valid_variable_name(left_side)
-                    {
-                        log::debug!("[PROPAGATION_CHECK] Template/F-string assignment propagation detected: '{}' depends on {:?}", left_side, dependent_vars);
-                        return Some((left_side.to_string(), dependent_vars));
-                    }
-                }
-
-                // Check if right side has format propagation
-                if right_side.contains(".format(") {
-                    log::debug!("   Right side contains .format( pattern");
-                    let dependent_vars = CommonUtils::extract_format_variables(right_side);
-                    log::debug!("   Extracted dependent_vars from format: {:?}", dependent_vars);
-                    if !dependent_vars.is_empty() && CommonUtils::is_valid_variable_name(left_side)
-                    {
-                        log::debug!("[PROPAGATION_CHECK] Format assignment propagation detected: '{}' depends on {:?}", left_side, dependent_vars);
-                        return Some((left_side.to_string(), dependent_vars));
-                    }
-                }
-
-                let target_var = TaintExpressionUtils::normalize_variable(left_side);
-                let mut dependent_vars = CommonUtils::extract_all_variables(right_side);
-                dependent_vars.extend(TaintExpressionUtils::extract_php_variables(right_side));
-                dependent_vars.retain(|var| var != &target_var);
-                dependent_vars.sort();
-                dependent_vars.dedup();
-
-                if !target_var.is_empty() && !dependent_vars.is_empty() {
-                    log::debug!(
-                        "[PROPAGATION_CHECK] Assignment propagation detected: '{}' depends on {:?}",
-                        target_var,
-                        dependent_vars
-                    );
-                    return Some((target_var, dependent_vars));
-                }
-            }
+        if result.is_none() {
+            log::debug!("[PROPAGATION_CHECK] No propagation detected");
         }
-
-        // Check for simple F-string propagation (non-assignment)
-        if node_text.contains('{') && node_text.contains('}') {
-            log::debug!("   Found f-string pattern with braces (non-assignment)");
-            if let Some(source_var) = Self::extract_direct_variable(node_text) {
-                let dependent_vars = CommonUtils::extract_f_string_variables(node_text);
-                log::debug!(
-                    "   Extracted source_var: '{}', dependent_vars: {:?}",
-                    source_var,
-                    dependent_vars
-                );
-                if !dependent_vars.is_empty() {
-                    log::debug!("[PROPAGATION_CHECK] F-string propagation detected");
-                    return Some((source_var, dependent_vars));
-                }
-            }
-        }
-
-        // Check for simple format propagation (non-assignment)
-        if node_text.contains(".format(") {
-            log::debug!("   Found .format( pattern (non-assignment)");
-            if let Some(source_var) = Self::extract_direct_variable(node_text) {
-                let dependent_vars = CommonUtils::extract_format_variables(node_text);
-                log::debug!(
-                    "   Extracted source_var: '{}', dependent_vars: {:?}",
-                    source_var,
-                    dependent_vars
-                );
-                if !dependent_vars.is_empty() {
-                    log::debug!("[PROPAGATION_CHECK] Format propagation detected");
-                    return Some((source_var, dependent_vars));
-                }
-            }
-        }
-
-        log::debug!("[PROPAGATION_CHECK] No propagation detected");
-        None
+        result
     }
 
     fn extract_taint_assignment_target(node_text: &str) -> Option<String> {
@@ -1756,13 +1802,20 @@ impl ScanningLogic {
 
     /// Collect all relevant nodes for taint analysis (assignments and calls)
     /// Unified version that supports optional source filtering
-    fn collect_all_relevant_nodes<'a>(
-        node: tree_sitter::Node<'a>,
-        nodes: &mut Vec<tree_sitter::Node<'a>>,
-        source: Option<&[u8]>,
-    ) {
-        // Include assignment and call nodes
+    /// True unless the node's text is empty, a bare string literal, or an `__all__` declaration.
+    fn is_relevant_node_text(node_text: &str) -> bool {
+        !node_text.trim().is_empty()
+            && !node_text.starts_with('"')
+            && !node_text.starts_with('\'')
+            && !node_text.contains("__all__")
+    }
+
+    /// Whether `node` should be collected by [`Self::collect_all_relevant_nodes`], based on its
+    /// kind and (when source filtering is enabled) whether its text looks like real code.
+    fn should_collect_node(node: tree_sitter::Node, source: Option<&[u8]>) -> bool {
         match node.kind() {
+            // Always-relevant node kinds: collect unconditionally, or filtered by source text
+            // when source filtering is enabled.
             "assignment"
             | "call"
             | "expression_statement"
@@ -1780,55 +1833,40 @@ impl ScanningLogic {
             | "constructor_definition"
             | "template_literal"
             | "template_string"
-            | "template_substitution" => {
-                // Apply source filtering if provided
-                if let Some(source_bytes) = source {
-                    let node_text = crate::parser::get_node_text(&node, source_bytes);
-                    if !node_text.trim().is_empty()
-                        && !node_text.starts_with('"')
-                        && !node_text.starts_with("'")
-                        && !node_text.contains("__all__")
-                    {
-                        nodes.push(node);
-                    }
-                } else {
-                    nodes.push(node);
+            | "template_substitution" => match source {
+                Some(source_bytes) => {
+                    Self::is_relevant_node_text(&crate::parser::get_node_text(&node, source_bytes))
                 }
-            }
+                None => true,
+            },
+            // Only collect these additional types when doing source filtering
             "import_statement"
             | "import_from_statement"
             | "return_statement"
             | "binary_expression"
-            | "identifier" => {
-                if let Some(source) = source {
-                    // Only collect these additional types when doing source filtering
-                    let node_text = crate::parser::get_node_text(&node, source);
-                    if !node_text.trim().is_empty()
-                        && !node_text.starts_with('"')
-                        && !node_text.starts_with("'")
-                        && !node_text.contains("__all__")
-                    {
-                        nodes.push(node);
-                    }
-                }
-            }
+            | "identifier" => match source {
+                Some(src) => Self::is_relevant_node_text(&crate::parser::get_node_text(&node, src)),
+                None => false,
+            },
             // Skip string literals, comments, and metadata
-            "string" | "string_literal" | "comment" | "module" => {
-                // Don't collect these
-            }
-            _ => {
-                // For other node types, check if they contain actual code when source filtering is enabled
-                if let Some(source_bytes) = source {
-                    let node_text = crate::parser::get_node_text(&node, source_bytes);
-                    if !node_text.trim().is_empty()
-                        && !node_text.starts_with('"')
-                        && !node_text.starts_with("'")
-                        && !node_text.contains("__all__")
-                    {
-                        nodes.push(node);
-                    }
+            "string" | "string_literal" | "comment" | "module" => false,
+            // For other node types, check if they contain actual code when source filtering is enabled
+            _ => match source {
+                Some(source_bytes) => {
+                    Self::is_relevant_node_text(&crate::parser::get_node_text(&node, source_bytes))
                 }
-            }
+                None => false,
+            },
+        }
+    }
+
+    fn collect_all_relevant_nodes<'a>(
+        node: tree_sitter::Node<'a>,
+        nodes: &mut Vec<tree_sitter::Node<'a>>,
+        source: Option<&[u8]>,
+    ) {
+        if Self::should_collect_node(node, source) {
+            nodes.push(node);
         }
 
         // Recursively traverse children
