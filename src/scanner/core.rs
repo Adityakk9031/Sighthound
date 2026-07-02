@@ -3390,6 +3390,139 @@ pub fn print_findings_csv(findings: &[Finding]) -> Result<()> {
 }
 
 /// Print findings in text format with syntax highlighting
+/// Print the header line for a single finding: bullet, type, optional CWE id, line number.
+fn print_finding_header(finding: &Finding, line_num: usize) {
+    let cwe_info = if let Some(ref cwe_id) = finding.cwe_id {
+        format!(" ({})", cwe_id)
+    } else {
+        String::new()
+    };
+    let bullet = crate::ui::paint(crate::ui::severity_code(&finding.severity), "\u{25cf}");
+    println!(
+        "    {} {}{} {}",
+        bullet,
+        finding.finding_type,
+        cwe_info,
+        crate::ui::dim(&format!("line {}", line_num))
+    );
+}
+
+/// Print the source/sink info lines for a finding, when present.
+fn print_finding_source_sink(finding: &Finding) {
+    if let Some(source_info) = &finding.source_info {
+        println!(
+            "    {} {} ({})",
+            crate::ui::dim("source"),
+            source_info.source_type,
+            source_info.context
+        );
+    }
+
+    if let Some(sink_info) = &finding.sink_info {
+        println!(
+            "    {} {} ({})",
+            crate::ui::dim("sink  "),
+            sink_info.sink_type,
+            sink_info.function_name
+        );
+        if let Some(var) = &sink_info.variable {
+            println!("           {} {}", crate::ui::dim("var"), var);
+        }
+    }
+}
+
+/// Print the taint-flow trace lines for a finding, when present.
+fn print_finding_traces(finding: &Finding) {
+    let Some(traces) = &finding.traces else {
+        return;
+    };
+    if traces.is_empty() {
+        return;
+    }
+    println!("    {}", crate::ui::dim("flow"));
+    for (i, trace) in traces.iter().enumerate() {
+        println!(
+            "       {}. {}:{} - {} ({}) in {}",
+            i + 1,
+            trace.line,
+            trace.variable,
+            trace.operation,
+            trace.code.chars().take(50).collect::<String>(),
+            trace.function
+        );
+    }
+}
+
+/// Marker string for a source-context line: highlighted `>>` for the hit line, blank otherwise.
+fn context_line_marker(is_hit: bool, color: bool) -> &'static str {
+    if !is_hit {
+        "  "
+    } else if color {
+        "\x1b[31m>>\x1b[0m"
+    } else {
+        ">>"
+    }
+}
+
+/// Print the source lines surrounding a finding, with syntax highlighting when available.
+fn print_finding_code_context(
+    lines: &[&str],
+    syntax: Option<&syntect::parsing::SyntaxReference>,
+    theme: &syntect::highlighting::Theme,
+    ps: &SyntaxSet,
+    start_line: usize,
+    end_line: usize,
+    line_num: usize,
+) {
+    let color = crate::ui::color_enabled();
+    if let (Some(syntax), true) = (syntax, color) {
+        let mut h = HighlightLines::new(syntax, theme);
+        for i in start_line..end_line {
+            let line = lines[i];
+            let ranges: Vec<(Style, &str)> = h.highlight_line(line, ps).unwrap_or_default();
+            print!("    {}{:4} | ", context_line_marker(i + 1 == line_num, color), i + 1);
+
+            for (style, text) in ranges {
+                let fg = style.foreground;
+                print!("\x1b[38;2;{};{};{}m{}\x1b[0m", fg.r, fg.g, fg.b, text);
+            }
+            println!();
+        }
+    } else {
+        // Plain text when highlighting is unavailable or color is disabled
+        for i in start_line..end_line {
+            println!(
+                "    {}{:4} | {}",
+                context_line_marker(i + 1 == line_num, color),
+                i + 1,
+                lines[i]
+            );
+        }
+    }
+}
+
+/// Print one finding: header, source/sink info, traces, and surrounding source context.
+fn print_single_finding(
+    finding: &Finding,
+    lines: &[&str],
+    syntax: Option<&syntect::parsing::SyntaxReference>,
+    theme: &syntect::highlighting::Theme,
+    ps: &SyntaxSet,
+) {
+    let line_num = finding.line;
+    let start_line = line_num.saturating_sub(3);
+    let end_line = (line_num + 3).min(lines.len());
+
+    println!();
+    print_finding_header(finding, line_num);
+    print_finding_source_sink(finding);
+    print_finding_traces(finding);
+
+    println!();
+    print_finding_code_context(lines, syntax, theme, ps, start_line, end_line, line_num);
+    println!();
+}
+
 pub fn print_findings_text(
     findings: &[Finding],
     _verbose: bool,
@@ -3434,99 +3567,7 @@ pub fn print_findings_text(
                 println!("{}", crate::ui::bold(&crate::ui::blue(&finding.file)));
             }
 
-            let line_num = finding.line;
-            let start_line = line_num.saturating_sub(3);
-            let end_line = (line_num + 3).min(lines.len());
-
-            println!();
-            let cwe_info = if let Some(ref cwe_id) = finding.cwe_id {
-                format!(" ({})", cwe_id)
-            } else {
-                String::new()
-            };
-            let bullet = crate::ui::paint(crate::ui::severity_code(&finding.severity), "\u{25cf}");
-            println!(
-                "    {} {}{} {}",
-                bullet,
-                finding.finding_type,
-                cwe_info,
-                crate::ui::dim(&format!("line {}", line_num))
-            );
-
-            // Display source and sink information if available
-            if let Some(source_info) = &finding.source_info {
-                println!(
-                    "    {} {} ({})",
-                    crate::ui::dim("source"),
-                    source_info.source_type,
-                    source_info.context
-                );
-            }
-
-            if let Some(sink_info) = &finding.sink_info {
-                println!(
-                    "    {} {} ({})",
-                    crate::ui::dim("sink  "),
-                    sink_info.sink_type,
-                    sink_info.function_name
-                );
-                if let Some(var) = &sink_info.variable {
-                    println!("           {} {}", crate::ui::dim("var"), var);
-                }
-            }
-
-            // Display traces if available
-            if let Some(traces) = &finding.traces {
-                if !traces.is_empty() {
-                    println!("    {}", crate::ui::dim("flow"));
-                    for (i, trace) in traces.iter().enumerate() {
-                        println!(
-                            "       {}. {}:{} - {} ({}) in {}",
-                            i + 1,
-                            trace.line,
-                            trace.variable,
-                            trace.operation,
-                            trace.code.chars().take(50).collect::<String>(),
-                            trace.function
-                        );
-                    }
-                }
-            }
-
-            println!();
-
-            // Print surrounding context with syntax highlighting
-            let color = crate::ui::color_enabled();
-            let marker = |is_hit: bool| -> &'static str {
-                if !is_hit {
-                    "  "
-                } else if color {
-                    "\x1b[31m>>\x1b[0m"
-                } else {
-                    ">>"
-                }
-            };
-            if let (Some(syntax), true) = (syntax, color) {
-                let mut h = HighlightLines::new(syntax, theme);
-                for i in start_line..end_line {
-                    let line = lines[i];
-                    let ranges: Vec<(Style, &str)> =
-                        h.highlight_line(line, &ps).unwrap_or_default();
-                    print!("    {}{:4} | ", marker(i + 1 == line_num), i + 1);
-
-                    for (style, text) in ranges {
-                        let fg = style.foreground;
-                        print!("\x1b[38;2;{};{};{}m{}\x1b[0m", fg.r, fg.g, fg.b, text);
-                    }
-                    println!();
-                }
-            } else {
-                // Plain text when highlighting is unavailable or color is disabled
-                for i in start_line..end_line {
-                    println!("    {}{:4} | {}", marker(i + 1 == line_num), i + 1, lines[i]);
-                }
-            }
-            println!();
+            print_single_finding(finding, &lines, syntax, theme, &ps);
         }
     }
     print_summary(findings, duration);
