@@ -192,6 +192,34 @@ fn load_explicit_scan_rules(cli: &Cli, language: &str) -> Result<Rules> {
 }
 
 /// Print the banner shown at the start of an explicit scan.
+/// Human-readable scan mode, e.g. `single-threaded` or `parallel (8 threads)`.
+///
+/// Pulled out of `print_explicit_scan_banner` so the branching logic is
+/// directly testable without capturing stdout.
+fn scan_mode_display(single_threaded: bool, threads: Option<usize>) -> String {
+    if single_threaded {
+        "single-threaded".to_string()
+    } else if let Some(threads) = threads {
+        format!("parallel ({} threads)", threads)
+    } else {
+        "parallel".to_string()
+    }
+}
+
+/// Human-readable rules source, e.g. `embedded` or a file/directory path.
+///
+/// Pulled out of `print_explicit_scan_banner` so the branching logic is
+/// directly testable without capturing stdout.
+fn rules_source_display(cli: &Cli) -> String {
+    if should_use_embedded_rules(cli) {
+        "embedded".to_string()
+    } else if let Some(rules_path) = &cli.rules_path {
+        rules_path.clone()
+    } else {
+        "embedded".to_string()
+    }
+}
+
 fn print_explicit_scan_banner(
     cli: &Cli,
     root_dir: &str,
@@ -199,21 +227,8 @@ fn print_explicit_scan_banner(
     total_rules: usize,
     skip_minified: bool,
 ) {
-    let mode = if cli.single_threaded {
-        "single-threaded".to_string()
-    } else if let Some(threads) = cli.threads {
-        format!("parallel ({} threads)", threads)
-    } else {
-        "parallel".to_string()
-    };
-
-    let rules_source = if should_use_embedded_rules(cli) {
-        "embedded".to_string()
-    } else if let Some(rules_path) = &cli.rules_path {
-        rules_path.clone()
-    } else {
-        "embedded".to_string()
-    };
+    let mode = scan_mode_display(cli.single_threaded, cli.threads);
+    let rules_source = rules_source_display(cli);
 
     crate::ui::banner(root_dir);
     crate::ui::field("language", language);
@@ -580,4 +595,140 @@ pub fn run_taint_analysis_with_verbosity(
     }
 
     Ok(taint_findings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn base_cli() -> Cli {
+        Cli::parse_from(["sighthound"])
+    }
+
+    fn base_context(languages: &[&str]) -> ScanContext {
+        ScanContext {
+            single_threaded: false,
+            skip_minified: true,
+            discovery_time: std::time::Duration::default(),
+            total_files: languages.len(),
+            detected_languages: languages.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // ---- scan_mode_display ----
+
+    #[test]
+    fn scan_mode_single_threaded_overrides_thread_count() {
+        assert_eq!(scan_mode_display(true, Some(4)), "single-threaded");
+    }
+
+    #[test]
+    fn scan_mode_parallel_with_thread_count() {
+        assert_eq!(scan_mode_display(false, Some(8)), "parallel (8 threads)");
+    }
+
+    #[test]
+    fn scan_mode_parallel_without_thread_count() {
+        assert_eq!(scan_mode_display(false, None), "parallel");
+    }
+
+    // ---- rules_source_display ----
+
+    #[test]
+    fn rules_source_embedded_by_default() {
+        let cli = base_cli();
+        assert_eq!(rules_source_display(&cli), "embedded");
+    }
+
+    #[test]
+    fn rules_source_uses_explicit_rules_path() {
+        let mut cli = base_cli();
+        cli.use_file_rules = true;
+        cli.rules_path = Some("rules/python".to_string());
+        assert_eq!(rules_source_display(&cli), "rules/python");
+    }
+
+    #[test]
+    fn rules_source_falls_back_to_embedded_without_rules_path() {
+        let mut cli = base_cli();
+        cli.use_file_rules = true;
+        cli.rules_path = None;
+        assert_eq!(rules_source_display(&cli), "embedded");
+    }
+
+    // ---- load_rules ----
+
+    #[test]
+    fn load_rules_uses_embedded_rules_when_enabled() {
+        let mut cli = base_cli();
+        cli.use_embedded_rules = true;
+        cli.use_file_rules = false;
+        let context = base_context(&["python"]);
+
+        let rules = load_rules(&cli, &context).expect("embedded python rules should load");
+        assert!(!rules.rules.is_empty());
+    }
+
+    #[test]
+    fn load_rules_loads_explicit_file_rules_path() {
+        let mut cli = base_cli();
+        cli.use_file_rules = true;
+        cli.language = Some("python".to_string());
+        cli.rules_path = Some("rules/python".to_string());
+        let context = base_context(&["python"]);
+
+        let rules = load_rules(&cli, &context).expect("explicit rules path should load");
+        assert!(!rules.rules.is_empty());
+    }
+
+    #[test]
+    fn load_rules_auto_detects_and_merges_backend_rules_for_tsx() {
+        let mut cli = base_cli();
+        cli.use_file_rules = true;
+        cli.language = None;
+        cli.rules_path = None;
+        cli.code_type = Some("backend".to_string());
+        // "not_a_real_language" has no rules directory: exercises the silent
+        // skip-on-failure path while "tsx" still contributes rules.
+        let context = base_context(&["tsx", "not_a_real_language"]);
+
+        let rules = load_rules(&cli, &context).expect("auto-detected rules should load");
+        assert!(!rules.rules.is_empty());
+    }
+
+    #[test]
+    fn load_rules_auto_detects_frontend_only_by_default() {
+        let mut cli = base_cli();
+        cli.use_file_rules = true;
+        cli.language = None;
+        cli.rules_path = None;
+        cli.code_type = None;
+        let context = base_context(&["python"]);
+
+        let rules = load_rules(&cli, &context).expect("auto-detected rules should load");
+        assert!(!rules.rules.is_empty());
+    }
+
+    #[test]
+    fn load_rules_errors_when_no_languages_detected() {
+        let mut cli = base_cli();
+        cli.use_file_rules = true;
+        cli.language = None;
+        cli.rules_path = None;
+        let context = base_context(&[]);
+
+        assert!(load_rules(&cli, &context).is_err());
+    }
+
+    #[test]
+    fn load_rules_errors_on_invalid_cli_configuration() {
+        let mut cli = base_cli();
+        cli.use_file_rules = true;
+        cli.language = Some("python".to_string());
+        cli.rules_path = None;
+        let context = base_context(&["python"]);
+
+        assert!(load_rules(&cli, &context).is_err());
+    }
 }
