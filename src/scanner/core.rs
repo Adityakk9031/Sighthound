@@ -3722,6 +3722,16 @@ struct VerifiedTaintFlow {
     call_chain_len: usize,
 }
 
+/// Sink-side identity shared across [`MultiFileTaintAnalyzer::trace_local_assignment_taint`]'s
+/// helpers: the file/function being traced and the sink being fed.
+struct TraceSinkSite<'a> {
+    file_path: &'a str,
+    function_name: &'a str,
+    sink_pattern: &'a str,
+    sink_line: usize,
+    sink_variable: &'a str,
+}
+
 /// Classification of how a variable gets its value
 #[derive(Debug, Clone)]
 enum VariableSource {
@@ -4500,13 +4510,15 @@ impl DataFlowTracer {
                     line
                 );
                 self.trace_local_assignment_taint(
-                    sink_file,
-                    sink_function,
+                    TraceSinkSite {
+                        file_path: sink_file,
+                        function_name: sink_function,
+                        sink_pattern,
+                        sink_line,
+                        sink_variable,
+                    },
                     &source_expression,
                     line,
-                    sink_pattern,
-                    sink_line,
-                    sink_variable,
                     rule_deduplicator,
                     &mut std::collections::BTreeSet::new(),
                 )
@@ -4971,23 +4983,214 @@ impl DataFlowTracer {
             || key == "API_KEY"
     }
 
+    /// Build and record a verified taint flow from `source_pattern` at `source_line` down to
+    /// `site`'s sink (single-file, `call_chain_len` 0).
+    fn record_direct_taint_flow(
+        &mut self,
+        site: &TraceSinkSite,
+        source_pattern: String,
+        source_line: usize,
+    ) -> AnalysisResult {
+        let flow = VerifiedTaintFlow {
+            source_file: site.file_path.to_string(),
+            source_function: site.function_name.to_string(),
+            source_pattern,
+            source_line,
+
+            sink_file: site.file_path.to_string(),
+            sink_function: site.function_name.to_string(),
+            sink_pattern: site.sink_pattern.to_string(),
+            sink_line: site.sink_line,
+            sink_variable: site.sink_variable.to_string(),
+
+            call_chain_len: 0,
+        };
+
+        self.verified_flows.push(flow.clone());
+        AnalysisResult::DefinitelyTainted { flow }
+    }
+
+    /// Resolve the file that defines `callee_name` as called from `caller_file`: a direct
+    /// lookup, or (for a dotted method call) its last segment, falling back to `caller_file`
+    /// itself when that file defines a same-named function.
+    fn resolve_call_target_function(
+        &self,
+        callee_name: &str,
+        caller_file: &str,
+    ) -> Option<(String, String)> {
+        if let Some(source_file) = self.find_function_source_file(callee_name, caller_file) {
+            return Some((callee_name.to_string(), source_file));
+        }
+
+        let method_name = callee_name.rsplit('.').next()?;
+        if method_name == callee_name {
+            return None;
+        }
+
+        self.find_function_source_file(method_name, caller_file)
+            .or_else(|| {
+                self.file_contains_function(caller_file, method_name)
+                    .then(|| caller_file.to_string())
+            })
+            .map(|source_file| (method_name.to_string(), source_file))
+    }
+
+    /// If `source_expression` looks like a function call, resolve which file defines the
+    /// callee and recursively analyze whether it returns tainted data, producing a cross-file
+    /// flow when it does. Returns `None` (fall through to further checks) when the expression
+    /// isn't a call or the callee can't be resolved.
+    fn trace_function_call_taint(
+        &mut self,
+        site: &TraceSinkSite,
+        source_expression: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+        visited: &mut std::collections::BTreeSet<(String, String)>,
+    ) -> Option<AnalysisResult> {
+        if !(source_expression.contains('(') && source_expression.contains(')')) {
+            return None;
+        }
+
+        let callee_name = self.extract_function_name_from_call(source_expression);
+        log::debug!("[TRACE_LOCAL] Source is function call: '{}'", callee_name);
+
+        let Some((resolved_function_name, source_file)) =
+            self.resolve_call_target_function(&callee_name, site.file_path)
+        else {
+            log::debug!("[TRACE_LOCAL] Could not find source file for function '{}'", callee_name);
+            return None;
+        };
+
+        log::debug!(
+            "[TRACE_LOCAL] Found function '{}' in '{}'",
+            resolved_function_name,
+            source_file
+        );
+
+        // Analyze the function to see if it returns tainted data
+        match self.analyze_function_taint_behavior(
+            &source_file,
+            &resolved_function_name,
+            rule_deduplicator,
+            visited,
+        ) {
+            AnalysisResult::DefinitelyTainted { flow } => {
+                log::debug!(
+                    "[TRACE_LOCAL] Function '{}' returns tainted data, creating cross-file flow",
+                    callee_name
+                );
+
+                // Create a cross-file taint flow from the original source to the current sink
+                let cross_file_flow = VerifiedTaintFlow {
+                    source_file: flow.source_file,
+                    source_function: flow.source_function,
+                    source_pattern: flow.source_pattern,
+                    source_line: flow.source_line,
+
+                    sink_file: site.file_path.to_string(),
+                    sink_function: site.function_name.to_string(),
+                    sink_pattern: site.sink_pattern.to_string(),
+                    sink_line: site.sink_line,
+                    sink_variable: site.sink_variable.to_string(),
+
+                    call_chain_len: 1,
+                };
+
+                self.verified_flows.push(cross_file_flow.clone());
+                Some(AnalysisResult::DefinitelyTainted { flow: cross_file_flow })
+            }
+            other_result => Some(other_result),
+        }
+    }
+
+    /// If `source_expression` is a string literal, a variable alias, or an f-string/complex
+    /// expression referencing other variables, trace whether that dependency is tainted.
+    /// Returns `None` (fall through to "unknown") when none of these shapes match.
+    fn trace_variable_dependency_taint(
+        &mut self,
+        site: &TraceSinkSite,
+        source_expression: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<AnalysisResult> {
+        // Check if the source expression references other variables that might be tainted
+        // For now, we'll check simple cases like string literals (which are safe)
+        if source_expression.starts_with('"') && source_expression.ends_with('"') {
+            log::debug!("[TRACE_LOCAL] String literal assignment - safe");
+            return Some(AnalysisResult::DefinitelySafe);
+        }
+
+        if CommonUtils::is_valid_variable_name(source_expression)
+            && source_expression != site.sink_variable
+            && !CommonUtils::is_keyword_or_builtin(source_expression)
+        {
+            log::debug!(
+                "[TRACE_LOCAL] Source is variable alias '{}', tracing dependency",
+                source_expression
+            );
+            return Some(self.analyze_sink_variable(
+                site.file_path,
+                site.function_name,
+                source_expression,
+                site.sink_pattern,
+                site.sink_line,
+                rule_deduplicator,
+            ));
+        }
+
+        // If it's an f-string or complex expression, we need more analysis
+        if source_expression.starts_with("f\"") || source_expression.contains('{') {
+            log::debug!("[TRACE_LOCAL] Complex expression - requires variable dependency analysis");
+            for variable in CommonUtils::extract_all_variables(source_expression) {
+                if variable == site.sink_variable
+                    || CommonUtils::is_keyword_or_builtin(&variable)
+                    || variable == "f"
+                {
+                    continue;
+                }
+
+                let AnalysisResult::DefinitelyTainted { flow } = self.analyze_sink_variable(
+                    site.file_path,
+                    site.function_name,
+                    &variable,
+                    site.sink_pattern,
+                    site.sink_line,
+                    rule_deduplicator,
+                ) else {
+                    continue;
+                };
+
+                let derived_flow = VerifiedTaintFlow {
+                    source_file: flow.source_file,
+                    source_function: flow.source_function,
+                    source_pattern: flow.source_pattern,
+                    source_line: flow.source_line,
+                    sink_file: site.file_path.to_string(),
+                    sink_function: site.function_name.to_string(),
+                    sink_pattern: site.sink_pattern.to_string(),
+                    sink_line: site.sink_line,
+                    sink_variable: site.sink_variable.to_string(),
+                    call_chain_len: flow.call_chain_len,
+                };
+                self.verified_flows.push(derived_flow.clone());
+                return Some(AnalysisResult::DefinitelyTainted { flow: derived_flow });
+            }
+        }
+
+        None
+    }
+
     fn trace_local_assignment_taint(
         &mut self,
-        file_path: &str,
-        function_name: &str,
+        site: TraceSinkSite,
         source_expression: &str,
         assignment_line: usize,
-        sink_pattern: &str,
-        sink_line: usize,
-        sink_variable: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
         visited: &mut std::collections::BTreeSet<(String, String)>,
     ) -> AnalysisResult {
         log::debug!(
             "[TRACE_LOCAL] Analyzing local assignment: '{}' in {}::{}",
             source_expression,
-            file_path,
-            function_name
+            site.file_path,
+            site.function_name
         );
 
         match self.classify_value_source(source_expression, rule_deduplicator) {
@@ -4997,24 +5200,7 @@ impl DataFlowTracer {
             }
             ValueSourceClassification::Tainted(source_pattern) => {
                 log::debug!("[TRACE_LOCAL] Classified direct taint source: '{}'", source_pattern);
-
-                let flow = VerifiedTaintFlow {
-                    source_file: file_path.to_string(),
-                    source_function: function_name.to_string(),
-                    source_pattern: source_pattern.clone(),
-                    source_line: assignment_line,
-
-                    sink_file: file_path.to_string(),
-                    sink_function: function_name.to_string(),
-                    sink_pattern: sink_pattern.to_string(),
-                    sink_line,
-                    sink_variable: sink_variable.to_string(),
-
-                    call_chain_len: 0,
-                };
-
-                self.verified_flows.push(flow.clone());
-                return AnalysisResult::DefinitelyTainted { flow };
+                return self.record_direct_taint_flow(&site, source_pattern, assignment_line);
             }
             ValueSourceClassification::Unknown => {}
         }
@@ -5022,160 +5208,20 @@ impl DataFlowTracer {
         // Check if the source expression is a direct taint source
         if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(source_expression) {
             log::debug!("[TRACE_LOCAL] Direct taint source found: '{}'", source_pattern);
-
-            let flow = VerifiedTaintFlow {
-                source_file: file_path.to_string(),
-                source_function: function_name.to_string(),
-                source_pattern: source_pattern.clone(),
-                source_line: assignment_line,
-
-                sink_file: file_path.to_string(),
-                sink_function: function_name.to_string(),
-                sink_pattern: sink_pattern.to_string(),
-                sink_line,
-                sink_variable: sink_variable.to_string(),
-
-                call_chain_len: 0,
-            };
-
-            self.verified_flows.push(flow.clone());
-            return AnalysisResult::DefinitelyTainted { flow };
+            return self.record_direct_taint_flow(&site, source_pattern, assignment_line);
         }
 
         // Check if the source expression is a function call
-        if source_expression.contains('(') && source_expression.contains(')') {
-            let callee_name = self.extract_function_name_from_call(source_expression);
-            log::debug!("[TRACE_LOCAL] Source is function call: '{}'", callee_name);
-
-            // Find the source file for this function
-            let resolved_function = if let Some(source_file) =
-                self.find_function_source_file(&callee_name, file_path)
-            {
-                Some((callee_name.clone(), source_file))
-            } else if let Some(method_name) = callee_name.rsplit('.').next() {
-                if method_name != callee_name {
-                    self.find_function_source_file(method_name, file_path)
-                        .or_else(|| {
-                            self.file_contains_function(file_path, method_name)
-                                .then(|| file_path.to_string())
-                        })
-                        .map(|source_file| (method_name.to_string(), source_file))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            if let Some((resolved_function_name, source_file)) = resolved_function {
-                log::debug!(
-                    "[TRACE_LOCAL] Found function '{}' in '{}'",
-                    resolved_function_name,
-                    source_file
-                );
-
-                // Analyze the function to see if it returns tainted data
-                match self.analyze_function_taint_behavior(
-                    &source_file,
-                    &resolved_function_name,
-                    rule_deduplicator,
-                    visited,
-                ) {
-                    AnalysisResult::DefinitelyTainted { flow } => {
-                        log::debug!("[TRACE_LOCAL] Function '{}' returns tainted data, creating cross-file flow", callee_name);
-
-                        // Create a cross-file taint flow from the original source to the current sink
-                        let cross_file_flow = VerifiedTaintFlow {
-                            source_file: flow.source_file,
-                            source_function: flow.source_function,
-                            source_pattern: flow.source_pattern,
-                            source_line: flow.source_line,
-
-                            sink_file: file_path.to_string(),
-                            sink_function: function_name.to_string(),
-                            sink_pattern: sink_pattern.to_string(),
-                            sink_line,
-                            sink_variable: sink_variable.to_string(),
-
-                            call_chain_len: 1,
-                        };
-
-                        self.verified_flows.push(cross_file_flow.clone());
-                        return AnalysisResult::DefinitelyTainted { flow: cross_file_flow };
-                    }
-                    other_result => return other_result,
-                }
-            } else {
-                log::debug!(
-                    "[TRACE_LOCAL] Could not find source file for function '{}'",
-                    callee_name
-                );
-            }
-        }
-
-        // Check if the source expression references other variables that might be tainted
-        // For now, we'll check simple cases like string literals (which are safe)
-        if source_expression.starts_with('"') && source_expression.ends_with('"') {
-            log::debug!("[TRACE_LOCAL] String literal assignment - safe");
-            return AnalysisResult::DefinitelySafe;
-        }
-
-        if CommonUtils::is_valid_variable_name(source_expression)
-            && source_expression != sink_variable
-            && !CommonUtils::is_keyword_or_builtin(source_expression)
+        if let Some(result) =
+            self.trace_function_call_taint(&site, source_expression, rule_deduplicator, visited)
         {
-            log::debug!(
-                "[TRACE_LOCAL] Source is variable alias '{}', tracing dependency",
-                source_expression
-            );
-            return self.analyze_sink_variable(
-                file_path,
-                function_name,
-                source_expression,
-                sink_pattern,
-                sink_line,
-                rule_deduplicator,
-            );
+            return result;
         }
 
-        // If it's an f-string or complex expression, we need more analysis
-        if source_expression.starts_with("f\"") || source_expression.contains('{') {
-            log::debug!("[TRACE_LOCAL] Complex expression - requires variable dependency analysis");
-            for variable in CommonUtils::extract_all_variables(source_expression) {
-                if variable == sink_variable
-                    || CommonUtils::is_keyword_or_builtin(&variable)
-                    || variable == "f"
-                {
-                    continue;
-                }
-
-                match self.analyze_sink_variable(
-                    file_path,
-                    function_name,
-                    &variable,
-                    sink_pattern,
-                    sink_line,
-                    rule_deduplicator,
-                ) {
-                    AnalysisResult::DefinitelyTainted { flow } => {
-                        let derived_flow = VerifiedTaintFlow {
-                            source_file: flow.source_file,
-                            source_function: flow.source_function,
-                            source_pattern: flow.source_pattern,
-                            source_line: flow.source_line,
-                            sink_file: file_path.to_string(),
-                            sink_function: function_name.to_string(),
-                            sink_pattern: sink_pattern.to_string(),
-                            sink_line,
-                            sink_variable: sink_variable.to_string(),
-                            call_chain_len: flow.call_chain_len,
-                        };
-                        self.verified_flows.push(derived_flow.clone());
-                        return AnalysisResult::DefinitelyTainted { flow: derived_flow };
-                    }
-                    AnalysisResult::DefinitelySafe | AnalysisResult::Unknown { .. } => {}
-                }
-            }
+        if let Some(result) =
+            self.trace_variable_dependency_taint(&site, source_expression, rule_deduplicator)
+        {
+            return result;
         }
 
         log::debug!("[TRACE_LOCAL] Could not determine taint status of assignment");
@@ -5374,13 +5420,15 @@ impl DataFlowTracer {
                             TaintExpressionUtils::strip_inline_comment(line[eq_pos + 1..].trim());
                         if CommonUtils::is_valid_variable_name(lhs) {
                             match self.trace_local_assignment_taint(
-                                file_path,
-                                function_name,
+                                TraceSinkSite {
+                                    file_path,
+                                    function_name,
+                                    sink_pattern: "function_return",
+                                    sink_line: line_num + 1,
+                                    sink_variable: lhs,
+                                },
                                 rhs,
                                 line_num + 1,
-                                "function_return",
-                                line_num + 1,
-                                lhs,
                                 rule_deduplicator,
                                 visited,
                             ) {
@@ -5493,13 +5541,15 @@ impl DataFlowTracer {
                         );
 
                         let nested_result = self.trace_local_assignment_taint(
-                            file_path,
-                            function_name,
+                            TraceSinkSite {
+                                file_path,
+                                function_name,
+                                sink_pattern: "function_return",
+                                sink_line: file_line,
+                                sink_variable: "return_value",
+                            },
                             return_expr,
                             file_line,
-                            "function_return",
-                            file_line,
-                            "return_value",
                             rule_deduplicator,
                             visited,
                         );
