@@ -209,7 +209,7 @@ def get_user(user_id):
             }
 
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     visit_nodes(&child, source, language_support, callback);
                 }
             }
@@ -267,7 +267,7 @@ def get_all_users():
             }
 
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     visit_nodes(&child, source, language_support, callback);
                 }
             }
@@ -326,7 +326,7 @@ public class TestClass {
             }
 
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     visit_nodes(&child, source, language_support, callback);
                 }
             }
@@ -384,7 +384,7 @@ function getUser(userId) {
             }
 
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     visit_nodes(&child, source, language_support, callback);
                 }
             }
@@ -504,7 +504,7 @@ def func():
                 callback(node);
 
                 for i in 0..node.child_count() {
-                    if let Some(child) = node.child(i) {
+                    if let Some(child) = node.child(i as u32) {
                         visit_nodes(&child, callback);
                     }
                 }
@@ -580,7 +580,7 @@ function greet(name) {
                 callback(node);
 
                 for i in 0..node.child_count() {
-                    if let Some(child) = node.child(i) {
+                    if let Some(child) = node.child(i as u32) {
                         visit_nodes(&child, callback);
                     }
                 }

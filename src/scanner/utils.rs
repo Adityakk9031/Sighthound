@@ -3,6 +3,7 @@ use crate::config::filters::SKIP_DIRS;
 use crate::parser::get_node_text;
 use crate::rules::FileTypes;
 use anyhow::Result;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::WalkBuilder;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
@@ -12,7 +13,13 @@ use std::sync::{Arc, Mutex};
 use tree_sitter::Node;
 use walkdir::WalkDir;
 
-static GIT_IGNORE_CACHE: Lazy<Mutex<HashMap<PathBuf, bool>>> =
+/// Cache of compiled gitignore matchers, keyed by repository root.
+///
+/// A matcher is built once per repo root by walking the repo a single time to
+/// collect every `.gitignore` file, then reused for all subsequent per-file
+/// queries. This turns the previous O(files x repo_size) cost (a full repo
+/// walk on every cache miss) into ~O(repo_size) per repo plus O(1) per query.
+static GIT_IGNORE_MATCHER_CACHE: Lazy<Mutex<HashMap<PathBuf, Arc<RepoGitignore>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Check if a file path matches a glob pattern (delegates to common utils)
@@ -21,39 +28,102 @@ pub fn matches_glob_pattern(pattern: &str, file_path: &str) -> bool {
 }
 
 pub fn is_git_ignored(path: &Path) -> bool {
+    let target_path = normalize_for_ignore_check(path);
+    // Outside a git repo nothing is git-ignored.
+    let Some(repo_root) = find_git_repo_root(&target_path) else {
+        return false;
+    };
+
+    matcher_for_repo(&repo_root).is_ignored(&target_path)
+}
+
+/// Normalize a path to absolute (relative paths resolved against the CWD) so
+/// gitignore matching is consistent regardless of how the path was passed in.
+fn normalize_for_ignore_check(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Compiled gitignore state for a single repository.
+///
+/// Holds one `Gitignore` matcher per `.gitignore` file discovered under the
+/// repo root, each rooted at that file's own directory so nested patterns are
+/// matched with the correct relative semantics. Matchers are ordered deepest
+/// first so the most specific `.gitignore` wins (matching git's precedence).
+struct RepoGitignore {
+    /// (matcher root dir, matcher), deepest dir first.
+    matchers: Vec<(PathBuf, Gitignore)>,
+}
+
+impl RepoGitignore {
+    /// Build by walking the repo root once and compiling every `.gitignore`.
+    fn build(repo_root: &Path) -> Self {
+        let mut matchers: Vec<(PathBuf, Gitignore)> = WalkBuilder::new(repo_root)
+            .standard_filters(false)
+            .hidden(false)
+            .parents(false)
+            .build()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name() == ".gitignore")
+            .filter_map(|entry| {
+                let gitignore_path = entry.path();
+                let dir = gitignore_path.parent()?.to_path_buf();
+                let mut builder = GitignoreBuilder::new(&dir);
+                builder.add(gitignore_path);
+                let matcher = builder.build().ok()?;
+                Some((dir, matcher))
+            })
+            .collect();
+
+        // Deepest directories first so the most specific gitignore is checked
+        // before shallower ones.
+        matchers.sort_by_key(|(dir, _)| std::cmp::Reverse(dir.components().count()));
+
+        RepoGitignore { matchers }
+    }
+
+    /// Returns true if `path` is ignored by any applicable `.gitignore`.
+    ///
+    /// Uses `matched_path_or_any_parents` so that a directory pattern (e.g.
+    /// `build/`) ignores everything beneath it, matching git's behaviour of
+    /// pruning whole ignored subtrees. A matcher is only consulted for paths
+    /// under its own root directory (where its patterns apply).
+    fn is_ignored(&self, path: &Path) -> bool {
+        let is_dir = path.is_dir();
+        for (root, matcher) in &self.matchers {
+            if !path.starts_with(root) {
+                continue;
+            }
+            match matcher.matched_path_or_any_parents(path, is_dir) {
+                m if m.is_ignore() => return true,
+                m if m.is_whitelist() => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
+/// Get (building and caching on first use) the gitignore matcher for a repo.
+fn matcher_for_repo(repo_root: &Path) -> Arc<RepoGitignore> {
     {
-        // Try to get from cache first
-        let cache = GIT_IGNORE_CACHE.lock().unwrap();
-        if let Some(cached) = cache.get(path) {
-            return *cached;
+        let cache = GIT_IGNORE_MATCHER_CACHE.lock().unwrap();
+        if let Some(matcher) = cache.get(repo_root) {
+            return Arc::clone(matcher);
         }
     }
 
-    // Compute the result
-    let result = if !is_within_git_repo(path) {
-        false
-    } else if let Some(repo_root) = find_git_repo_root(path) {
-        let mut walker = WalkBuilder::new(&repo_root)
-            .git_ignore(true)
-            .git_global(false)
-            .git_exclude(false)
-            .build();
+    // Build outside the lock; a concurrent racer may build the same matcher,
+    // which is harmless and cheap relative to a full repo walk per file.
+    let matcher = Arc::new(RepoGitignore::build(repo_root));
 
-        !walker.any(|entry| entry.map(|e| e.path() == path).unwrap_or(false))
-    } else {
-        false
-    };
-
-    // Store the result in the cache
-    let mut cache = GIT_IGNORE_CACHE.lock().unwrap();
-    cache.insert(path.to_path_buf(), result);
-
-    result
-}
-
-/// Check if a path is within a Git repository
-fn is_within_git_repo(path: &Path) -> bool {
-    find_git_repo_root(path).is_some()
+    let mut cache = GIT_IGNORE_MATCHER_CACHE.lock().unwrap();
+    Arc::clone(cache.entry(repo_root.to_path_buf()).or_insert(matcher))
 }
 
 /// Find the root of the Git repository containing the given path
@@ -177,6 +247,18 @@ pub fn detect_language_from_path(file_path: &Path) -> Option<&'static str> {
         // Java extensions
         "java" | "jav" => Some("java"),
 
+        // C# extensions
+        "cs" | "csx" => Some("csharp"),
+
+        // Go extensions
+        "go" => Some("go"),
+
+        // Ruby extensions
+        "rb" | "rbw" | "rake" => Some("ruby"),
+
+        // PHP extensions
+        "php" | "php3" | "php4" | "php5" | "php7" | "phtml" => Some("php"),
+
         // JavaScript extensions (including modern variants)
         "js" | "mjs" | "cjs" | "jsx" => Some("javascript"),
 
@@ -206,7 +288,7 @@ pub fn discover_files_by_language(
     root_dir: &str,
     parallel: bool,
 ) -> Result<BTreeMap<String, Vec<PathBuf>>> {
-    discover_files_by_language_with_progress(root_dir, parallel, true)
+    discover_files_by_language_with_progress_and_options(root_dir, parallel, true, false)
 }
 
 pub fn discover_files_by_language_with_progress(
@@ -214,12 +296,26 @@ pub fn discover_files_by_language_with_progress(
     parallel: bool,
     show_progress: bool,
 ) -> Result<BTreeMap<String, Vec<PathBuf>>> {
+    discover_files_by_language_with_progress_and_options(root_dir, parallel, show_progress, false)
+}
+
+pub fn discover_files_by_language_with_progress_and_options(
+    root_dir: &str,
+    parallel: bool,
+    show_progress: bool,
+    include_test_fixtures: bool,
+) -> Result<BTreeMap<String, Vec<PathBuf>>> {
     let estimated_languages = crate::config::ScanDefaults::ESTIMATED_LANGUAGES;
 
     if parallel {
-        discover_files_parallel(root_dir, estimated_languages, show_progress)
+        discover_files_parallel(root_dir, estimated_languages, show_progress, include_test_fixtures)
     } else {
-        discover_files_sequential(root_dir, estimated_languages, show_progress)
+        discover_files_sequential(
+            root_dir,
+            estimated_languages,
+            show_progress,
+            include_test_fixtures,
+        )
     }
 }
 
@@ -227,7 +323,8 @@ pub fn discover_files_by_language_with_progress(
 fn discover_files_parallel(
     root_dir: &str,
     estimated_languages: usize,
-    show_progress: bool,
+    _show_progress: bool,
+    include_test_fixtures: bool,
 ) -> Result<BTreeMap<String, Vec<PathBuf>>> {
     let all_paths: Vec<PathBuf> = WalkDir::new(root_dir)
         .follow_links(false)
@@ -235,7 +332,7 @@ fn discover_files_parallel(
         .filter_entry(|e| {
             if e.file_type().is_dir() {
                 if let Some(name) = e.file_name().to_str() {
-                    return !SKIP_DIRS.contains(&name);
+                    return !should_skip_dir(name, include_test_fixtures);
                 }
             }
             true
@@ -264,14 +361,6 @@ fn discover_files_parallel(
             .max(crate::config::ScanDefaults::ESTIMATED_FILES_PER_LANG)
     };
 
-    if show_progress {
-        println!(
-            "📂 Discovered {} files total, estimating {} files per language",
-            all_paths.len(),
-            estimated_files_per_lang
-        );
-    }
-
     let files_by_language = Arc::new(Mutex::new(BTreeMap::<String, Vec<PathBuf>>::new()));
 
     all_paths.par_iter().for_each(|path| {
@@ -294,6 +383,7 @@ fn discover_files_sequential(
     root_dir: &str,
     _estimated_languages: usize,
     _show_progress: bool,
+    include_test_fixtures: bool,
 ) -> Result<BTreeMap<String, Vec<PathBuf>>> {
     let mut files_by_language = BTreeMap::new();
 
@@ -303,7 +393,7 @@ fn discover_files_sequential(
         .filter_entry(|e| {
             if e.file_type().is_dir() {
                 if let Some(name) = e.file_name().to_str() {
-                    return !SKIP_DIRS.contains(&name);
+                    return !should_skip_dir(name, include_test_fixtures);
                 }
             }
             true
@@ -349,7 +439,7 @@ pub fn discover_files_by_language_parallel_with_progress(
     root_dir: &str,
     show_progress: bool,
 ) -> Result<BTreeMap<String, Vec<PathBuf>>> {
-    discover_files_by_language_with_progress(root_dir, true, show_progress)
+    discover_files_by_language_with_progress_and_options(root_dir, true, show_progress, false)
 }
 
 /// Sequential file discovery with progress control
@@ -357,7 +447,14 @@ pub fn discover_files_by_language_sequential_with_progress(
     root_dir: &str,
     show_progress: bool,
 ) -> Result<BTreeMap<String, Vec<PathBuf>>> {
-    discover_files_by_language_with_progress(root_dir, false, show_progress)
+    discover_files_by_language_with_progress_and_options(root_dir, false, show_progress, false)
+}
+
+pub fn should_skip_dir(name: &str, include_test_fixtures: bool) -> bool {
+    if include_test_fixtures && (name == "tests" || name == "test") {
+        return false;
+    }
+    SKIP_DIRS.contains(&name)
 }
 
 // =========================================================================

@@ -19,21 +19,30 @@ path = "harness.rs"
 edition = "2024"
 
 [features]
-default = ["python", "java", "javascript", "tsx", "html", "django"]
+default = ["python", "java", "javascript", "tsx", "typescript", "go", "ruby", "csharp", "html", "django", "php"]
 python = ["tree-sitter-python"]
 java = ["tree-sitter-java"]
 javascript = ["tree-sitter-javascript"]
 tsx = ["tree-sitter-typescript"]
+typescript = ["tree-sitter-typescript"]
+go = ["tree-sitter-go"]
+ruby = ["tree-sitter-ruby"]
+csharp = ["tree-sitter-c-sharp"]
 html = ["tree-sitter-html"]
 django = ["tree-sitter-html"]  # Reuse HTML parser for Django templates
+php = ["tree-sitter-php"]
 
 [dependencies]
-tree-sitter = "0.24"
+tree-sitter = "0.26"
 tree-sitter-python = { version = "0.23", optional = true }
 tree-sitter-java = { version = "0.23", optional = true }
 tree-sitter-javascript = { version = "0.23", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-go = { version = "0.23", optional = true }
+tree-sitter-ruby = { version = "0.23", optional = true }
+tree-sitter-c-sharp = { version = "0.23", optional = true }
 tree-sitter-html = { version = "0.23", optional = true }
+tree-sitter-php = { version = "0.23", optional = true }
 regex = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -47,7 +56,11 @@ indicatif = "0.17"
 glob = "0.3"
 crossbeam = "0.8"
 num_cpus = "1.16"
-syntect = "5.1"
+syntect = { version = "5.1", default-features = false, features = [
+    "default-syntaxes",
+    "default-themes",
+    "regex-onig",
+] }
 memmap2 = "0.9"
 log = "0.4"
 env_logger = "0.10"
@@ -74,3 +87,6 @@ path = "tests/integration/main.rs"
 name = "end_to_end_tests"
 path = "tests/end_to_end/main.rs"
 
+[[test]]
+name = "strictness_tests"
+path = "tests/strictness/main.rs"

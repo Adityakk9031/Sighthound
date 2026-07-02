@@ -12,8 +12,6 @@ use crate::scanner::{Finding, VulnerabilityScanner};
 /// Unified scan configuration and execution context
 #[derive(Debug)]
 struct ScanContext {
-    #[allow(dead_code)] // kept for Debug output / future scope-aware scanning
-    root_dir: String,
     single_threaded: bool,
     skip_minified: bool,
     discovery_time: std::time::Duration,
@@ -27,25 +25,18 @@ impl ScanContext {
         let discovery_start = std::time::Instant::now();
 
         let parallel = !cli.single_threaded;
-        if show_progress {
-            if parallel {
-                println!("🚀 Using parallel file discovery for maximum performance...");
-            } else {
-                println!("🔍 Using sequential file discovery...");
-            }
-        }
-
-        let files_by_language = crate::scanner::utils::discover_files_by_language_with_progress(
-            root_dir,
-            parallel,
-            show_progress,
-        )?;
+        let files_by_language =
+            crate::scanner::utils::discover_files_by_language_with_progress_and_options(
+                root_dir,
+                parallel,
+                show_progress,
+                cli.include_test_fixtures,
+            )?;
         let discovery_time = discovery_start.elapsed();
 
         if files_by_language.is_empty() {
             if show_progress {
-                println!("❌ No supported files found in {}", root_dir);
-                println!("   Supported file types: .py, .java, .js, .tsx, .html");
+                crate::ui::warn(&format!("no supported source files found in {}", root_dir));
             }
             return Err(anyhow::anyhow!("No supported files found"));
         }
@@ -53,16 +44,7 @@ impl ScanContext {
         let detected_languages: Vec<String> = files_by_language.keys().cloned().collect();
         let total_files: usize = files_by_language.values().map(|files| files.len()).sum();
 
-        if show_progress {
-            println!(
-                "🔍 Detected languages: {} (in {:.2?})",
-                detected_languages.join(", "),
-                discovery_time
-            );
-        }
-
         Ok(Self {
-            root_dir: root_dir.to_string(),
             single_threaded: cli.single_threaded,
             skip_minified: cli.skip_minified.unwrap_or(true),
             discovery_time,
@@ -71,15 +53,15 @@ impl ScanContext {
         })
     }
 
-    /// Get mode information string for display
-    fn get_mode_info(&self, threads: Option<usize>) -> (String, String) {
-        let mode = if self.single_threaded { "single-threaded" } else { "parallel" };
-        let thread_info = if let Some(threads) = threads {
-            format!(" with {} threads", threads)
+    /// Human-readable description of the threading mode, e.g. `parallel (8 threads)`.
+    fn mode_display(&self, threads: Option<usize>) -> String {
+        if self.single_threaded {
+            "single-threaded".to_string()
+        } else if let Some(threads) = threads {
+            format!("parallel ({} threads)", threads)
         } else {
-            String::new()
-        };
-        (mode.to_string(), thread_info)
+            "parallel".to_string()
+        }
     }
 
     /// Create and configure progress manager
@@ -87,20 +69,19 @@ impl ScanContext {
         ProgressManager::new(self.total_files)
     }
 
-    /// Print performance summary
+    /// Print throughput stats once a scan completes.
     fn print_performance_summary(&self, rule_count: usize, scan_duration: std::time::Duration) {
-        println!();
-        println!(
-            "📊 Scanned {} files total with {} rules across {} languages",
+        crate::ui::note(&format!(
+            "scanned {} files \u{b7} {} rules \u{b7} {} languages",
             self.total_files,
             rule_count,
             self.detected_languages.len()
-        );
-        println!(
-            "⚡ File discovery: {:.2?} | Analysis: {:.2?}",
+        ));
+        crate::ui::note(&format!(
+            "discovery {:.2?} \u{b7} analysis {:.2?}",
             self.discovery_time,
             scan_duration.saturating_sub(self.discovery_time)
-        );
+        ));
     }
 }
 
@@ -126,15 +107,8 @@ fn load_rules(cli: &Cli, context: &ScanContext) -> Result<Rules> {
             let mut all_rules = Vec::new();
 
             // Determine exclusion pattern type based on code_type
-            let pattern_type = if let Some(code_type) = &cli.code_type {
-                if code_type == "backend" {
-                    "backend"
-                } else {
-                    "frontend" // "frontend", "both", or any other value
-                }
-            } else {
-                "frontend" // default when no code_type specified
-            };
+            let pattern_type =
+                if cli.code_type.as_deref() == Some("backend") { "backend" } else { "frontend" };
 
             for language in &context.detected_languages {
                 let base_rules_dir = cli.rules_dir.as_deref().unwrap_or("rules");
@@ -175,53 +149,13 @@ fn load_rules(cli: &Cli, context: &ScanContext) -> Result<Rules> {
     }
 }
 
-/// Load the backend-only security rules for JS/TS when `code_type` requires backend coverage.
-/// Returns `None` when the language isn't JS/TS, no code_type filter is set, the filter is
-/// "frontend", or the rules file fails to load.
-fn load_backend_js_rules_if_needed(cli: &Cli, language: &str) -> Option<Rules> {
-    if !matches!(language, "javascript" | "tsx") {
-        return None;
-    }
-    let code_type = cli.code_type.as_ref()?;
-    if code_type == "frontend" {
-        return None;
-    }
-    let base_rules_dir = cli.rules_dir.as_deref().unwrap_or("rules");
-    let backend_rules_file = format!("{}/backend_javascript/backend_security.ron", base_rules_dir);
-    Rules::load_from_file(&backend_rules_file).ok()
-}
+/// Run explicit scan mode (language and rules specified)
+pub fn run_explicit_scan(cli: &Cli, root_dir: &str, show_progress: bool) -> Result<Vec<Finding>> {
+    let language = cli
+        .language
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Language required for explicit scan"))?;
 
-/// Print the banner shown at the start of an explicit scan.
-fn print_explicit_scan_banner(cli: &Cli, root_dir: &str, language: &str, total_rules: usize) {
-    // Use unified configuration for display
-    let mode = if cli.single_threaded { "single-threaded" } else { "parallel" };
-    let thread_info = if let Some(threads) = cli.threads {
-        format!(" with {} threads", threads)
-    } else {
-        String::new()
-    };
-
-    println!("🚀 Starting Explicit Scan ({} mode{})!", mode, thread_info);
-    println!("📂 Target directory: {}", root_dir);
-    println!("🔧 Language: {}", language);
-
-    if should_use_embedded_rules(cli) {
-        println!("📋 Using embedded rules");
-    } else if let Some(rules_path) = &cli.rules_path {
-        let path = std::path::Path::new(rules_path);
-        if path.is_dir() {
-            println!("📋 Rules directory: {}", rules_path);
-        } else {
-            println!("📋 Rules file: {}", rules_path);
-        }
-    }
-
-    println!("🔍 Running scan with {} rules", total_rules);
-    println!();
-}
-
-/// Load the rules for an explicit scan: embedded or file-based, plus backend JS/TS extras.
-fn load_explicit_scan_rules(cli: &Cli, language: &str) -> Result<Rules> {
     let mut all_rules = if should_use_embedded_rules(cli) {
         vec![Rules::load_embedded_rules(language, cli.code_type.as_deref())?]
     } else {
@@ -233,101 +167,17 @@ fn load_explicit_scan_rules(cli: &Cli, language: &str) -> Result<Rules> {
 
     // Load additional backend rules for JavaScript/TypeScript if code_type is backend or both
     // (Note: For embedded rules, backend rules are already loaded in load_embedded_rules)
-    if !should_use_embedded_rules(cli) {
-        if let Some(backend_rules) = load_backend_js_rules_if_needed(cli, language) {
-            all_rules.push(backend_rules);
-        }
-    }
-
-    if all_rules.len() == 1 {
-        Ok(all_rules.into_iter().next().unwrap())
-    } else {
-        Rules::merge_rules(all_rules)
-    }
-}
-
-/// Run explicit scan mode (language and rules specified)
-pub fn run_explicit_scan(cli: &Cli, root_dir: &str, show_progress: bool) -> Result<Vec<Finding>> {
-    let language = cli
-        .language
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Language required for explicit scan"))?;
-
-    let rules = load_explicit_scan_rules(cli, language)?;
-    let total_rules = ScanningLogic::count_total_rules(&rules);
-    if show_progress {
-        println!("🔢 Total number of rules: {}", total_rules);
-    }
-    // Configure minified file skipping
-    let skip_minified = cli.skip_minified.unwrap_or(true);
-    let scanner = VulnerabilityScanner::with_skip_minified(language, rules, skip_minified)?;
-
-    if !skip_minified && show_progress {
-        println!(
-            "⚠️  Minified file skipping disabled - this may increase scan time and false positives"
-        );
-    }
-
-    if show_progress {
-        print_explicit_scan_banner(cli, root_dir, language, total_rules);
-    }
-
-    // Use the new filtering method if filters are specified
-    if cli.code_type.is_some() || cli.language_filter.is_some() {
-        scanner.find_vulnerabilities_unified_with_filters(
-            root_dir,
-            language,
-            show_progress,
-            cli.code_type.as_deref(),
-            cli.language_filter.as_deref(),
-        )
-    } else {
-        scanner.find_vulnerabilities_parallel(root_dir, language, show_progress)
-    }
-}
-
-/// Load rules (embedded or file-based, plus backend JS/TS extras) for one auto-detected
-/// language. Returns `Ok(None)` when no rules were found for the language (caller skips it).
-fn load_rules_for_detected_language(cli: &Cli, language: &str) -> Result<Option<Rules>> {
-    let base_rules_dir = cli.rules_dir.as_deref().unwrap_or("rules");
-    let rules_dir = match language {
-        "tsx" => format!("{}/javascript", base_rules_dir),
-        _ => format!("{}/{}", base_rules_dir, language),
-    };
-
-    let mut all_rules = Vec::new();
-
-    if should_use_embedded_rules(cli) {
-        // Use embedded rules
-        if let Ok(embedded_rules) = Rules::load_embedded_rules(language, cli.code_type.as_deref()) {
-            all_rules.push(embedded_rules);
-        }
-    } else {
-        // Load base rules for the language with centralized exclusions
-        // Determine exclusion pattern type based on code_type
-        let pattern_type = if let Some(code_type) = &cli.code_type {
-            if code_type == "backend" {
-                "backend"
-            } else {
-                "frontend" // "frontend", "both", or any other value
+    if !should_use_embedded_rules(cli) && matches!(language.as_str(), "javascript" | "tsx") {
+        if let Some(code_type) = &cli.code_type {
+            if code_type != "frontend" {
+                let base_rules_dir = cli.rules_dir.as_deref().unwrap_or("rules");
+                let backend_rules_file =
+                    format!("{}/backend_javascript/backend_security.ron", base_rules_dir);
+                if let Ok(backend_rules) = Rules::load_from_file(&backend_rules_file) {
+                    all_rules.push(backend_rules);
+                }
             }
-        } else {
-            "frontend" // default when no code_type specified
-        };
-
-        if let Ok(base_rules) = Rules::load_from_directory_with_exclusions(&rules_dir, pattern_type)
-        {
-            all_rules.push(base_rules);
         }
-
-        // Load additional backend rules for JavaScript/TypeScript if code_type is backend or both
-        if let Some(backend_rules) = load_backend_js_rules_if_needed(cli, language) {
-            all_rules.push(backend_rules);
-        }
-    }
-
-    if all_rules.is_empty() {
-        return Ok(None); // Skip if no rules found
     }
 
     let rules = if all_rules.len() == 1 {
@@ -335,72 +185,57 @@ fn load_rules_for_detected_language(cli: &Cli, language: &str) -> Result<Option<
     } else {
         Rules::merge_rules(all_rules)?
     };
-    Ok(Some(rules))
-}
+    let total_rules = ScanningLogic::count_total_rules(&rules);
+    // Configure minified file skipping
+    let skip_minified = cli.skip_minified.unwrap_or(true);
+    let scanner = VulnerabilityScanner::with_skip_minified(language, rules, skip_minified)?;
 
-/// Scan a single auto-detected language's files and return its rule count and findings result.
-/// Returns `None` when no rules were found for the language (caller skips it).
-fn scan_detected_language(
-    cli: &Cli,
-    root_dir: &str,
-    context: &ScanContext,
-    language: &str,
-    files: &[PathBuf],
-    progress_manager: Option<&ProgressManager>,
-) -> Result<Option<(usize, Result<Vec<Finding>>)>> {
-    let Some(rules) = load_rules_for_detected_language(cli, language)? else {
-        return Ok(None);
-    };
+    if show_progress {
+        let mode = if cli.single_threaded {
+            "single-threaded".to_string()
+        } else if let Some(threads) = cli.threads {
+            format!("parallel ({} threads)", threads)
+        } else {
+            "parallel".to_string()
+        };
 
-    let rule_count = ScanningLogic::count_total_rules(&rules);
+        let rules_source = if should_use_embedded_rules(cli) {
+            "embedded".to_string()
+        } else if let Some(rules_path) = &cli.rules_path {
+            rules_path.clone()
+        } else {
+            "embedded".to_string()
+        };
 
-    if let Some(progress) = progress_manager {
-        progress.set_message(format!(
-            "| scanning {} ({}/{} files)",
-            language,
-            files.len(),
-            context.total_files
-        ));
+        crate::ui::banner(root_dir);
+        crate::ui::field("language", language);
+        crate::ui::field("rules", &format!("{} ({})", total_rules, rules_source));
+        crate::ui::field("mode", &mode);
+        if !skip_minified {
+            crate::ui::warn(
+                "minified-file skipping disabled; this may slow scans and add false positives",
+            );
+        }
+        println!();
     }
 
-    let scanner = VulnerabilityScanner::with_skip_minified(language, rules, context.skip_minified)
-        .expect("scanner");
-
-    let findings_result = if cli.code_type.is_some() || cli.language_filter.is_some() {
-        scanner.find_vulnerabilities_unified_with_filters(
+    // Use the new filtering method if filters are specified
+    if cli.code_type.is_some() || cli.language_filter.is_some() {
+        scanner.find_vulnerabilities_unified_with_filters_and_options(
             root_dir,
             language,
-            false, // Never show progress for individual languages in auto-detection
+            show_progress,
             cli.code_type.as_deref(),
             cli.language_filter.as_deref(),
+            cli.include_test_fixtures,
         )
     } else {
-        scanner.find_vulnerabilities_parallel(root_dir, language, false)
-    };
-
-    Ok(Some((rule_count, findings_result)))
-}
-
-/// Fold one language's scan outcome into the shared counters and findings accumulator.
-fn accumulate_language_result(
-    language: &str,
-    files_len: usize,
-    findings_result: Result<Vec<Finding>>,
-    processed_files: &AtomicUsize,
-    total_findings: &AtomicUsize,
-    all_findings: &mut Vec<Finding>,
-) {
-    match findings_result {
-        Ok(fnds) => {
-            processed_files.fetch_add(files_len, Ordering::Relaxed);
-            if !fnds.is_empty() {
-                total_findings.fetch_add(fnds.len(), Ordering::Relaxed);
-            }
-            all_findings.extend(fnds);
-        }
-        Err(e) => {
-            eprintln!("⚠️  Failed to scan {}: {}", language, e);
-        }
+        scanner.find_vulnerabilities_parallel_with_options(
+            root_dir,
+            language,
+            show_progress,
+            cli.include_test_fixtures,
+        )
     }
 }
 
@@ -414,18 +249,35 @@ pub fn run_auto_detection_scan(
 
     // Initialize unified scan context
     let context = ScanContext::new(cli, root_dir, show_progress)?;
-    let (mode, thread_info) = context.get_mode_info(cli.threads);
 
     if show_progress {
-        println!("🚀 Starting Auto-Detection Scan ({} mode{})!", mode, thread_info);
-        println!("📂 Target directory: {}", root_dir);
+        crate::ui::banner(root_dir);
+        crate::ui::field(
+            "languages",
+            &format!(
+                "{}  {}",
+                context.detected_languages.join(", "),
+                crate::ui::dim(&format!("(detected in {:.2?})", context.discovery_time))
+            ),
+        );
+        crate::ui::field("mode", &context.mode_display(cli.threads));
     }
 
     // Rediscover files by language for actual processing (context only used for validation)
     let files_by_language = if cli.single_threaded {
-        crate::scanner::utils::discover_files_by_language_sequential_with_progress(root_dir, false)?
+        crate::scanner::utils::discover_files_by_language_with_progress_and_options(
+            root_dir,
+            false,
+            false,
+            cli.include_test_fixtures,
+        )?
     } else {
-        crate::scanner::utils::discover_files_by_language_parallel_with_progress(root_dir, false)?
+        crate::scanner::utils::discover_files_by_language_with_progress_and_options(
+            root_dir,
+            true,
+            false,
+            cli.include_test_fixtures,
+        )?
     };
 
     let total_findings = Arc::new(AtomicUsize::new(0));
@@ -453,27 +305,101 @@ pub fn run_auto_detection_scan(
 
     // Process languages sequentially to avoid nested parallelism deadlocks
     for (language, files) in lang_jobs {
-        let Some((rule_count, findings_result)) = scan_detected_language(
-            cli,
-            root_dir,
-            &context,
-            &language,
-            &files,
-            progress_manager.as_ref(),
-        )?
-        else {
-            continue; // Skip if no rules found
+        let base_rules_dir = cli.rules_dir.as_deref().unwrap_or("rules");
+        let rules_dir = match language.as_str() {
+            "tsx" => format!("{}/javascript", base_rules_dir),
+            _ => format!("{}/{}", base_rules_dir, language),
         };
 
-        total_rules_loaded.fetch_add(rule_count, Ordering::Relaxed);
-        accumulate_language_result(
-            &language,
-            files.len(),
-            findings_result,
-            &processed_files,
-            &total_findings,
-            &mut all_findings,
-        );
+        // Load rules - either embedded or from files
+        let mut all_rules = Vec::new();
+
+        if should_use_embedded_rules(cli) {
+            // Use embedded rules
+            if let Ok(embedded_rules) =
+                Rules::load_embedded_rules(&language, cli.code_type.as_deref())
+            {
+                all_rules.push(embedded_rules);
+            }
+        } else {
+            // Load base rules for the language with centralized exclusions
+            // Determine exclusion pattern type based on code_type
+            let pattern_type =
+                if cli.code_type.as_deref() == Some("backend") { "backend" } else { "frontend" };
+
+            if let Ok(base_rules) =
+                Rules::load_from_directory_with_exclusions(&rules_dir, pattern_type)
+            {
+                all_rules.push(base_rules);
+            }
+
+            // Load additional backend rules for JavaScript/TypeScript if code_type is backend or both
+            if matches!(language.as_str(), "javascript" | "tsx") {
+                if let Some(code_type) = &cli.code_type {
+                    if code_type != "frontend" {
+                        let backend_rules_dir =
+                            format!("{}/backend_javascript/backend_security.ron", base_rules_dir);
+                        if let Ok(backend_rules) = Rules::load_from_file(&backend_rules_dir) {
+                            all_rules.push(backend_rules);
+                        }
+                    }
+                }
+            }
+        }
+
+        if all_rules.is_empty() {
+            continue; // Skip if no rules found
+        }
+
+        let rules = if all_rules.len() == 1 {
+            all_rules.into_iter().next().unwrap()
+        } else {
+            Rules::merge_rules(all_rules)?
+        };
+
+        {
+            let rule_count = ScanningLogic::count_total_rules(&rules);
+            total_rules_loaded.fetch_add(rule_count, Ordering::Relaxed);
+
+            if let Some(ref progress) = progress_manager {
+                progress.set_message(format!("scanning {}", language));
+            }
+
+            let scanner =
+                VulnerabilityScanner::with_skip_minified(&language, rules, context.skip_minified)
+                    .expect("scanner");
+
+            let findings_result = if cli.code_type.is_some() || cli.language_filter.is_some() {
+                scanner.find_vulnerabilities_unified_with_filters_and_options(
+                    root_dir,
+                    &language,
+                    false, // Never show progress for individual languages in auto-detection
+                    cli.code_type.as_deref(),
+                    cli.language_filter.as_deref(),
+                    cli.include_test_fixtures,
+                )
+            } else {
+                scanner.find_vulnerabilities_parallel_with_options(
+                    root_dir,
+                    &language,
+                    false,
+                    cli.include_test_fixtures,
+                )
+            };
+
+            match findings_result {
+                Ok(fnds) => {
+                    processed_files.fetch_add(files.len(), Ordering::Relaxed);
+                    if !fnds.is_empty() {
+                        total_findings.fetch_add(fnds.len(), Ordering::Relaxed);
+                    }
+                    all_findings.extend(fnds);
+                }
+                Err(e) => {
+                    crate::ui::warn(&format!("failed to scan {}: {}", language, e));
+                }
+            }
+        }
     }
 
     // Stop progress tracking
@@ -496,43 +422,6 @@ pub fn run_taint_analysis(cli: &Cli, root_dir: &str, show_progress: bool) -> Res
     run_taint_analysis_with_verbosity(cli, root_dir, show_progress, true)
 }
 
-/// Print the verbose startup banner for taint analysis mode.
-fn print_taint_analysis_intro(root_dir: &str, taint_rules_count: usize, total_files: usize) {
-    println!("🔍 Starting Optimized Taint Analysis Mode");
-    println!("📂 Target directory: {}", root_dir);
-    println!("🔧 Loaded {} taint flow rules", taint_rules_count);
-    println!("📁 Total files to analyze: {}", total_files);
-    println!("⚡ Using parallel processing for maximum performance");
-    println!();
-}
-
-/// Print the verbose completion summary for taint analysis mode.
-fn print_taint_analysis_summary(
-    context: &ScanContext,
-    taint_rules_count: usize,
-    scan_duration: std::time::Duration,
-    taint_findings: &[Finding],
-) {
-    // Use unified performance reporting (reuse existing infrastructure)
-    context.print_performance_summary(taint_rules_count, scan_duration);
-    println!("⏱️  Optimized taint analysis completed in {:.2?}", scan_duration);
-
-    if !taint_findings.is_empty() {
-        let same_file_count = taint_findings
-            .iter()
-            .filter(|f| f.tags.as_ref().is_some_and(|tags| tags.contains(&"same_file".to_string())))
-            .count();
-        let cross_file_count = taint_findings.len() - same_file_count;
-
-        println!(
-            "🎯 Found {} taint flows ({} same-file, {} cross-file)",
-            taint_findings.len(),
-            same_file_count,
-            cross_file_count
-        );
-    }
-}
-
 /// Run taint analysis mode with verbosity control
 pub fn run_taint_analysis_with_verbosity(
     cli: &Cli,
@@ -540,14 +429,13 @@ pub fn run_taint_analysis_with_verbosity(
     show_progress: bool,
     verbose_mode: bool,
 ) -> Result<Vec<Finding>> {
-    if show_progress && verbose_mode {
-        println!("🔍 Taint analysis enabled - tracking data flows from sources to sinks");
-    }
-
+    // When taint runs as the second pass of a combined scan (verbose_mode = false),
+    // stay completely silent so we don't duplicate the banner, progress bar, or tallies.
+    let report = show_progress && verbose_mode;
     let scan_start = std::time::Instant::now();
 
     // Initialize unified scan context (reuse existing infrastructure)
-    let context = ScanContext::new(cli, root_dir, show_progress)?;
+    let context = ScanContext::new(cli, root_dir, report)?;
 
     // Load rules using unified pattern (reuse existing infrastructure)
     let rules = load_rules(cli, &context)?;
@@ -561,7 +449,11 @@ pub fn run_taint_analysis_with_verbosity(
         ));
     }
     if show_progress && verbose_mode {
-        print_taint_analysis_intro(root_dir, taint_rules_count, context.total_files);
+        crate::ui::banner(root_dir);
+        crate::ui::field("mode", "taint analysis");
+        crate::ui::field("rules", &format!("{} taint-flow rules", taint_rules_count));
+        crate::ui::field("files", &context.total_files.to_string());
+        println!();
     }
     // Use the unified VulnerabilityScanner infrastructure for massive speedup!
     // This reuses ALL existing optimizations: parallel processing, prefiltering,
@@ -570,17 +462,38 @@ pub fn run_taint_analysis_with_verbosity(
     let language = cli.language.as_deref().unwrap_or("");
     let scanner = VulnerabilityScanner::with_skip_minified(language, rules, context.skip_minified)?;
 
+    // When taint runs as the silent second pass of a combined scan, the unified
+    // scanner shows no bar of its own (report = false), so drive a spinner here to
+    // keep the terminal alive during what is often the slowest phase.
+    let mut spinner = if show_progress && !verbose_mode {
+        Some(ProgressManager::new_spinner("analyzing data flows"))
+    } else {
+        None
+    };
+
     let all_findings = if cli.code_type.is_some() || cli.language_filter.is_some() {
-        scanner.find_vulnerabilities_unified_with_filters(
+        scanner.find_vulnerabilities_unified_with_filters_and_options(
             root_dir,
             language,
-            show_progress,
+            report,
             cli.code_type.as_deref(),
             cli.language_filter.as_deref(),
+            cli.include_test_fixtures,
         )?
     } else {
-        scanner.find_vulnerabilities_unified(root_dir, language, show_progress)?
+        scanner.find_vulnerabilities_unified_with_filters_and_options(
+            root_dir,
+            language,
+            report,
+            None,
+            None,
+            cli.include_test_fixtures,
+        )?
     };
+
+    if let Some(mut spinner) = spinner.take() {
+        spinner.stop();
+    }
 
     // Filter to only taint analysis findings
     let taint_findings: Vec<Finding> = all_findings
@@ -593,7 +506,25 @@ pub fn run_taint_analysis_with_verbosity(
     let scan_duration = scan_start.elapsed();
 
     if show_progress && verbose_mode {
-        print_taint_analysis_summary(&context, taint_rules_count, scan_duration, &taint_findings);
+        // Use unified performance reporting (reuse existing infrastructure)
+        context.print_performance_summary(taint_rules_count, scan_duration);
+
+        if !taint_findings.is_empty() {
+            let same_file_count = taint_findings
+                .iter()
+                .filter(|f| {
+                    f.tags.as_ref().is_some_and(|tags| tags.contains(&"same_file".to_string()))
+                })
+                .count();
+            let cross_file_count = taint_findings.len() - same_file_count;
+
+            crate::ui::note(&format!(
+                "{} taint flows ({} same-file, {} cross-file)",
+                taint_findings.len(),
+                same_file_count,
+                cross_file_count
+            ));
+        }
     }
 
     Ok(taint_findings)

@@ -39,7 +39,10 @@ pub mod filters {
         ".idea",
         ".vscode",
         "tests",
-        "test", // Skip test directories
+        "test",   // Skip test directories
+        "vendor", // Composer/PHP and other third-party dependency trees
+        "wp-includes",
+        "wp-admin", // WordPress core (third-party CMS code)
     ];
 
     /// File patterns for minified/bundled JavaScript files

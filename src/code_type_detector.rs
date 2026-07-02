@@ -288,7 +288,7 @@ impl CodeTypeDetector {
 
         if frontend_score > 0 && backend_score == 0 {
             CodeType::Frontend
-        } else if backend_score > frontend_score {
+        } else if backend_score > 0 && (frontend_score == 0 || backend_score > frontend_score) {
             CodeType::Backend
         } else if frontend_score > backend_score {
             CodeType::Frontend

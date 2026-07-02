@@ -46,7 +46,7 @@ pub fn check_has_argument_condition(
     if let Some(args_node) = language_support.get_arguments_node(node) {
         // If specific position is specified, check only that argument
         if let Some(position) = condition.argument_position {
-            if let Some(arg) = args_node.named_child(position) {
+            if let Some(arg) = args_node.named_child(position as u32) {
                 return check_argument_matches(arg, source, condition);
             }
             return false;
@@ -54,7 +54,7 @@ pub fn check_has_argument_condition(
 
         // Otherwise check all arguments
         for i in 0..args_node.named_child_count() {
-            if let Some(arg) = args_node.named_child(i) {
+            if let Some(arg) = args_node.named_child(i as u32) {
                 if check_argument_matches(arg, source, condition) {
                     return true;
                 }
@@ -125,13 +125,13 @@ pub fn check_not_literal_condition(
 ) -> bool {
     if let Some(args_node) = language_support.get_arguments_node(node) {
         if let Some(position) = condition.argument_position {
-            if let Some(arg) = args_node.named_child(position) {
+            if let Some(arg) = args_node.named_child(position as u32) {
                 return !is_literal_node(&arg);
             }
         } else {
             // Check if any argument is not literal
             for i in 0..args_node.named_child_count() {
-                if let Some(arg) = args_node.named_child(i) {
+                if let Some(arg) = args_node.named_child(i as u32) {
                     if !is_literal_node(&arg) {
                         return true;
                     }
@@ -175,7 +175,7 @@ pub fn check_argument_not_sanitized_condition(
     if let Some(sanitizer_patterns) = &condition.patterns {
         if let Some(args_node) = language_support.get_arguments_node(node) {
             for i in 0..args_node.named_child_count() {
-                if let Some(arg) = args_node.named_child(i) {
+                if let Some(arg) = args_node.named_child(i as u32) {
                     let arg_text = get_node_text(&arg, source);
 
                     // Check if argument contains any sanitization patterns

@@ -17,8 +17,8 @@ impl CommonUtils {
         }
 
         // Handle regex patterns (prefix or escaped chars)
-        if let Some(rest) = pattern.strip_prefix("regex:") {
-            return Self::matches_regex(rest, text);
+        if let Some(stripped) = pattern.strip_prefix("regex:") {
+            return Self::matches_regex(stripped, text);
         }
         if pattern.contains("\\\\") || pattern.contains("\\.") {
             return Self::matches_regex(pattern, text);
@@ -195,12 +195,6 @@ impl CommonUtils {
         }
 
         true
-    }
-
-    /// Check if pattern is a regex pattern
-    #[allow(dead_code)] // retained for parity with matcher dispatch; not yet called
-    fn is_regex_pattern(pattern: &str) -> bool {
-        pattern.starts_with("regex:") || pattern.contains("\\\\") || pattern.contains("\\.")
     }
 
     /// Match regex patterns with caching for performance
