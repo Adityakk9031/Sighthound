@@ -719,3 +719,73 @@ pub enum VariableType {
     Source,
     FunctionArgument,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    // ---- detect_bundler_config_language (private) ----
+
+    #[test]
+    fn bundler_config_detects_javascript_variants() {
+        assert_eq!(detect_bundler_config_language("webpack.config.js"), Some("javascript"));
+        assert_eq!(detect_bundler_config_language("rollup.config.mjs"), Some("javascript"));
+        assert_eq!(detect_bundler_config_language("vite.config.cjs"), Some("javascript"));
+    }
+
+    #[test]
+    fn bundler_config_detects_typescript_variants() {
+        assert_eq!(detect_bundler_config_language("webpack.config.ts"), Some("tsx"));
+        assert_eq!(detect_bundler_config_language("vite.config.mts"), Some("tsx"));
+        assert_eq!(detect_bundler_config_language("rollup.config.cts"), Some("tsx"));
+    }
+
+    #[test]
+    fn bundler_config_rejects_non_bundler_filenames() {
+        // Contains none of webpack/rollup/vite, so the bundler check short-circuits.
+        assert_eq!(detect_bundler_config_language("tailwind.config.js"), None);
+    }
+
+    #[test]
+    fn bundler_config_rejects_unrecognized_extension() {
+        // Matches the bundler-name check but not any recognized config suffix.
+        assert_eq!(detect_bundler_config_language("webpack.config.json"), None);
+    }
+
+    // ---- discover_files_sequential (private) ----
+
+    #[test]
+    fn discover_files_sequential_groups_by_language_and_skips_ignored_dirs() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        fs::write(dir.path().join("main.py"), "print('hi')").expect("write main.py");
+        fs::write(dir.path().join("second.py"), "print('bye')").expect("write second.py");
+
+        let skipped = dir.path().join("node_modules");
+        fs::create_dir(&skipped).expect("create node_modules");
+        fs::write(skipped.join("lib.js"), "console.log(1)").expect("write lib.js");
+
+        // Unrecognized extension: should not appear in any language bucket.
+        fs::write(dir.path().join("data.unknownext"), "???").expect("write unknown file");
+
+        let result = discover_files_sequential(dir.path().to_str().unwrap(), 4, false, false)
+            .expect("discovery should succeed");
+
+        assert_eq!(result.get("python").map(Vec::len), Some(2));
+        assert!(
+            result.get("javascript").is_none_or(Vec::is_empty),
+            "node_modules contents should be skipped: {:?}",
+            result.get("javascript")
+        );
+    }
+
+    #[test]
+    fn discover_files_sequential_on_empty_dir_returns_empty_map() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+
+        let result = discover_files_sequential(dir.path().to_str().unwrap(), 4, false, false)
+            .expect("discovery should succeed");
+
+        assert!(result.is_empty());
+    }
+}

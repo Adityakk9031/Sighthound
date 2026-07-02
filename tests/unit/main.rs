@@ -12,3 +12,4 @@ mod language_support_tests;
 mod pattern_matching_tests;
 mod prefilter_should_scan_tests;
 mod rule_deserialization_tests;
+mod semantic_variables_tests;
