@@ -12,14 +12,8 @@ fn main() -> Result<()> {
     // Handle version flag
     if cli.version {
         println!("sighthound {}", env!("CARGO_PKG_VERSION"));
-        println!(
-            "Built from commit: {}",
-            option_env!("GIT_HASH").unwrap_or("unknown")
-        );
-        println!(
-            "Build date: {}",
-            option_env!("BUILD_DATE").unwrap_or("unknown")
-        );
+        println!("Built from commit: {}", option_env!("GIT_HASH").unwrap_or("unknown"));
+        println!("Build date: {}", option_env!("BUILD_DATE").unwrap_or("unknown"));
         return Ok(());
     }
 
@@ -34,9 +28,11 @@ fn main() -> Result<()> {
     };
 
     // Initialize logger (respect RUST_LOG or --verbose flag)
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or(if cli.verbose { "debug" } else { "info" }),
-    )
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(if cli.verbose {
+        "debug"
+    } else {
+        "info"
+    }))
     .init();
     // Configure threading if specified
     if let Some(threads) = cli.threads {

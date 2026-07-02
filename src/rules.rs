@@ -30,9 +30,8 @@ const EMBEDDED_JAVASCRIPT: &[&str] = &[
 ];
 
 // Additional backend JS rules, loaded only when code_type is not "frontend".
-const EMBEDDED_JAVASCRIPT_BACKEND: &[&str] = &[include_str!(
-    "../rules/backend_javascript/backend_security.ron"
-)];
+const EMBEDDED_JAVASCRIPT_BACKEND: &[&str] =
+    &[include_str!("../rules/backend_javascript/backend_security.ron")];
 
 const EMBEDDED_JAVA: &[&str] = &[
     include_str!("../rules/java/sql_injection.ron"),
@@ -89,10 +88,8 @@ const EMBEDDED_RUBY: &[&str] = &[
     include_str!("../rules/ruby/redos.ron"),
 ];
 
-const EMBEDDED_HTML: &[&str] = &[
-    include_str!("../rules/html/xss.ron"),
-    include_str!("../rules/html/thymeleaf.ron"),
-];
+const EMBEDDED_HTML: &[&str] =
+    &[include_str!("../rules/html/xss.ron"), include_str!("../rules/html/thymeleaf.ron")];
 
 const EMBEDDED_PHP: &[&str] = &[
     include_str!("../rules/php/sql_injection.ron"),
@@ -114,10 +111,8 @@ pub struct ExclusionPatterns {
 
 impl ExclusionPatterns {
     pub fn load_from_file(file_path: &str) -> Result<Self> {
-        let content = fs::read_to_string(file_path).context(format!(
-            "Failed to read exclusion patterns file: {}",
-            file_path
-        ))?;
+        let content = fs::read_to_string(file_path)
+            .context(format!("Failed to read exclusion patterns file: {}", file_path))?;
 
         ron::from_str(&content).context("Failed to parse exclusion patterns RON")
     }
@@ -237,10 +232,7 @@ impl Rules {
                 Ok(rules) => all_rules.push(rules),
                 Err(e) => {
                     // Log warning but continue with other languages
-                    eprintln!(
-                        "Warning: Failed to load embedded rules for {}: {}",
-                        language, e
-                    );
+                    eprintln!("Warning: Failed to load embedded rules for {}: {}", language, e);
                 }
             }
         }
@@ -259,11 +251,7 @@ impl Rules {
             .context(format!("Failed to read rules file: {}", rules_file))?;
 
         let path = Path::new(rules_file);
-        let extension = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("")
-            .to_lowercase();
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase();
 
         match extension.as_str() {
             "ron" => ron::from_str(&content).context("Failed to parse rules RON"),
@@ -284,10 +272,7 @@ impl Rules {
         } else if path.is_dir() {
             Self::load_from_directory(rules_path)
         } else {
-            Err(anyhow::anyhow!(
-                "Rules path '{}' is neither a file nor a directory",
-                rules_path
-            ))
+            Err(anyhow::anyhow!("Rules path '{}' is neither a file nor a directory", rules_path))
         }
     }
 
@@ -359,18 +344,12 @@ impl Rules {
 
     /// Get all search mode rules
     pub fn get_search_rules(&self) -> Vec<&UnifiedRule> {
-        self.rules
-            .iter()
-            .filter(|rule| rule.is_search_rule())
-            .collect()
+        self.rules.iter().filter(|rule| rule.is_search_rule()).collect()
     }
 
     /// Get all taint mode rules
     pub fn get_taint_rules(&self) -> Vec<&UnifiedRule> {
-        self.rules
-            .iter()
-            .filter(|rule| rule.is_taint_rule())
-            .collect()
+        self.rules.iter().filter(|rule| rule.is_taint_rule()).collect()
     }
 
     /// Count total number of rules
@@ -382,12 +361,7 @@ impl Rules {
     pub fn get_rules_by_category(&self, category: &str) -> Vec<&UnifiedRule> {
         self.rules
             .iter()
-            .filter(|rule| {
-                rule.category
-                    .as_ref()
-                    .map(|c| c == category)
-                    .unwrap_or(false)
-            })
+            .filter(|rule| rule.category.as_ref().map(|c| c == category).unwrap_or(false))
             .collect()
     }
 

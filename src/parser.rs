@@ -12,20 +12,13 @@ impl LanguageParser {
         let language_support = get_language_support(language_name)?;
         let language = language_support.tree_sitter_language();
         let mut parser = TSParser::new();
-        parser
-            .set_language(&language)
-            .context("Failed to set language")?;
+        parser.set_language(&language).context("Failed to set language")?;
 
-        Ok(Self {
-            parser,
-            language_support,
-        })
+        Ok(Self { parser, language_support })
     }
 
     pub fn parse(&mut self, source: &[u8]) -> Result<Tree> {
-        self.parser
-            .parse(source, None)
-            .context("Failed to parse file")
+        self.parser.parse(source, None).context("Failed to parse file")
     }
 
     pub fn file_extension(&self) -> &str {
@@ -67,10 +60,7 @@ struct TreeCallIterator<'a> {
 
 impl<'a> TreeCallIterator<'a> {
     fn new(root: Node<'a>, call_types: &'a [&'static str]) -> Self {
-        Self {
-            stack: vec![root],
-            call_types,
-        }
+        Self { stack: vec![root], call_types }
     }
 }
 

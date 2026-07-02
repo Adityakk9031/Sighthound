@@ -52,10 +52,7 @@ impl FrameworkRegistry {
         // Frontend frameworks
         let frontend_frameworks = vec![
             ("React", vec!["react", "react-dom"]),
-            (
-                "Next.js",
-                vec!["next/link", "next/router", "next/head", "@next/"],
-            ),
+            ("Next.js", vec!["next/link", "next/router", "next/head", "@next/"]),
             ("Angular", vec!["@angular/core"]),
             ("Vue", vec!["vue", "vue-router"]),
             ("Nuxt.js", vec!["nuxt", "@nuxtjs", "@nuxt/"]),
@@ -83,10 +80,7 @@ impl FrameworkRegistry {
             ("Recoil", vec!["recoil"]),
             ("MobX", vec!["mobx"]),
             ("Pinia", vec!["pinia"]),
-            (
-                "TanStack Query",
-                vec!["@tanstack/react-query", "@tanstack/vue-query"],
-            ),
+            ("TanStack Query", vec!["@tanstack/react-query", "@tanstack/vue-query"]),
             ("SWR", vec!["swr"]),
             ("Vite", vec!["vite", "@vitejs/"]),
             ("Webpack", vec!["webpack"]),
@@ -122,13 +116,8 @@ impl FrameworkRegistry {
         ];
 
         for (name, sigs) in frontend_frameworks {
-            frameworks.insert(
-                name,
-                FrameworkInfo {
-                    signatures: sigs,
-                    code_type: CodeType::Frontend,
-                },
-            );
+            frameworks
+                .insert(name, FrameworkInfo { signatures: sigs, code_type: CodeType::Frontend });
         }
 
         // Backend frameworks
@@ -161,13 +150,8 @@ impl FrameworkRegistry {
         ];
 
         for (name, sigs) in backend_frameworks {
-            frameworks.insert(
-                name,
-                FrameworkInfo {
-                    signatures: sigs,
-                    code_type: CodeType::Backend,
-                },
-            );
+            frameworks
+                .insert(name, FrameworkInfo { signatures: sigs, code_type: CodeType::Backend });
         }
 
         Self { frameworks }
@@ -197,9 +181,7 @@ impl FrameworkRegistry {
 
         for info in self.frameworks.values() {
             let has_match = info.signatures.iter().any(|sig| {
-                imports
-                    .iter()
-                    .any(|imp| imp.to_lowercase().contains(&sig.to_lowercase()))
+                imports.iter().any(|imp| imp.to_lowercase().contains(&sig.to_lowercase()))
             });
 
             if has_match {
@@ -229,9 +211,7 @@ pub struct CodeTypeDetector {
 
 impl CodeTypeDetector {
     pub fn new() -> Self {
-        Self {
-            framework_registry: FrameworkRegistry::new(),
-        }
+        Self { framework_registry: FrameworkRegistry::new() }
     }
 
     pub fn detect_code_type(&self, _file_path: &str, content: &str, language: &str) -> CodeType {
@@ -244,10 +224,7 @@ impl CodeTypeDetector {
         }
 
         // Then try AST analysis for JavaScript/TypeScript
-        if matches!(
-            language.to_lowercase().as_str(),
-            "javascript" | "typescript" | "tsx"
-        ) {
+        if matches!(language.to_lowercase().as_str(), "javascript" | "typescript" | "tsx") {
             if let Ok(mut parser) = crate::parser::LanguageParser::new(language) {
                 if let Ok(tree) = parser.parse(content.as_bytes()) {
                     let ast_result = self.detect_from_ast(&tree, content.as_bytes());
@@ -344,14 +321,8 @@ impl CodeTypeDetector {
         ];
 
         // React hooks
-        let react_hooks = vec![
-            "useState",
-            "useEffect",
-            "useContext",
-            "useReducer",
-            "useMemo",
-            "useCallback",
-        ];
+        let react_hooks =
+            vec!["useState", "useEffect", "useContext", "useReducer", "useMemo", "useCallback"];
 
         // Check for call expressions
         self.walk_tree(&root_node, &mut |node| {
@@ -402,9 +373,7 @@ impl CodeTypeDetector {
         let root_node = tree.root_node();
 
         // Node.js core modules
-        let core_modules = vec![
-            "fs", "path", "http", "https", "crypto", "os", "util", "events",
-        ];
+        let core_modules = vec!["fs", "path", "http", "https", "crypto", "os", "util", "events"];
 
         // Node.js globals
         let node_globals = vec!["__dirname", "__filename", "module", "exports", "process"];
@@ -453,15 +422,11 @@ impl CodeTypeDetector {
         let frontend_sigs = self.framework_registry.get_frontend_signatures();
         let backend_sigs = self.framework_registry.get_backend_signatures();
 
-        let frontend_matches = imports
-            .iter()
-            .filter(|imp| frontend_sigs.iter().any(|sig| imp.contains(sig)))
-            .count();
+        let frontend_matches =
+            imports.iter().filter(|imp| frontend_sigs.iter().any(|sig| imp.contains(sig))).count();
 
-        let backend_matches = imports
-            .iter()
-            .filter(|imp| backend_sigs.iter().any(|sig| imp.contains(sig)))
-            .count();
+        let backend_matches =
+            imports.iter().filter(|imp| backend_sigs.iter().any(|sig| imp.contains(sig))).count();
 
         if frontend_matches > 0 && backend_matches == 0 {
             CodeType::Frontend

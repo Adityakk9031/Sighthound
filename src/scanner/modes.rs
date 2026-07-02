@@ -107,11 +107,8 @@ fn load_rules(cli: &Cli, context: &ScanContext) -> Result<Rules> {
             let mut all_rules = Vec::new();
 
             // Determine exclusion pattern type based on code_type
-            let pattern_type = if cli.code_type.as_deref() == Some("backend") {
-                "backend"
-            } else {
-                "frontend"
-            };
+            let pattern_type =
+                if cli.code_type.as_deref() == Some("backend") { "backend" } else { "frontend" };
 
             for language in &context.detected_languages {
                 let base_rules_dir = cli.rules_dir.as_deref().unwrap_or("rules");
@@ -160,10 +157,7 @@ pub fn run_explicit_scan(cli: &Cli, root_dir: &str, show_progress: bool) -> Resu
         .ok_or_else(|| anyhow::anyhow!("Language required for explicit scan"))?;
 
     let mut all_rules = if should_use_embedded_rules(cli) {
-        vec![Rules::load_embedded_rules(
-            language,
-            cli.code_type.as_deref(),
-        )?]
+        vec![Rules::load_embedded_rules(language, cli.code_type.as_deref())?]
     } else {
         let rules_path = cli.rules_path.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Rules path required for explicit scan when not using embedded rules")
@@ -330,11 +324,8 @@ pub fn run_auto_detection_scan(
         } else {
             // Load base rules for the language with centralized exclusions
             // Determine exclusion pattern type based on code_type
-            let pattern_type = if cli.code_type.as_deref() == Some("backend") {
-                "backend"
-            } else {
-                "frontend"
-            };
+            let pattern_type =
+                if cli.code_type.as_deref() == Some("backend") { "backend" } else { "frontend" };
 
             if let Ok(base_rules) =
                 Rules::load_from_directory_with_exclusions(&rules_dir, pattern_type)
@@ -508,9 +499,7 @@ pub fn run_taint_analysis_with_verbosity(
     let taint_findings: Vec<Finding> = all_findings
         .into_iter()
         .filter(|f| {
-            f.tags
-                .as_ref()
-                .is_some_and(|tags| tags.contains(&"taint_analysis".to_string()))
+            f.tags.as_ref().is_some_and(|tags| tags.contains(&"taint_analysis".to_string()))
         })
         .collect();
 
@@ -524,9 +513,7 @@ pub fn run_taint_analysis_with_verbosity(
             let same_file_count = taint_findings
                 .iter()
                 .filter(|f| {
-                    f.tags
-                        .as_ref()
-                        .is_some_and(|tags| tags.contains(&"same_file".to_string()))
+                    f.tags.as_ref().is_some_and(|tags| tags.contains(&"same_file".to_string()))
                 })
                 .count();
             let cross_file_count = taint_findings.len() - same_file_count;

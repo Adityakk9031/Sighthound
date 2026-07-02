@@ -134,11 +134,7 @@ pub fn scan_java_simple_with_rules(staging: &Path, rules: Rules) -> Vec<Finding>
 pub fn taint_findings(findings: &[Finding]) -> Vec<Finding> {
     findings
         .iter()
-        .filter(|f| {
-            f.tags
-                .as_ref()
-                .is_some_and(|tags| tags.iter().any(|t| t == "taint_analysis"))
-        })
+        .filter(|f| f.tags.as_ref().is_some_and(|tags| tags.iter().any(|t| t == "taint_analysis")))
         .cloned()
         .collect()
 }
@@ -146,19 +142,12 @@ pub fn taint_findings(findings: &[Finding]) -> Vec<Finding> {
 pub fn cross_file_findings(findings: &[Finding]) -> Vec<&Finding> {
     findings
         .iter()
-        .filter(|f| {
-            f.tags
-                .as_ref()
-                .is_some_and(|tags| tags.iter().any(|t| t == "cross_file"))
-        })
+        .filter(|f| f.tags.as_ref().is_some_and(|tags| tags.iter().any(|t| t == "cross_file")))
         .collect()
 }
 
 pub fn findings_in_file<'a>(findings: &'a [Finding], filename: &str) -> Vec<&'a Finding> {
-    findings
-        .iter()
-        .filter(|f| f.file.ends_with(filename))
-        .collect()
+    findings.iter().filter(|f| f.file.ends_with(filename)).collect()
 }
 
 pub fn findings_in_line_range(
@@ -166,10 +155,7 @@ pub fn findings_in_line_range(
     min_line: usize,
     max_line: usize,
 ) -> Vec<&Finding> {
-    findings
-        .iter()
-        .filter(|f| f.line >= min_line && f.line <= max_line)
-        .collect()
+    findings.iter().filter(|f| f.line >= min_line && f.line <= max_line).collect()
 }
 
 pub fn assert_no_findings_in_range(
@@ -183,9 +169,7 @@ pub fn assert_no_findings_in_range(
         hits.is_empty(),
         "{context}: expected no findings between lines {min_line}-{max_line}, got {}: {:?}",
         hits.len(),
-        hits.iter()
-            .map(|f| (f.line, &f.finding_type, &f.file))
-            .collect::<Vec<_>>()
+        hits.iter().map(|f| (f.line, &f.finding_type, &f.file)).collect::<Vec<_>>()
     );
 }
 
@@ -213,9 +197,7 @@ pub fn assert_no_cross_file_findings(findings: &[Finding], context: &str) {
         hits.is_empty(),
         "{context}: expected no cross-file taint findings, got {}: {:?}",
         hits.len(),
-        hits.iter()
-            .map(|f| (f.file.as_str(), f.line, f.finding_type.as_str()))
-            .collect::<Vec<_>>()
+        hits.iter().map(|f| (f.file.as_str(), f.line, f.finding_type.as_str())).collect::<Vec<_>>()
     );
 }
 

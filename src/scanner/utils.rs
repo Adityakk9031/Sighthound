@@ -296,12 +296,7 @@ pub fn discover_files_by_language_with_progress_and_options(
     let estimated_languages = crate::config::ScanDefaults::ESTIMATED_LANGUAGES;
 
     if parallel {
-        discover_files_parallel(
-            root_dir,
-            estimated_languages,
-            show_progress,
-            include_test_fixtures,
-        )
+        discover_files_parallel(root_dir, estimated_languages, show_progress, include_test_fixtures)
     } else {
         discover_files_sequential(
             root_dir,
@@ -496,14 +491,8 @@ impl AstUtils {
     /// Check if code represents user input (source)
     fn is_user_input_pattern(code: &str, pattern: &str) -> bool {
         // Only consider user input if it's actually getting user data
-        let user_input_patterns = [
-            "input(",
-            "raw_input(",
-            "request.args",
-            "request.form",
-            "request.json",
-            "sys.argv",
-        ];
+        let user_input_patterns =
+            ["input(", "raw_input(", "request.args", "request.form", "request.json", "sys.argv"];
 
         user_input_patterns.iter().any(|&p| code.contains(p))
             || (pattern.contains("environ") && Self::is_environment_read(code))
@@ -516,14 +505,8 @@ impl AstUtils {
 
     /// Check if code represents dangerous sink
     fn is_dangerous_sink_pattern(_code: &str, pattern: &str) -> bool {
-        let dangerous_sinks = [
-            "os.system",
-            "subprocess.call",
-            "subprocess.run",
-            "eval(",
-            "exec(",
-            "open(",
-        ];
+        let dangerous_sinks =
+            ["os.system", "subprocess.call", "subprocess.run", "eval(", "exec(", "open("];
 
         dangerous_sinks.iter().any(|&sink| pattern.contains(sink))
     }
@@ -608,13 +591,8 @@ impl AstUtils {
     }
 
     fn check_html_sanitization(code: &str) -> bool {
-        let html_sanitizers = [
-            "DOMPurify.sanitize(",
-            "validator.escape(",
-            "xss(",
-            "escapeHtml(",
-            "encodeHTML(",
-        ];
+        let html_sanitizers =
+            ["DOMPurify.sanitize(", "validator.escape(", "xss(", "escapeHtml(", "encodeHTML("];
         html_sanitizers.iter().any(|pat| code.contains(pat))
     }
 
@@ -654,9 +632,7 @@ impl AstUtils {
             "purify(",
             "safe(",
         ];
-        generic_sanitizers
-            .iter()
-            .any(|pattern| code.contains(pattern))
+        generic_sanitizers.iter().any(|pattern| code.contains(pattern))
     }
 
     /// Extract variables from expression with semantic understanding

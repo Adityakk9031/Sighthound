@@ -3,16 +3,17 @@ use sighthound::rules::{
     match_any_pattern, match_pattern, rule_matches_pattern_unified, validate_unified_rule_patterns,
 };
 
-/// Build a minimal search-mode rule for pattern-matching tests.
-fn search_rule(pattern: Option<&str>, patterns: Option<Vec<&str>>) -> UnifiedRule {
+// Build a search-mode UnifiedRule carrying the given pattern/patterns.
+// UnifiedRule does not derive Default, so this helper fills the remaining fields.
+fn make_rule(pattern: Option<&str>, patterns: Option<Vec<&str>>) -> UnifiedRule {
     UnifiedRule {
         id: None,
         name: None,
         description: None,
         category: None,
         mode: "search".to_string(),
-        pattern: pattern.map(|p| p.to_string()),
-        patterns: patterns.map(|ps| ps.into_iter().map(|p| p.to_string()).collect()),
+        pattern: pattern.map(|s| s.to_string()),
+        patterns: patterns.map(|v| v.into_iter().map(|s| s.to_string()).collect()),
         sources: None,
         sinks: None,
         propagators: None,
@@ -33,27 +34,31 @@ mod pattern_matching_tests {
     use super::*;
 
     #[test]
-    fn test_substring_pattern_matching() {
-        // A non-wildcard, non-regex pattern matches as a substring of the text.
+    fn test_plain_substring_matching() {
+        // note: plain (non-wildcard, non-regex) patterns now match by substring
+        // containment via `matches_unified_pattern(pattern, text)` (text contains pattern),
+        // rather than exact equality as in the pre-refactor matcher.
         assert!(match_pattern("print", "print"));
         assert!(match_pattern("os.system", "os.system"));
         assert!(match_pattern("print", "printf")); // "printf" contains "print"
-        assert!(match_pattern("system", "os.system")); // "os.system" contains "system"
-        assert!(!match_pattern("os.system", "os.path"));
-        assert!(!match_pattern("xyz", "os.system"));
+        assert!(!match_pattern("os.system", "os.path")); // not a substring
+        assert!(!match_pattern("printf", "print")); // longer pattern is not contained
     }
 
     #[test]
     fn test_wildcard_pattern_matching() {
+        // Test wildcard patterns
         assert!(match_pattern("*.exe", "malware.exe"));
         assert!(match_pattern("*.exe", "file.exe"));
         assert!(!match_pattern("*.exe", "file.txt"));
 
+        // Test patterns with wildcards at beginning
         assert!(match_pattern("*password*", "get_password_hash"));
         assert!(match_pattern("*password*", "password"));
         assert!(match_pattern("*password*", "my_password_file"));
         assert!(!match_pattern("*password*", "get_user_name"));
 
+        // Test multiple wildcards
         assert!(match_pattern("*test*.py", "my_test_file.py"));
         assert!(match_pattern("*test*.py", "test.py"));
         assert!(!match_pattern("*test*.py", "file.txt"));
@@ -61,54 +66,59 @@ mod pattern_matching_tests {
 
     #[test]
     fn test_regex_pattern_matching() {
+        // Test basic regex patterns that should work
         assert!(match_pattern("regex:^[a-z]+$", "hello"));
         assert!(!match_pattern("regex:^[a-z]+$", "Hello"));
         assert!(match_pattern("regex:\\d+", "test123"));
         assert!(!match_pattern("regex:\\d+", "test"));
 
+        // Test simple patterns
         assert!(match_pattern("regex:eval", "eval"));
         assert!(!match_pattern("regex:^eval$", "evaluate"));
     }
 
     #[test]
     fn test_edge_cases() {
+        // Test empty strings
         assert!(match_pattern("", ""));
         assert!(!match_pattern("test", ""));
-        // An empty pattern is a substring of any text.
+        // note: an empty pattern is a substring of any text, so it matches everything
         assert!(match_pattern("", "test"));
 
+        // Test special characters
         assert!(match_pattern("test.func", "test.func"));
         assert!(match_pattern("test[0]", "test[0]"));
         assert!(match_pattern("test()", "test()"));
 
-        // Matching is case-sensitive.
+        // Test case sensitivity
         assert!(!match_pattern("Print", "print"));
         assert!(match_pattern("print", "print"));
     }
 
     #[test]
     fn test_match_any_pattern() {
-        let patterns = vec![
-            "print".to_string(),
-            "os.system".to_string(),
-            "*.exe".to_string(),
-        ];
+        let patterns = vec!["print".to_string(), "os.system".to_string(), "*.exe".to_string()];
 
+        // Test matching different patterns
         assert!(match_any_pattern(&patterns, "print"));
         assert!(match_any_pattern(&patterns, "os.system"));
         assert!(match_any_pattern(&patterns, "malware.exe"));
 
+        // Test non-matching
         assert!(!match_any_pattern(&patterns, "os.path"));
         assert!(!match_any_pattern(&patterns, "file.txt"));
 
+        // Test empty patterns array
         let empty_patterns: Vec<String> = vec![];
         assert!(!match_any_pattern(&empty_patterns, "anything"));
     }
 
     #[test]
     fn test_single_pattern_rule() {
-        let rule = search_rule(Some("pyperclip.paste"), None);
+        // Create a rule with a single pattern
+        let rule = make_rule(Some("pyperclip.paste"), None);
 
+        // Test matching
         assert!(rule_matches_pattern_unified(&rule, "pyperclip.paste"));
         assert!(!rule_matches_pattern_unified(&rule, "pyperclip.copy"));
         assert!(!rule_matches_pattern_unified(&rule, "clipboard.get"));
@@ -116,29 +126,28 @@ mod pattern_matching_tests {
 
     #[test]
     fn test_multiple_patterns_rule() {
-        let rule = search_rule(
+        // Create a rule with multiple patterns
+        let rule = make_rule(
             None,
-            Some(vec![
-                "pyperclip.paste",
-                "pyperclip.copy",
-                "*.to_clipboard",
-                "win32clipboard",
-            ]),
+            Some(vec!["pyperclip.paste", "pyperclip.copy", "*.to_clipboard", "win32clipboard"]),
         );
 
+        // Test all patterns match
         assert!(rule_matches_pattern_unified(&rule, "pyperclip.paste"));
         assert!(rule_matches_pattern_unified(&rule, "pyperclip.copy"));
         assert!(rule_matches_pattern_unified(&rule, "df.to_clipboard"));
         assert!(rule_matches_pattern_unified(&rule, "win32clipboard"));
 
+        // Test non-matching
         assert!(!rule_matches_pattern_unified(&rule, "clipboard.get"));
         assert!(!rule_matches_pattern_unified(&rule, "print"));
     }
 
     #[test]
     fn test_wildcard_patterns_in_multiple_patterns() {
-        let rule = search_rule(None, Some(vec!["*.tk*", "*.exe*", "keyboard.*"]));
+        let rule = make_rule(None, Some(vec!["*.tk*", "*.exe*", "keyboard.*"]));
 
+        // Test wildcard matching
         assert!(rule_matches_pattern_unified(&rule, "malicious.tk"));
         assert!(rule_matches_pattern_unified(&rule, "bad.tk.com"));
         assert!(rule_matches_pattern_unified(&rule, "virus.exe"));
@@ -146,35 +155,48 @@ mod pattern_matching_tests {
         assert!(rule_matches_pattern_unified(&rule, "keyboard.hook"));
         assert!(rule_matches_pattern_unified(&rule, "keyboard.listener"));
 
+        // Test non-matching
         assert!(!rule_matches_pattern_unified(&rule, "google.com"));
         assert!(!rule_matches_pattern_unified(&rule, "file.txt"));
         assert!(!rule_matches_pattern_unified(&rule, "mouse.click"));
     }
 
     #[test]
-    fn test_rule_pattern_validation() {
-        // Valid: literal patterns always validate.
-        let valid_single = search_rule(Some("test"), None);
+    fn test_rule_validation() {
+        // note: the unified-rule refactor replaced the old structural validation
+        // (rejecting both/neither pattern, empty pattern, empty patterns array) with
+        // `validate_unified_rule_patterns`, which only validates that any `regex:`
+        // pattern compiles. We assert that current contract: plain and valid-regex
+        // patterns pass; malformed regex patterns fail.
+        let valid_single = make_rule(Some("test"), None);
         assert!(validate_unified_rule_patterns(&valid_single).is_ok());
 
-        let valid_multiple = search_rule(None, Some(vec!["test1", "test2"]));
+        let valid_multiple = make_rule(None, Some(vec!["test1", "test2"]));
         assert!(validate_unified_rule_patterns(&valid_multiple).is_ok());
 
-        // Valid regex.
-        let valid_regex = search_rule(Some("regex:^[a-z]+$"), None);
+        let valid_regex = make_rule(Some("regex:^[a-z]+$"), None);
         assert!(validate_unified_rule_patterns(&valid_regex).is_ok());
 
-        // Invalid regex in `pattern` must error.
-        let invalid_regex = search_rule(Some("regex:[unterminated"), None);
+        // Invalid regex in the single `pattern` field
+        let invalid_regex = make_rule(Some("regex:[unclosed"), None);
         assert!(validate_unified_rule_patterns(&invalid_regex).is_err());
 
-        // Invalid regex inside `patterns` must error.
-        let invalid_regex_multi = search_rule(None, Some(vec!["ok", "regex:(unbalanced"]));
-        assert!(validate_unified_rule_patterns(&invalid_regex_multi).is_err());
+        // Invalid regex inside the `patterns` list
+        let invalid_regex_in_list = make_rule(None, Some(vec!["ok", "regex:(("]));
+        assert!(validate_unified_rule_patterns(&invalid_regex_in_list).is_err());
+
+        // Contentless and empty-pattern search rules are accepted: the unified validator
+        // only checks regex compilation, so the old structural rejection no longer applies.
+        // These assert the current (permissive) contract, guarding against silent regressions.
+        assert!(validate_unified_rule_patterns(&make_rule(None, None)).is_ok());
+        assert!(validate_unified_rule_patterns(&make_rule(Some(""), None)).is_ok());
+        assert!(validate_unified_rule_patterns(&make_rule(None, Some(vec![]))).is_ok());
+        assert!(validate_unified_rule_patterns(&make_rule(None, Some(vec!["ok", ""]))).is_ok());
     }
 
     #[test]
     fn test_complex_real_world_patterns() {
+        // Test real-world vulnerability patterns
         let sql_injection_patterns = vec![
             "execute".to_string(),
             "*.execute*".to_string(),
@@ -182,18 +204,18 @@ mod pattern_matching_tests {
             "db.execute".to_string(),
         ];
 
+        // Should match SQL injection patterns
         assert!(match_any_pattern(&sql_injection_patterns, "execute"));
         assert!(match_any_pattern(&sql_injection_patterns, "cursor.execute"));
         assert!(match_any_pattern(&sql_injection_patterns, "db.execute"));
-        assert!(match_any_pattern(
-            &sql_injection_patterns,
-            "conn.execute_query"
-        ));
+        assert!(match_any_pattern(&sql_injection_patterns, "conn.execute_query"));
 
-        // Strings that contain none of the patterns as a substring don't match.
-        assert!(!match_any_pattern(&sql_injection_patterns, "fetchone"));
-        assert!(!match_any_pattern(&sql_injection_patterns, "commit"));
+        // note: with substring semantics "executed" contains the "execute" pattern, so it
+        // matches; "executor" does not contain "execute" and stays unmatched.
+        assert!(match_any_pattern(&sql_injection_patterns, "executed"));
+        assert!(!match_any_pattern(&sql_injection_patterns, "executor"));
 
+        // Test command injection patterns
         let command_injection_patterns = vec![
             "os.system".to_string(),
             "subprocess.*".to_string(),
@@ -202,16 +224,11 @@ mod pattern_matching_tests {
         ];
 
         assert!(match_any_pattern(&command_injection_patterns, "os.system"));
-        assert!(match_any_pattern(
-            &command_injection_patterns,
-            "subprocess.call"
-        ));
-        assert!(match_any_pattern(
-            &command_injection_patterns,
-            "subprocess.Popen"
-        ));
+        assert!(match_any_pattern(&command_injection_patterns, "subprocess.call"));
+        assert!(match_any_pattern(&command_injection_patterns, "subprocess.Popen"));
         assert!(match_any_pattern(&command_injection_patterns, "shell=True"));
 
+        // Test crypto patterns
         let crypto_patterns = vec![
             "*MD5*".to_string(),
             "*SHA1*".to_string(),
@@ -255,6 +272,8 @@ mod performance_tests {
         ];
 
         let start = Instant::now();
+
+        // Run pattern matching many times
         for _ in 0..1000 {
             for test_str in &test_strings {
                 for pattern in &patterns {
@@ -262,18 +281,17 @@ mod performance_tests {
                 }
             }
         }
+
         let duration = start.elapsed();
         println!("Pattern matching 50,000 times took: {:?}", duration);
-        assert!(
-            duration.as_secs() < 30,
-            "Pattern matching too slow: {:?}",
-            duration
-        );
+
+        // Performance should be reasonable (less than 30 seconds for this test)
+        assert!(duration.as_secs() < 30, "Pattern matching too slow: {:?}", duration);
     }
 
     #[test]
     fn test_multiple_patterns_performance() {
-        let rule = search_rule(
+        let rule = make_rule(
             None,
             Some(vec![
                 "print",
@@ -303,20 +321,18 @@ mod performance_tests {
         ];
 
         let start = Instant::now();
+
+        // Test rule matching performance
         for _ in 0..1000 {
             for test_str in &test_strings {
                 rule_matches_pattern_unified(&rule, test_str);
             }
         }
+
         let duration = start.elapsed();
-        println!(
-            "Multiple pattern rule matching 10,000 times took: {:?}",
-            duration
-        );
-        assert!(
-            duration.as_secs() < 30,
-            "Multiple pattern matching too slow: {:?}",
-            duration
-        );
+        println!("Multiple pattern rule matching 10,000 times took: {:?}", duration);
+
+        // Should be efficient even with multiple patterns (less than 30 seconds)
+        assert!(duration.as_secs() < 30, "Multiple pattern matching too slow: {:?}", duration);
     }
 }

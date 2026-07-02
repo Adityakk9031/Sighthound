@@ -20,10 +20,7 @@ fn cross_file_accuracy_fixtures_report_real_vulnerabilities() {
 
     let findings = scan_python_taint(staging.path(), ACCURACY_TAINT_RULES);
     let cross = cross_file_findings(&findings);
-    let module_c: Vec<_> = cross
-        .into_iter()
-        .filter(|f| f.file.ends_with("module_c.py"))
-        .collect();
+    let module_c: Vec<_> = cross.into_iter().filter(|f| f.file.ends_with("module_c.py")).collect();
 
     assert!(
         module_c.len() >= 4,
@@ -61,9 +58,6 @@ fn true_positive_cross_file_sinks_are_detected() {
         sink_findings.len() >= 4,
         "true_positives/sink.py should report multiple cross-file flows, got {}: {:?}",
         sink_findings.len(),
-        sink_findings
-            .iter()
-            .map(|f| (f.line, f.finding_type.as_str()))
-            .collect::<Vec<_>>()
+        sink_findings.iter().map(|f| (f.line, f.finding_type.as_str())).collect::<Vec<_>>()
     );
 }

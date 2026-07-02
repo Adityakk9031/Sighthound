@@ -1,14 +1,14 @@
-# Greppy - Blazing Fast Vulnerability Scanner
+# Sighthound - Blazing Fast Vulnerability Scanner
 
 <div align="center">
 
-![Greppy Logo](assets/logo.png)
+![Sighthound Logo](assets/logo.png)
 
 A high-performance vulnerability scanner for source code using tree-sitter parsing and advanced taint flow analysis.
 
-[![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/corgea/greppy_prototype)
+[![CI](https://github.com/Corgea/Sighthound/actions/workflows/ci.yml/badge.svg)](https://github.com/Corgea/Sighthound/actions/workflows/ci.yml)
 
 </div>
 
@@ -23,12 +23,24 @@ A high-performance vulnerability scanner for source code using tree-sitter parsi
 - **📊 Multiple Output Formats**: Text, JSON, and CSV reporting
 
 ### Language Support
-- **Python** (.py) - Full AST analysis with Django template support
-- **Java** (.java) - Method invocation and object creation analysis
-- **JavaScript** (.js) - Function calls and DOM manipulation detection
-- **TypeScript/TSX** (.tsx) - React component and JSX attribute analysis
-- **HTML** (.html) - Tag and attribute vulnerability detection
-- **Django Templates** (.html) - Template injection and XSS detection
+
+| Language | Extensions | Parsing | Bundled Rules |
+|---|---|---|---|
+| Python | `.py`, `.pyw`, `.pyi`, `.pyx` | ✅ | ✅ |
+| JavaScript | `.js`, `.mjs`, `.cjs`, `.jsx`, `.vue`, `.svelte` | ✅ | ✅ |
+| TypeScript / TSX | `.ts`, `.tsx`, `.mts`, `.cts` | ✅ | ✅ (reuses JavaScript rules) |
+| Java | `.java` | ✅ | ✅ |
+| PHP | `.php`, `.phtml` | ✅ | ✅ |
+| C# | `.cs`, `.csx` | ✅ | ✅ |
+| Go | `.go` | ✅ | ✅ |
+| Ruby | `.rb` | ✅ | ✅ |
+| HTML | `.html`, `.htm`, `.twig`, `.ejs`, `.hbs`, … | ✅ | ✅ |
+| Django templates | `.html` (Django syntax) | ✅ | ✅ (reuses HTML rules) |
+
+All listed languages ship with curated embedded rule packs and tree-sitter parsers.
+Auto-detection loads the right rules per file extension.
+
+**Not yet supported**: Razor (`.cshtml`), C/C++ (`.c`, `.h`).
 
 ### Scanning Modes
 - **Auto-Detection Mode**: Automatically detects languages and loads appropriate rules
@@ -38,12 +50,12 @@ A high-performance vulnerability scanner for source code using tree-sitter parsi
 ## 📦 Installation
 
 ### Prerequisites
-- Rust 1.70+ (install from [rustup.rs](https://rustup.rs/))
+- Rust 1.85+ (install from [rustup.rs](https://rustup.rs/))
 - Git
 
 ### Build from Source
 ```bash
-git clone https://github.com/corgea/Sighthound.git
+git clone https://github.com/Corgea/Sighthound.git
 cd Sighthound
 cargo build --release
 ```
@@ -60,39 +72,23 @@ DOCKER_BUILDKIT=1 docker build \
   --output type=local,dest=./sighthound_release \
   .
 ```
-Then binary `sighthound` would be exported at the current folder.
-
-### Development Setup
-```bash
-# Clone and setup
-git clone https://github.com/corgea/greppy_prototype.git
-cd greppy_prototype
-
-# Install dependencies and build
-cargo build
-
-# Run tests
-cargo test
-
-# Run with sample files
-cargo run -- tests/test_files/python
-```
+The `sighthound` binary (plus the bundled `rules/`) is exported to `./sighthound_release/`.
 
 ## 🎯 Quick Start
 
 ### Basic Usage
 ```bash
 # Auto-detect languages and scan with default rules
-cargo run -- /path/to/your/project
+cargo run --bin sighthound -- /path/to/your/project
 
 # Scan specific language with custom rules
-cargo run -- /path/to/project python rules/python/command_injection.ron
+cargo run --bin sighthound -- /path/to/project python rules/python/command_injection.ron
 
 # Enable taint analysis for deep vulnerability detection
-cargo run -- --taint-analysis /path/to/project
+cargo run --bin sighthound -- --taint-analysis /path/to/project
 
 # Output results in JSON format
-cargo run -- --output-format json /path/to/project > results.json
+cargo run --bin sighthound -- --output-format json /path/to/project > results.json
 ```
 
 ### Example Output
@@ -128,7 +124,7 @@ USAGE:
 
 ARGS:
     <ROOT_DIR>     Root directory to scan for vulnerabilities
-    [LANGUAGE]     Programming language (python, java, javascript, tsx, html, django)
+    [LANGUAGE]     Programming language (python, java, javascript, tsx, php, csharp, go, ruby, html, django)
     [RULES_PATH]   Path to rules file (.ron) or directory containing rules
 
 OPTIONS:
@@ -137,10 +133,18 @@ OPTIONS:
     -s, --summary-only              Only show vulnerability summary
         --single-threaded           Disable parallel processing
         --threads <NUM>             Number of threads for parallel processing
-        --taint-analysis            Enable taint analysis for data flow tracking
-        --skip-minified             Skip minified JavaScript files [default: true]
+        --taint-analysis            Run only taint analysis (data flow tracking)
+        --simple-analysis           Run only pattern-based search
+        --skip-minified <BOOL>      Skip minified JavaScript files (default: true)
+        --code-type <TYPE>          Filter by code type: frontend, backend, or both
+        --language-filter <LANG>    Restrict scanning to a single language
+        --rules-dir <PATH>          Custom rules directory (used with --use-file-rules)
+        --use-file-rules            Load rules from files instead of embedded rules
     -h, --help                      Print help information
+        --version                   Print version, commit hash, and build date
 ```
+
+With no analysis flag, Sighthound runs both pattern search and taint analysis.
 
 ### Environment Variables
 ```bash
@@ -153,7 +157,7 @@ export RAYON_NUM_THREADS=8
 
 ## 🔧 Rule System
 
-Greppy uses a unified rule system written in RON (Rusty Object Notation) format that supports both pattern-based detection and taint flow analysis.
+Sighthound uses a unified rule system written in RON (Rusty Object Notation) format that supports both pattern-based detection and taint flow analysis.
 
 ### Rule Structure
 ```ron
@@ -237,6 +241,7 @@ See [Rule Writing Guide](rules/RULE_WRITING_GUIDE.md) for detailed instructions 
 ```
 src/
 ├── main.rs              # CLI entry point and orchestration
+├── cli.rs               # CLI argument definitions (re-exported from models)
 ├── lib.rs               # Library interface and exports
 ├── models.rs            # Core data structures (Finding, TaintFlow, etc.)
 ├── language.rs          # Language-specific parsers and support
@@ -244,6 +249,7 @@ src/
 ├── parser.rs            # Tree-sitter AST parsing utilities
 ├── common.rs            # Shared utilities and helpers
 ├── config.rs            # Configuration and defaults
+├── code_type_detector.rs  # Frontend/backend code-type detection
 └── scanner/
     ├── core.rs          # Main scanning engine and algorithms
     ├── modes.rs         # Scanning mode implementations
@@ -277,21 +283,15 @@ graph TD
 
 ## 📊 Performance
 
-### Benchmarks
-- **Large Codebase**: ~100,000 files scanned in under 2 minutes
-- **Memory Usage**: ~50MB for typical enterprise applications
-- **Accuracy**: 95%+ precision with advanced taint analysis
-- **Parallelization**: Linear scaling up to available CPU cores
-
 ### Optimization Features
 - **Memory Mapping**: Efficient file reading for large files
 - **Prefiltering**: Skip irrelevant files and functions early
-- **Incremental Analysis**: Cache results for unchanged files
 - **Smart Threading**: Avoid over-subscription and contention
 
 ## 🧪 Testing
 
 ### Running Tests
+
 ```bash
 # Run all tests
 cargo test
@@ -302,7 +302,7 @@ cargo test --test integration_tests
 cargo test --test end_to_end_tests
 
 # Test with specific files
-cargo run -- tests/test_files/python/comprehensive_taint_test.py
+cargo run --bin sighthound -- tests/test_files/python/comprehensive_taint_test.py
 ```
 
 ### Test Coverage
@@ -327,7 +327,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
 3. Make your changes and add tests
-4. Run the test suite: `cargo test`
+4. Confirm the build and tests: `cargo build --release && cargo test`
 5. Submit a pull request
 
 ### Areas for Contribution
@@ -340,24 +340,26 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 📚 Documentation
 
 - [Rule Writing Guide](rules/RULE_WRITING_GUIDE.md) - Create custom security rules
-- [Multi-File Taint Analysis](MULTI_FILE_TAINT_PLAN.md) - Advanced taint flow capabilities
 - [Language Support](src/language.rs) - Adding new programming languages
 
 ## 🐛 Known Issues & Limitations
 
 ### Current Limitations
-- **JavaScript Minified Files**: May produce false positives (use `--skip-minified`). This needs improving as it currently relies on file name only.
-- **Multi-file Taint**: Requires more testing
-- **Dynamic Languages**: Runtime-only vulnerabilities may not be detected
-- **Performance**: Very large files (>10MB) may impact scanning speed
+- **Razor / ASP.NET views**: `.cshtml` files are not detected or scanned.
+- **JavaScript minified files**: May produce false positives (use `--skip-minified`).
+  Detection currently relies on file naming patterns.
+- **Multi-file taint**: Requires more testing.
+- **Dynamic languages**: Runtime-only vulnerabilities may not be detected.
+- **Performance**: Very large files (>10MB) may impact scanning speed.
 
 
 ### Roadmap
-- [ ] **IDE Integration**: VS Code and JetBrains plugins
-- [ ] **CI/CD Integration**: GitHub Actions, GitLab CI templates
-- [ ] **Additional Languages**: Go, C/C++, PHP, Ruby support
-- [ ] **Advanced Analysis**: Control flow and symbolic execution
-- [ ] **Incremental Scanning**: Cache and diff-based analysis
+- [ ] **Razor support**: `.cshtml` detection and view-layer XSS/CSRF rules
+- [ ] **C/C++ support**: Parsers and rule packs for `.c` / `.h`
+- [ ] **IDE integration**: VS Code and JetBrains plugins
+- [ ] **CI/CD integration**: GitHub Actions, GitLab CI templates
+- [ ] **Advanced analysis**: Control flow and symbolic execution
+- [ ] **Incremental scanning**: Cache and diff-based analysis
 
 ## 🏢 Credits
 
@@ -367,6 +369,8 @@ Developed by the [Corgea Team](https://github.com/corgea) as part of our mission
 - **Tree-sitter**: Excellent parsing library enabling multi-language support
 - **Rust Community**: Amazing ecosystem and tooling
 - **Security Researchers**: Vulnerability patterns and detection techniques
+
+Third-party license notices: see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ---
 

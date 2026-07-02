@@ -36,6 +36,8 @@ Sample code and scenarios live under `tests/test_files/`:
 - `multi_file_taint_tests/` — cross-file taint scenarios
 - `strictness_languages/` — focused PHP/Go/Ruby/C# strictness fixtures
 
+Rule files used by the scanner live in the top-level `rules/` directory.
+
 ## Running Tests
 
 ```bash

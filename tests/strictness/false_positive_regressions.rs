@@ -18,19 +18,8 @@ fn cleartext_transmission_regression_fixture() {
     let findings = scan_javascript_frontend_taint(staging.path());
 
     // TRUE POSITIVES section: lines 39–62 (HTTP + sensitive DOM sources)
-    assert_findings_in_range(
-        &findings,
-        39,
-        62,
-        2,
-        "cleartext regression true-positive section",
-    );
+    assert_findings_in_range(&findings, 39, 62, 2, "cleartext regression true-positive section");
 
     // FALSE POSITIVES section: library constants, params, THREE.js patterns (line 68+)
-    assert_no_findings_in_range(
-        &findings,
-        68,
-        220,
-        "cleartext regression false-positive section",
-    );
+    assert_no_findings_in_range(&findings, 68, 220, "cleartext regression false-positive section");
 }

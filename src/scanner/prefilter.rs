@@ -93,14 +93,9 @@ impl PreFilter {
         }
 
         // File names
-        let filename = Path::new(&path_lower)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let filename = Path::new(&path_lower).file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-        ["readme", "license", "changelog", "authors"]
-            .iter()
-            .any(|name| filename.starts_with(name))
+        ["readme", "license", "changelog", "authors"].iter().any(|name| filename.starts_with(name))
     }
 
     /// Check if the current language is JavaScript or TypeScript related
@@ -245,9 +240,7 @@ impl PreFilter {
             "org.testng",
         ];
 
-        test_patterns
-            .iter()
-            .any(|pattern| imports_text.contains(pattern))
+        test_patterns.iter().any(|pattern| imports_text.contains(pattern))
     }
 
     /// Simple pattern matching for migration frameworks
@@ -265,9 +258,7 @@ impl PreFilter {
             "typeorm",
         ];
 
-        migration_patterns
-            .iter()
-            .any(|pattern| imports_text.contains(pattern))
+        migration_patterns.iter().any(|pattern| imports_text.contains(pattern))
     }
 
     pub fn filter_files(
@@ -312,13 +303,8 @@ impl PreFilter {
             })
             .collect();
 
-        let stats = FilterStats {
-            included,
-            filtered_out,
-            minified_filtered,
-            test_filtered,
-            doc_filtered,
-        };
+        let stats =
+            FilterStats { included, filtered_out, minified_filtered, test_filtered, doc_filtered };
         (filtered, stats)
     }
 

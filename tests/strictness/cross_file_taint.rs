@@ -116,10 +116,8 @@ fn direct_import_cross_file_flow_is_detected() {
 #[cfg(feature = "python")]
 fn three_file_taint_chain_is_detected() {
     let staging = stage_dir();
-    let rewrite = &[
-        ("test5_1_user_input", "user_input"),
-        ("test5_1_data_processor", "data_processor"),
-    ];
+    let rewrite =
+        &[("test5_1_user_input", "user_input"), ("test5_1_data_processor", "data_processor")];
 
     stage_file(
         staging.path(),

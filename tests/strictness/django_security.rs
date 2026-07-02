@@ -7,12 +7,7 @@ use super::helpers::*;
 fn django_views_fixture_detects_known_vulnerabilities() {
     let staging = stage_dir();
 
-    stage_file(
-        staging.path(),
-        "tests/test_files/python/django/django_views.py",
-        "views.py",
-        &[],
-    );
+    stage_file(staging.path(), "tests/test_files/python/django/django_views.py", "views.py", &[]);
 
     let findings = scan_python_simple_with_rules(staging.path(), load_production_python_rules());
     let types: std::collections::BTreeSet<_> =
@@ -21,15 +16,9 @@ fn django_views_fixture_detects_known_vulnerabilities() {
     assert!(
         types.contains("Code Injection"),
         "eval(user_code) should be detected, findings: {:?}",
-        findings
-            .iter()
-            .map(|f| (f.line, &f.finding_type))
-            .collect::<Vec<_>>()
+        findings.iter().map(|f| (f.line, &f.finding_type)).collect::<Vec<_>>()
     );
-    assert!(
-        types.contains("Unsafe Deserialization"),
-        "pickle.loads(user data) should be detected"
-    );
+    assert!(types.contains("Unsafe Deserialization"), "pickle.loads(user data) should be detected");
 }
 
 #[test]
@@ -56,9 +45,5 @@ def safe_response(request):
         .filter(|f| f.finding_type.contains("Scripting") || f.finding_type.contains("XSS"))
         .collect();
 
-    assert!(
-        xss.is_empty(),
-        "escaped HttpResponse should not produce XSS findings, got {:?}",
-        xss
-    );
+    assert!(xss.is_empty(), "escaped HttpResponse should not produce XSS findings, got {:?}", xss);
 }

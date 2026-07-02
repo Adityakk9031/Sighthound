@@ -301,10 +301,7 @@ pub struct Cli {
     pub rules_path: Option<String>,
 
     /// Custom rules directory (overrides default 'rules' directory)
-    #[arg(
-        long,
-        help = "Custom rules directory to use instead of default 'rules' directory"
-    )]
+    #[arg(long, help = "Custom rules directory to use instead of default 'rules' directory")]
     pub rules_dir: Option<String>,
 
     /// Use embedded rules instead of loading from files (default: true)
@@ -323,12 +320,7 @@ pub struct Cli {
     pub use_file_rules: bool,
 
     /// Output format (text, json, csv)
-    #[arg(
-        short,
-        long,
-        default_value = "text",
-        help = "Output format: text, json, or csv"
-    )]
+    #[arg(short, long, default_value = "text", help = "Output format: text, json, or csv")]
     pub output_format: String,
 
     /// Verbose output
@@ -336,18 +328,11 @@ pub struct Cli {
     pub verbose: bool,
 
     /// Only show summary
-    #[arg(
-        short,
-        long,
-        help = "Only show vulnerability summary without individual findings"
-    )]
+    #[arg(short, long, help = "Only show vulnerability summary without individual findings")]
     pub summary_only: bool,
 
     /// Disable parallel processing (use single-threaded mode)
-    #[arg(
-        long,
-        help = "Disable parallel processing for debugging or specific use cases"
-    )]
+    #[arg(long, help = "Disable parallel processing for debugging or specific use cases")]
     pub single_threaded: bool,
 
     /// Number of threads to use for parallel processing (default: CPU cores)
@@ -358,10 +343,7 @@ pub struct Cli {
     pub threads: Option<usize>,
 
     /// Enable taint analysis mode only (default: both search and taint)
-    #[arg(
-        long,
-        help = "Run only taint analysis (data flow tracking from sources to sinks)"
-    )]
+    #[arg(long, help = "Run only taint analysis (data flow tracking from sources to sinks)")]
     pub taint_analysis: bool,
 
     /// Enable simple analysis mode only (default: both search and taint)
@@ -380,10 +362,7 @@ pub struct Cli {
     pub include_test_fixtures: bool,
 
     /// Filter by code type (frontend, backend, or both)
-    #[arg(
-        long,
-        help = "Filter by code type: frontend, backend, or both (default: both)"
-    )]
+    #[arg(long, help = "Filter by code type: frontend, backend, or both (default: both)")]
     pub code_type: Option<String>,
 
     /// Filter by programming language
@@ -481,10 +460,7 @@ impl Finding {
     /// Extract CWE ID from tags if present
     pub fn extract_cwe_id_from_tags(tags: &Option<Vec<String>>) -> Option<String> {
         tags.as_ref().and_then(|tag_list| {
-            tag_list
-                .iter()
-                .find(|tag| tag.starts_with("cwe-"))
-                .map(|tag| tag.to_string())
+            tag_list.iter().find(|tag| tag.starts_with("cwe-")).map(|tag| tag.to_string())
         })
     }
 

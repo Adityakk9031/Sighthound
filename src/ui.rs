@@ -68,11 +68,7 @@ pub fn severity(severity: &str) -> String {
 /// Top banner shown when a scan starts, e.g. `sighthound  scanning <target>`.
 pub fn banner(target: &str) {
     println!();
-    println!(
-        "{}  {}",
-        bold(&cyan("sighthound")),
-        dim(&format!("scanning {}", target))
-    );
+    println!("{}  {}", bold(&cyan("sighthound")), dim(&format!("scanning {}", target)));
 }
 
 /// An aligned `label  value` line under the banner.

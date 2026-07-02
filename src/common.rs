@@ -270,9 +270,7 @@ impl CommonUtils {
 
     /// Match any pattern from a list (common use case)
     pub fn matches_any_pattern(patterns: &[String], text: &str) -> bool {
-        patterns
-            .iter()
-            .any(|pattern| Self::matches_unified_pattern(pattern, text))
+        patterns.iter().any(|pattern| Self::matches_unified_pattern(pattern, text))
     }
 
     /// Extract variable name from assignment expression with configurable behavior
@@ -326,9 +324,7 @@ impl CommonUtils {
     /// Extract all variable identifiers from code expression
     /// Extract simple variable identifiers from code expression (separator-based)
     pub fn extract_simple_variables(expr: &str) -> Vec<String> {
-        let separators = [
-            ' ', '+', '-', '*', '/', '(', ')', '[', ']', '{', '}', ',', '.', '=',
-        ];
+        let separators = [' ', '+', '-', '*', '/', '(', ')', '[', ']', '{', '}', ',', '.', '='];
 
         expr.split(&separators)
             .map(|s| s.trim())
@@ -380,10 +376,7 @@ impl CommonUtils {
         // Remove duplicates and invalid names
         variables.sort();
         variables.dedup();
-        variables
-            .into_iter()
-            .filter(|v| Self::is_valid_variable_name(v))
-            .collect()
+        variables.into_iter().filter(|v| Self::is_valid_variable_name(v)).collect()
     }
 
     /// Extract direct variable from simple expressions
@@ -422,27 +415,22 @@ impl CommonUtils {
                         current_start = Some(i + 1);
                     }
                 }
-                '}' => {
-                    if brace_depth > 0 {
-                        brace_depth -= 1;
-                        if brace_depth == 0 {
-                            if let Some(start) = current_start.take() {
-                                // Extract the variable using character indices, not byte indices
-                                let raw_var: String = chars[start..i].iter().collect();
-                                let raw_var = raw_var.trim();
-                                // Strip format specifiers after ':' or '!'
-                                let clean_var = raw_var
-                                    .split([':', '!'].as_ref())
-                                    .next()
-                                    .unwrap_or("")
-                                    .trim();
-                                if Self::is_valid_variable_name(clean_var) {
-                                    log::debug!("[F_STRING_EXTRACT] Found variable: {}", clean_var);
-                                    variables.push(clean_var.to_string());
-                                } else {
-                                    // For complex expressions, try to extract simple variables
-                                    variables.extend(Self::extract_simple_variables(clean_var));
-                                }
+                '}' if brace_depth > 0 => {
+                    brace_depth -= 1;
+                    if brace_depth == 0 {
+                        if let Some(start) = current_start.take() {
+                            // Extract the variable using character indices, not byte indices
+                            let raw_var: String = chars[start..i].iter().collect();
+                            let raw_var = raw_var.trim();
+                            // Strip format specifiers after ':' or '!'
+                            let clean_var =
+                                raw_var.split([':', '!'].as_ref()).next().unwrap_or("").trim();
+                            if Self::is_valid_variable_name(clean_var) {
+                                log::debug!("[F_STRING_EXTRACT] Found variable: {}", clean_var);
+                                variables.push(clean_var.to_string());
+                            } else {
+                                // For complex expressions, try to extract simple variables
+                                variables.extend(Self::extract_simple_variables(clean_var));
                             }
                         }
                     }
@@ -486,10 +474,7 @@ impl CommonUtils {
                         let raw_expr: String = chars[start..i].iter().collect();
                         let raw_expr = raw_expr.trim();
 
-                        log::debug!(
-                            "[TEMPLATE_LITERAL_EXTRACT] Found expression: '{}'",
-                            raw_expr
-                        );
+                        log::debug!("[TEMPLATE_LITERAL_EXTRACT] Found expression: '{}'", raw_expr);
 
                         // Extract variables from the expression
                         variables.extend(Self::extract_all_variables(raw_expr));
@@ -635,10 +620,7 @@ impl CommonUtils {
 
     /// Detect syntax for syntax highlighting (moved from core.rs)
     pub fn detect_syntax(file_path: &str) -> &'static str {
-        match std::path::Path::new(file_path)
-            .extension()
-            .and_then(|e| e.to_str())
-        {
+        match std::path::Path::new(file_path).extension().and_then(|e| e.to_str()) {
             Some("py") => "Python",
             Some("js") | Some("mjs") => "JavaScript",
             Some("ts") | Some("tsx") => "TypeScript",

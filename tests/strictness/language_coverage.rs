@@ -78,10 +78,7 @@ fn go_rules_detect_unsafe_patterns_without_secret_findings() {
         unsafe_findings.len() >= 2,
         "unsafe.go should trigger command/sql findings, got {}: {:?}",
         unsafe_findings.len(),
-        unsafe_findings
-            .iter()
-            .map(|f| (f.line, f.finding_type.as_str()))
-            .collect::<Vec<_>>()
+        unsafe_findings.iter().map(|f| (f.line, f.finding_type.as_str())).collect::<Vec<_>>()
     );
     assert!(
         safe_findings.is_empty(),
@@ -93,9 +90,7 @@ fn go_rules_detect_unsafe_patterns_without_secret_findings() {
             .collect::<Vec<_>>()
     );
     assert!(
-        findings
-            .iter()
-            .all(|f| !f.finding_type.to_ascii_lowercase().contains("secret")),
+        findings.iter().all(|f| !f.finding_type.to_ascii_lowercase().contains("secret")),
         "go findings should not include hardcoded-secret types: {:?}",
         findings
             .iter()
@@ -131,10 +126,7 @@ fn ruby_rules_detect_unsafe_patterns_without_secret_findings() {
         unsafe_findings.len() >= 2,
         "unsafe.rb should trigger command/sql findings, got {}: {:?}",
         unsafe_findings.len(),
-        unsafe_findings
-            .iter()
-            .map(|f| (f.line, f.finding_type.as_str()))
-            .collect::<Vec<_>>()
+        unsafe_findings.iter().map(|f| (f.line, f.finding_type.as_str())).collect::<Vec<_>>()
     );
     assert!(
         safe_findings.is_empty(),
@@ -146,9 +138,7 @@ fn ruby_rules_detect_unsafe_patterns_without_secret_findings() {
             .collect::<Vec<_>>()
     );
     assert!(
-        findings
-            .iter()
-            .all(|f| !f.finding_type.to_ascii_lowercase().contains("secret")),
+        findings.iter().all(|f| !f.finding_type.to_ascii_lowercase().contains("secret")),
         "ruby findings should not include hardcoded-secret types: {:?}",
         findings
             .iter()
@@ -188,10 +178,7 @@ fn csharp_explicit_and_filtered_cli_results_match() {
         "json",
     ]);
 
-    assert!(
-        !explicit.is_empty(),
-        "explicit csharp scan should produce at least one finding"
-    );
+    assert!(!explicit.is_empty(), "explicit csharp scan should produce at least one finding");
 
     assert_eq!(
         finding_key_set(&explicit),

@@ -4,11 +4,19 @@ version = "0.1.1"
 edition = "2021"
 authors = ["Corgea Team"]
 description = "A blazing fast vulnerability scanner for source code using tree-sitter"
-repository = "https://github.com/corgea/sighthound"
+repository = "https://github.com/Corgea/Sighthound"
+license = "MIT"
+keywords = ["security", "sast", "static-analysis", "vulnerability", "tree-sitter"]
+categories = ["development-tools", "command-line-utilities"]
 
 [[bin]]
 name = "sighthound"
 path = "src/main.rs"
+
+[[bin]]
+name = "harness"
+path = "harness.rs"
+edition = "2024"
 
 [features]
 default = ["python", "java", "javascript", "tsx", "typescript", "go", "ruby", "csharp", "html", "django", "php"]
@@ -48,7 +56,11 @@ indicatif = "0.17"
 glob = "0.3"
 crossbeam = "0.8"
 num_cpus = "1.16"
-syntect = "5.1"
+syntect = { version = "5.1", default-features = false, features = [
+    "default-syntaxes",
+    "default-themes",
+    "regex-onig",
+] }
 memmap2 = "0.9"
 log = "0.4"
 env_logger = "0.10"
@@ -57,6 +69,7 @@ lazy_static = "1.4"
 dbg_breakpoint="0.1.1"
 [dev-dependencies]
 tempfile = "3.8"
+proptest = "1"
 
 [profile.release]
 opt-level = 3

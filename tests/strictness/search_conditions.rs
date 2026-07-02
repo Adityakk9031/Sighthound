@@ -29,24 +29,16 @@ def safe_literal():
     );
 
     let findings = scan_python_simple_with_rules(staging.path(), load_production_python_rules());
-    let cmd_findings: Vec<_> = findings
-        .iter()
-        .filter(|f| f.finding_type.contains("Command Injection"))
-        .collect();
+    let cmd_findings: Vec<_> =
+        findings.iter().filter(|f| f.finding_type.contains("Command Injection")).collect();
 
     assert_eq!(
         cmd_findings.len(),
         1,
         "only shell=True subprocess should be flagged, got: {:?}",
-        cmd_findings
-            .iter()
-            .map(|f| (f.line, f.snippet.as_str()))
-            .collect::<Vec<_>>()
+        cmd_findings.iter().map(|f| (f.line, f.snippet.as_str())).collect::<Vec<_>>()
     );
-    assert_eq!(
-        cmd_findings[0].line, 11,
-        "unsafe_shell should be on line 11"
-    );
+    assert_eq!(cmd_findings[0].line, 11, "unsafe_shell should be on line 11");
 }
 
 #[test]
@@ -76,18 +68,14 @@ public class UserView {
     );
 
     let findings = scan_java_simple_with_rules(staging.path(), rules);
-    let xss: Vec<_> = findings
-        .iter()
-        .filter(|f| f.finding_type.contains("Cross-Site Scripting"))
-        .collect();
+    let xss: Vec<_> =
+        findings.iter().filter(|f| f.finding_type.contains("Cross-Site Scripting")).collect();
 
     assert_eq!(
         xss.len(),
         1,
         "only unescaped dynamic append should be flagged, got: {:?}",
-        xss.iter()
-            .map(|f| (f.line, f.snippet.as_str()))
-            .collect::<Vec<_>>()
+        xss.iter().map(|f| (f.line, f.snippet.as_str())).collect::<Vec<_>>()
     );
     assert_eq!(xss[0].line, 4, "unsafe append should be on line 4");
 }

@@ -89,8 +89,7 @@ impl LanguageSupport for PythonLanguage {
     }
 
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
-        node.child_by_field_name("function")
-            .map(|child| get_node_text_slice(&child, source))
+        node.child_by_field_name("function").map(|child| get_node_text_slice(&child, source))
     }
 
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
@@ -119,12 +118,12 @@ impl LanguageSupport for JavaLanguage {
 
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
-            "method_invocation" => node
-                .child_by_field_name("name")
-                .map(|child| get_node_text_slice(&child, source)),
-            "object_creation_expression" => node
-                .child_by_field_name("type")
-                .map(|child| get_node_text_slice(&child, source)),
+            "method_invocation" => {
+                node.child_by_field_name("name").map(|child| get_node_text_slice(&child, source))
+            }
+            "object_creation_expression" => {
+                node.child_by_field_name("type").map(|child| get_node_text_slice(&child, source))
+            }
             _ => None,
         }
     }
@@ -186,19 +185,14 @@ impl LanguageSupport for TSXLanguage {
         tree_sitter_typescript::LANGUAGE_TSX.into()
     }
     fn call_node_types(&self) -> &[&'static str] {
-        &[
-            "call_expression",
-            "new_expression",
-            "jsx_expression",
-            "jsx_attribute",
-        ]
+        &["call_expression", "new_expression", "jsx_expression", "jsx_attribute"]
     }
 
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
-            "jsx_attribute" => node
-                .child_by_field_name("name")
-                .map(|child| get_node_text_slice(&child, source)),
+            "jsx_attribute" => {
+                node.child_by_field_name("name").map(|child| get_node_text_slice(&child, source))
+            }
             "call_expression" => node
                 .child_by_field_name("function")
                 .map(|child| get_node_text_slice(&child, source)),
@@ -210,8 +204,7 @@ impl LanguageSupport for TSXLanguage {
     }
 
     fn get_arguments_node<'a>(&self, node: &'a Node) -> Option<Node<'a>> {
-        node.child_by_field_name("arguments")
-            .or_else(|| node.child_by_field_name("value"))
+        node.child_by_field_name("arguments").or_else(|| node.child_by_field_name("value"))
     }
 }
 
@@ -309,9 +302,9 @@ impl LanguageSupport for RubyLanguage {
 
     fn get_function_name<'a>(&self, node: &Node, source: &'a [u8]) -> Option<&'a str> {
         match node.kind() {
-            "method_call" | "call" => node
-                .child_by_field_name("method")
-                .map(|child| get_node_text_slice(&child, source)),
+            "method_call" | "call" => {
+                node.child_by_field_name("method").map(|child| get_node_text_slice(&child, source))
+            }
             _ => None,
         }
     }
@@ -355,9 +348,9 @@ impl LanguageSupport for CSharpLanguage {
                     get_node_text_slice(&func, source)
                 }
             }),
-            "object_creation_expression" => node
-                .child_by_field_name("type")
-                .map(|child| get_node_text_slice(&child, source)),
+            "object_creation_expression" => {
+                node.child_by_field_name("type").map(|child| get_node_text_slice(&child, source))
+            }
             _ => None,
         }
     }
@@ -401,13 +394,13 @@ impl LanguageSupport for PHPLanguage {
             // $obj->method(...) / $obj?->method(...) / Class::method(...)
             "member_call_expression"
             | "nullsafe_member_call_expression"
-            | "scoped_call_expression" => node
-                .child_by_field_name("name")
-                .map(|child| get_node_text_slice(&child, source)),
+            | "scoped_call_expression" => {
+                node.child_by_field_name("name").map(|child| get_node_text_slice(&child, source))
+            }
             // new Class(...)
-            "object_creation_expression" => node
-                .named_child(0)
-                .map(|child| get_node_text_slice(&child, source)),
+            "object_creation_expression" => {
+                node.named_child(0).map(|child| get_node_text_slice(&child, source))
+            }
             _ => None,
         }
     }
@@ -524,9 +517,9 @@ impl LanguageSupport for DjangoTemplateLanguage {
                     None
                 }
             }
-            "attribute" => node
-                .child_by_field_name("name")
-                .map(|child| get_node_text_slice(&child, source)),
+            "attribute" => {
+                node.child_by_field_name("name").map(|child| get_node_text_slice(&child, source))
+            }
             "script_element" => Some("script"),
             _ => None,
         }

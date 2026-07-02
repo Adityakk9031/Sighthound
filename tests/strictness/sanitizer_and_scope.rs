@@ -98,13 +98,7 @@ def uses_safe_name_only():
 
     let findings = scan_python_taint(staging.path(), ACCURACY_TAINT_RULES);
 
-    assert_findings_in_range(
-        &findings,
-        4,
-        7,
-        1,
-        "os.environ.get -> eval in same function",
-    );
+    assert_findings_in_range(&findings, 4, 7, 1, "os.environ.get -> eval in same function");
     assert_no_findings_in_range(
         &findings,
         9,
