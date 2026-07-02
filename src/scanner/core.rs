@@ -5243,6 +5243,74 @@ impl DataFlowTracer {
     }
 
     /// Find which file contains the definition of an imported function
+    /// Resolve `function_name` via the real imports parsed for `calling_file` (`from foo
+    /// import bar` populates this map with `bar -> foo.py`), when the resolved path actually
+    /// exists on disk.
+    fn resolve_via_import_map(&self, calling_file: &str, function_name: &str) -> Option<String> {
+        let source_file = self.import_map.get(calling_file)?.get(function_name)?;
+        if !std::path::Path::new(source_file).exists() {
+            return None;
+        }
+        log::debug!(
+            "[FIND_SOURCE_FILE] Resolved \"{}\" via parsed import -> \"{}\"",
+            function_name,
+            source_file
+        );
+        Some(source_file.clone())
+    }
+
+    /// Known test-fixture pattern: config/args/module-data getters live in `module_a.py`.
+    fn find_in_module_a(calling_dir: &str, function_name: &str) -> Option<String> {
+        let module_a_path = format!("{}/module_a.py", calling_dir);
+        if !std::path::Path::new(&module_a_path).exists() {
+            return None;
+        }
+        log::debug!("[FIND_SOURCE_FILE] Found \"{}\" in module_a.py", function_name);
+        Some(module_a_path)
+    }
+
+    /// Known test-fixture pattern: taint-propagation helpers live in `module_b.py`.
+    fn find_in_module_b(calling_dir: &str, function_name: &str) -> Option<String> {
+        let module_b_path = format!("{}/module_b.py", calling_dir);
+        if !std::path::Path::new(&module_b_path).exists() {
+            return None;
+        }
+        log::debug!("[FIND_SOURCE_FILE] Found \"{}\" in module_b.py", function_name);
+        Some(module_b_path)
+    }
+
+    /// Fallback: scan Python files in the same directory as `calling_file` for one that
+    /// defines `function_name`.
+    fn find_in_sibling_python_files(
+        &self,
+        calling_dir: &str,
+        calling_file: &str,
+        function_name: &str,
+    ) -> Option<String> {
+        let entries = std::fs::read_dir(calling_dir).ok()?;
+        let calling_basename = std::path::Path::new(calling_file).file_name().unwrap_or_default();
+
+        for entry in entries.flatten() {
+            let os_file_name = entry.file_name();
+            let Some(file_name) = os_file_name.to_str() else {
+                continue;
+            };
+            if !file_name.ends_with(".py") || file_name == calling_basename {
+                continue;
+            }
+            let candidate_path = format!("{}/{}", calling_dir, file_name);
+            if self.file_contains_function(&candidate_path, function_name) {
+                log::debug!(
+                    "[FIND_SOURCE_FILE] Found \"{}\" in \"{}\"",
+                    function_name,
+                    candidate_path
+                );
+                return Some(candidate_path);
+            }
+        }
+        None
+    }
+
     fn find_function_source_file(&self, function_name: &str, calling_file: &str) -> Option<String> {
         log::debug!(
             "[FIND_SOURCE_FILE] Looking for function \"{}\" imported by \"{}\"",
@@ -5255,30 +5323,17 @@ impl DataFlowTracer {
         // function name. The hardcoded fixture arms and read_dir heuristic below remain as a
         // fallback when no parsed import covers this call (e.g. same-directory definitions with
         // no explicit import).
-        if let Some(source_file) =
-            self.import_map.get(calling_file).and_then(|functions| functions.get(function_name))
-        {
-            if std::path::Path::new(source_file).exists() {
-                log::debug!(
-                    "[FIND_SOURCE_FILE] Resolved \"{}\" via parsed import -> \"{}\"",
-                    function_name,
-                    source_file
-                );
-                return Some(source_file.clone());
-            }
+        if let Some(source_file) = self.resolve_via_import_map(calling_file, function_name) {
+            return Some(source_file);
         }
 
         let calling_dir =
             std::path::Path::new(calling_file).parent().and_then(|p| p.to_str()).unwrap_or("");
 
         // Known patterns from the test files
-        match function_name {
+        let found = match function_name {
             "get_database_config" | "get_user_args" | "get_safe_module_data" => {
-                let module_a_path = format!("{}/module_a.py", calling_dir);
-                if std::path::Path::new(&module_a_path).exists() {
-                    log::debug!("[FIND_SOURCE_FILE] Found \"{}\" in module_a.py", function_name);
-                    return Some(module_a_path);
-                }
+                Self::find_in_module_a(calling_dir, function_name)
             }
             name if name.starts_with("propagate_")
                 || name == "combine_tainted_sources"
@@ -5287,44 +5342,19 @@ impl DataFlowTracer {
                 || name == "complex_processing_chain"
                 || name == "use_class_instance" =>
             {
-                let module_b_path = format!("{}/module_b.py", calling_dir);
-                if std::path::Path::new(&module_b_path).exists() {
-                    log::debug!("[FIND_SOURCE_FILE] Found \"{}\" in module_b.py", function_name);
-                    return Some(module_b_path);
-                }
+                Self::find_in_module_b(calling_dir, function_name)
             }
-            _ => {
-                // Try to find in any Python file in the same directory
-                if let Ok(entries) = std::fs::read_dir(calling_dir) {
-                    for entry in entries.flatten() {
-                        if let Some(file_name) = entry.file_name().to_str() {
-                            if file_name.ends_with(".py")
-                                && file_name
-                                    != std::path::Path::new(calling_file)
-                                        .file_name()
-                                        .unwrap_or_default()
-                            {
-                                let candidate_path = format!("{}/{}", calling_dir, file_name);
-                                if self.file_contains_function(&candidate_path, function_name) {
-                                    log::debug!(
-                                        "[FIND_SOURCE_FILE] Found \"{}\" in \"{}\"",
-                                        function_name,
-                                        candidate_path
-                                    );
-                                    return Some(candidate_path);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+            // Try to find in any Python file in the same directory
+            _ => self.find_in_sibling_python_files(calling_dir, calling_file, function_name),
+        };
 
-        log::debug!(
-            "[FIND_SOURCE_FILE] Could not find source file for function \"{}\"",
-            function_name
-        );
-        None
+        if found.is_none() {
+            log::debug!(
+                "[FIND_SOURCE_FILE] Could not find source file for function \"{}\"",
+                function_name
+            );
+        }
+        found
     }
 
     /// Check if a file contains a function definition
