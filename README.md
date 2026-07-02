@@ -283,53 +283,6 @@ graph TD
 
 ## 📊 Performance
 
-### fusion-benchmarks
-
-Sighthound is evaluated against the [fusion-benchmarks](https://github.com/Corgea/fusion-benchmarks)
-corpus: **907 expected true positives** and **238 expected false positives** across
-Python, JavaScript, Java, PHP, C#, HTML, and Razor fixtures. Scoring follows the
-harness definition — precision/recall/F1 are computed over curated cases only;
-findings that match no case are reported separately as *unmatched*.
-
-Results below are from a July 2026 run of `fusion-benchmarks/bench_sighthound_vs_semgrep.py`
-against `datasets/` (Sighthound release build vs Semgrep `--config=auto`).
-
-| Metric | Sighthound | Semgrep |
-|---|---:|---:|
-| Wall time | **24.1 s** | 185.7 s |
-| Raw findings | 477 | 846 |
-| Precision (lenient) | **97.3%** | 88.0% |
-| Recall (lenient) | **28.7%** | 9.0% |
-| F1 | **0.44** | 0.16 |
-| Unmatched findings | 224 | 741 |
-
-**Recall by language** (expected-TP cases):
-
-| Language | Expected TP cases | Recall |
-|---|---:|---:|
-| JavaScript | 222 | **45.9%** |
-| Java | 187 | 33.7% |
-| Python | 167 | 19.8% |
-| C# | 146 | 21.2% |
-| PHP | 173 | 11.0% |
-| HTML | 3 | 66.7% |
-| Razor (`.cshtml`) | 9 | 0.0% |
-
-**Takeaways:** JavaScript is the strongest language today. PHP and Python recall are
-still low relative to their case counts — rule coverage is an active improvement area.
-Razor views are not scanned yet (`.cshtml` is not detected). Overall recall still has
-significant room to improve despite high precision.
-
-To reproduce locally (requires a `fusion-benchmarks` checkout alongside this repo):
-
-```bash
-cargo build --release
-cd fusion-benchmarks
-uv sync
-python bench_sighthound_vs_semgrep.py
-# Artifacts: bench_out/summary.json, scoreboard.csv, unmatched_findings.csv
-```
-
 ### Optimization Features
 - **Memory Mapping**: Efficient file reading for large files
 - **Prefiltering**: Skip irrelevant files and functions early
@@ -392,10 +345,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 🐛 Known Issues & Limitations
 
 ### Current Limitations
-- **Razor / ASP.NET views**: `.cshtml` files are not detected or scanned (0% recall on
-  fusion-benchmarks Razor cases).
-- **Recall gaps**: PHP and Python underperform on fusion-benchmarks despite bundled
-  rules; several XBEN PHP fixtures score 0% recall.
+- **Razor / ASP.NET views**: `.cshtml` files are not detected or scanned.
 - **JavaScript minified files**: May produce false positives (use `--skip-minified`).
   Detection currently relies on file naming patterns.
 - **Multi-file taint**: Requires more testing.
@@ -406,7 +356,6 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ### Roadmap
 - [ ] **Razor support**: `.cshtml` detection and view-layer XSS/CSRF rules
 - [ ] **C/C++ support**: Parsers and rule packs for `.c` / `.h`
-- [ ] **Rule coverage**: Improve PHP and Python recall on benchmark fixtures
 - [ ] **IDE integration**: VS Code and JetBrains plugins
 - [ ] **CI/CD integration**: GitHub Actions, GitLab CI templates
 - [ ] **Advanced analysis**: Control flow and symbolic execution
