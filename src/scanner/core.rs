@@ -1650,6 +1650,63 @@ impl VulnerabilityScanner {
         Ok(Self { language: language_name.to_string(), rules, skip_minified })
     }
 
+    /// Enhanced per-language extension/filename matching used by [`Self::discover_files`].
+    fn should_include_file(
+        language: &str,
+        ext: &str,
+        file_name: &str,
+        file_extension: &str,
+        target_extension: &str,
+    ) -> bool {
+        match language {
+            "python" => {
+                matches!(ext, "py" | "pyw" | "pyi" | "pyx")
+                    || (file_name.ends_with("file")
+                        && (file_name.contains("requirements") || file_name.contains("Pipfile")))
+            }
+            "java" => matches!(ext, "java" | "jav"),
+            "javascript" => {
+                matches!(ext, "js" | "mjs" | "cjs" | "jsx")
+                    || matches!(ext, "vue" | "svelte")
+                    || (file_name.contains("webpack")
+                        || file_name.contains("rollup")
+                        || file_name.contains("vite"))
+                        && (file_name.ends_with(".config.js")
+                            || file_name.ends_with(".config.mjs")
+                            || file_name.ends_with(".config.cjs"))
+            }
+            "tsx" => {
+                matches!(ext, "ts" | "tsx" | "mts" | "cts")
+                    || file_name.ends_with(".d.ts")
+                    || file_name.ends_with(".d.mts")
+                    || file_name.ends_with(".d.cts")
+                    || ((file_name.contains("webpack")
+                        || file_name.contains("rollup")
+                        || file_name.contains("vite"))
+                        && (file_name.ends_with(".config.ts")))
+            }
+            "html" => matches!(
+                ext,
+                "html"
+                    | "htm"
+                    | "xhtml"
+                    | "shtml"
+                    | "dhtml"
+                    | "hbs"
+                    | "handlebars"
+                    | "mustache"
+                    | "twig"
+                    | "njk"
+                    | "nunjucks"
+                    | "ejs"
+                    | "pug"
+                    | "jade"
+            ),
+            "django" => matches!(ext, "html" | "htm"),
+            _ => file_extension == target_extension,
+        }
+    }
+
     fn discover_files(&self, root_dir: &str) -> Result<Vec<PathBuf>> {
         let mut files = Vec::new();
         // Get extension once using a fresh parser (cheap, happens only once)
@@ -1681,54 +1738,13 @@ impl VulnerabilityScanner {
                     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
                     // Enhanced extension matching for each language
-                    let should_include = match self.language.as_str() {
-                        "python" => {
-                            matches!(ext, "py" | "pyw" | "pyi" | "pyx")
-                                || (file_name.ends_with("file")
-                                    && (file_name.contains("requirements")
-                                        || file_name.contains("Pipfile")))
-                        }
-                        "java" => matches!(ext, "java" | "jav"),
-                        "javascript" => {
-                            matches!(ext, "js" | "mjs" | "cjs" | "jsx")
-                                || matches!(ext, "vue" | "svelte")
-                                || (file_name.contains("webpack")
-                                    || file_name.contains("rollup")
-                                    || file_name.contains("vite"))
-                                    && (file_name.ends_with(".config.js")
-                                        || file_name.ends_with(".config.mjs")
-                                        || file_name.ends_with(".config.cjs"))
-                        }
-                        "tsx" => {
-                            matches!(ext, "ts" | "tsx" | "mts" | "cts")
-                                || file_name.ends_with(".d.ts")
-                                || file_name.ends_with(".d.mts")
-                                || file_name.ends_with(".d.cts")
-                                || ((file_name.contains("webpack")
-                                    || file_name.contains("rollup")
-                                    || file_name.contains("vite"))
-                                    && (file_name.ends_with(".config.ts")))
-                        }
-                        "html" => matches!(
-                            ext,
-                            "html"
-                                | "htm"
-                                | "xhtml"
-                                | "shtml"
-                                | "dhtml"
-                                | "hbs"
-                                | "handlebars"
-                                | "mustache"
-                                | "twig"
-                                | "njk"
-                                | "nunjucks"
-                                | "ejs"
-                                | "pug"
-                                | "jade"
-                        ),
-                        "django" => matches!(ext, "html" | "htm"),
-                        _ => file_extension == target_extension,
-                    };
+                    let should_include = Self::should_include_file(
+                        &self.language,
+                        ext,
+                        file_name,
+                        &file_extension,
+                        target_extension,
+                    );
 
                     if should_include {
                         files.push(path.to_path_buf());
