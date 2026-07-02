@@ -127,7 +127,7 @@ impl TaintRuleDeduplicator {
             return false;
         };
 
-        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || "_".contains(c))
     }
 
     fn matches_bare_call_source(pattern: &str, text: &str) -> bool {
@@ -143,7 +143,7 @@ impl TaintRuleDeduplicator {
             let has_identifier_prefix = before
                 .chars()
                 .next_back()
-                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.');
+                .is_some_and(|c| c.is_ascii_alphanumeric() || "_.".contains(c));
 
             if !has_identifier_prefix || Self::has_builtin_qualifier(before, &BUILTIN_QUALIFIERS) {
                 return true;
@@ -163,7 +163,7 @@ impl TaintRuleDeduplicator {
             before.strip_suffix(qualifier).is_some_and(|head| {
                 head.chars()
                     .next_back()
-                    .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '.')
+                    .is_none_or(|c| !c.is_ascii_alphanumeric() && !"_.".contains(c))
             })
         })
     }
@@ -190,7 +190,7 @@ impl TaintExpressionUtils {
             expression.trim().trim_end_matches(';').split_whitespace().last().unwrap_or("").trim();
         let trimmed = trimmed.trim_start_matches('$');
         let name: String =
-            trimmed.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            trimmed.chars().take_while(|c| c.is_ascii_alphanumeric() || "_".contains(*c)).collect();
 
         if CommonUtils::is_valid_variable_name(&name) {
             name
@@ -208,7 +208,8 @@ impl TaintExpressionUtils {
             if chars[index] == '$' {
                 let start = index + 1;
                 let mut end = start;
-                while end < chars.len() && (chars[end].is_ascii_alphanumeric() || chars[end] == '_')
+                while end < chars.len()
+                    && (chars[end].is_ascii_alphanumeric() || "_".contains(chars[end]))
                 {
                     end += 1;
                 }
@@ -264,8 +265,10 @@ impl TaintExpressionUtils {
             let pos = start + relative_pos;
             let before = expression[..pos].chars().next_back();
             let after = expression[pos + variable.len()..].chars().next();
-            let before_boundary = before.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
-            let after_boundary = after.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+            let before_boundary =
+                before.is_none_or(|c| !(c.is_ascii_alphanumeric() || "_".contains(c)));
+            let after_boundary =
+                after.is_none_or(|c| !(c.is_ascii_alphanumeric() || "_".contains(c)));
 
             if before_boundary && after_boundary {
                 return true;
