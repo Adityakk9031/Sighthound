@@ -461,3 +461,41 @@ impl Default for CodeTypeDetector {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `detect_from_imports` is only reached from `detect_code_type` after framework
+    // detection already returned `Unknown` for the very same imports, which (given
+    // both use the same signature pool) means its non-Unknown branches are not
+    // reachable through the public entry point. Call it directly to cover them.
+
+    #[test]
+    fn detect_from_imports_frontend_only() {
+        let detector = CodeTypeDetector::new();
+        let imports = vec!["react".to_string()];
+        assert_eq!(detector.detect_from_imports(&imports), CodeType::Frontend);
+    }
+
+    #[test]
+    fn detect_from_imports_backend_only() {
+        let detector = CodeTypeDetector::new();
+        let imports = vec!["express".to_string()];
+        assert_eq!(detector.detect_from_imports(&imports), CodeType::Backend);
+    }
+
+    #[test]
+    fn detect_from_imports_both() {
+        let detector = CodeTypeDetector::new();
+        let imports = vec!["react".to_string(), "express".to_string()];
+        assert_eq!(detector.detect_from_imports(&imports), CodeType::Both);
+    }
+
+    #[test]
+    fn detect_from_imports_unknown_when_no_signature_matches() {
+        let detector = CodeTypeDetector::new();
+        let imports = vec!["totally-unrelated-package".to_string()];
+        assert_eq!(detector.detect_from_imports(&imports), CodeType::Unknown);
+    }
+}
