@@ -24,25 +24,23 @@ A high-performance vulnerability scanner for source code using tree-sitter parsi
 
 ### Language Support
 
-**Shipped on `main`**
-
 | Language | Extensions | Parsing | Bundled Rules |
 |---|---|---|---|
 | Python | `.py`, `.pyw`, `.pyi`, `.pyx` | ✅ | ✅ |
 | JavaScript | `.js`, `.mjs`, `.cjs`, `.jsx`, `.vue`, `.svelte` | ✅ | ✅ |
 | TypeScript / TSX | `.ts`, `.tsx`, `.mts`, `.cts` | ✅ | ✅ (reuses JavaScript rules) |
-| Java | `.java` | ✅ | — (parser only; bring your own `.ron` rules) |
-| HTML | `.html`, `.htm`, `.twig`, `.ejs`, `.hbs`, … | ✅ | — (parser only) |
-| Django templates | `.html` (Django syntax) | ✅ | — (parser only) |
+| Java | `.java` | ✅ | ✅ |
+| PHP | `.php`, `.phtml` | ✅ | ✅ |
+| C# | `.cs`, `.csx` | ✅ | ✅ |
+| Go | `.go` | ✅ | ✅ |
+| Ruby | `.rb` | ✅ | ✅ |
+| HTML | `.html`, `.htm`, `.twig`, `.ejs`, `.hbs`, … | ✅ | ✅ |
+| Django templates | `.html` (Django syntax) | ✅ | ✅ (reuses HTML rules) |
 
-Python, JavaScript, and TypeScript/TSX ship with curated embedded rule sets. Java,
-HTML, and Django have working tree-sitter parsers but no bundled rules on `main` —
-point Sighthound at your own `.ron` rules to scan them.
+All listed languages ship with curated embedded rule packs and tree-sitter parsers.
+Auto-detection loads the right rules per file extension.
 
-**In development** on [`feature/more_language_support`](https://github.com/Corgea/Sighthound/tree/feature/more_language_support): PHP, C#, Go, and bundled Java/HTML rules.
-
-**Not yet supported**: Razor (`.cshtml`), C/C++ (`.c`, `.h`). Template files such as
-`.twig` are parsed as HTML but do not have dedicated rule packs yet.
+**Not yet supported**: Razor (`.cshtml`), C/C++ (`.c`, `.h`).
 
 ### Scanning Modes
 - **Auto-Detection Mode**: Automatically detects languages and loads appropriate rules
@@ -126,7 +124,7 @@ USAGE:
 
 ARGS:
     <ROOT_DIR>     Root directory to scan for vulnerabilities
-    [LANGUAGE]     Programming language (python, java, javascript, tsx, html, django)
+    [LANGUAGE]     Programming language (python, java, javascript, tsx, php, csharp, go, ruby, html, django)
     [RULES_PATH]   Path to rules file (.ron) or directory containing rules
 
 OPTIONS:
@@ -305,27 +303,22 @@ against `datasets/` (Sighthound release build vs Semgrep `--config=auto`).
 | F1 | **0.44** | 0.16 |
 | Unmatched findings | 224 | 741 |
 
-**Recall by language** (expected-TP cases on `main`; languages without bundled rules
-rely on parser-only detection or in-flight rule packs):
+**Recall by language** (expected-TP cases):
 
 | Language | Expected TP cases | Recall |
 |---|---:|---:|
 | JavaScript | 222 | **45.9%** |
-| Java | 187 | 33.7% † |
+| Java | 187 | 33.7% |
 | Python | 167 | 19.8% |
-| C# | 146 | 21.2% † |
-| PHP | 173 | 11.0% † |
-| HTML | 3 | 66.7% † |
+| C# | 146 | 21.2% |
+| PHP | 173 | 11.0% |
+| HTML | 3 | 66.7% |
 | Razor (`.cshtml`) | 9 | 0.0% |
 
-† Java, PHP, C#, and HTML figures reflect builds that include in-development rule
-packs from `feature/more_language_support`. On `main` today, only Python and
-JavaScript/TSX ship bundled rules — expect lower recall on the other languages until
-those packs land.
-
-**Takeaways:** JavaScript is the strongest language today. Razor views are not scanned
-yet (`.cshtml` is not detected). Overall recall still has significant room to improve
-despite high precision.
+**Takeaways:** JavaScript is the strongest language today. PHP and Python recall are
+still low relative to their case counts — rule coverage is an active improvement area.
+Razor views are not scanned yet (`.cshtml` is not detected). Overall recall still has
+significant room to improve despite high precision.
 
 To reproduce locally (requires a `fusion-benchmarks` checkout alongside this repo):
 
@@ -399,11 +392,10 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 🐛 Known Issues & Limitations
 
 ### Current Limitations
-- **Bundled rules**: Only Python and JavaScript/TSX ship rules on `main`; Java, HTML,
-  and Django are parser-only until you supply `.ron` rules or the expanded language
-  packs merge.
 - **Razor / ASP.NET views**: `.cshtml` files are not detected or scanned (0% recall on
   fusion-benchmarks Razor cases).
+- **Recall gaps**: PHP and Python underperform on fusion-benchmarks despite bundled
+  rules; several XBEN PHP fixtures score 0% recall.
 - **JavaScript minified files**: May produce false positives (use `--skip-minified`).
   Detection currently relies on file naming patterns.
 - **Multi-file taint**: Requires more testing.
@@ -412,9 +404,9 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 
 ### Roadmap
-- [ ] **Additional language packs**: Merge PHP, C#, Go, and Java rules from
-  `feature/more_language_support`
 - [ ] **Razor support**: `.cshtml` detection and view-layer XSS/CSRF rules
+- [ ] **C/C++ support**: Parsers and rule packs for `.c` / `.h`
+- [ ] **Rule coverage**: Improve PHP and Python recall on benchmark fixtures
 - [ ] **IDE integration**: VS Code and JetBrains plugins
 - [ ] **CI/CD integration**: GitHub Actions, GitLab CI templates
 - [ ] **Advanced analysis**: Control flow and symbolic execution
