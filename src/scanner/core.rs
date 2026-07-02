@@ -3731,6 +3731,11 @@ enum ValueSourceClassification {
     Unknown,
 }
 
+/// Identity of a verified cross-file taint flow, used to dedup rediscovered flows:
+/// `(sink_file, sink_line, sink_variable, sink_pattern, source_file, source_line,
+/// source_pattern)`.
+type CrossFileFlowKey = (String, usize, String, String, String, usize, String);
+
 /// Multi-file taint analysis infrastructure for cross-file data flow tracking
 #[derive(Debug)]
 struct MultiFileTaintAnalyzer {
@@ -3760,6 +3765,94 @@ impl MultiFileTaintAnalyzer {
     }
 
     /// NEW: Analyze cross-file taint flows using the enhanced DataFlowTracer
+    /// Select the target language and its files for cross-file analysis: `language_filter`'s
+    /// files if present and non-empty (no fallback when it yields nothing), else Python (the
+    /// legacy default) if present and non-empty.
+    fn select_cross_file_targets<'a>(
+        files_by_language: &'a std::collections::BTreeMap<String, Vec<std::path::PathBuf>>,
+        language_filter: Option<&'a str>,
+    ) -> Option<(Vec<std::path::PathBuf>, &'a str)> {
+        if let Some(filter_lang) = language_filter {
+            let filtered_files = files_by_language.get(filter_lang)?;
+            if filtered_files.is_empty() {
+                return None;
+            }
+            log::debug!(
+                "[CROSS_FILE_NEW] Using language_filter: {} ({} files)",
+                filter_lang,
+                filtered_files.len()
+            );
+            return Some((filtered_files.clone(), filter_lang));
+        }
+
+        let python_files = files_by_language.get("python")?;
+        if python_files.is_empty() {
+            return None;
+        }
+        Some((python_files.clone(), "python"))
+    }
+
+    /// Handle one sink's analysis result: for a definite taint flow, record a deduplicated
+    /// finding via the rule matching the source/sink pattern combination; safe/unknown results
+    /// produce no finding.
+    fn process_sink_analysis_result(
+        &self,
+        analysis_result: AnalysisResult,
+        sink_info: &TaintSinkInfo,
+        rule_deduplicator: &TaintRuleDeduplicator,
+        seen_flows: &mut std::collections::BTreeSet<CrossFileFlowKey>,
+        findings: &mut Vec<crate::models::Finding>,
+    ) {
+        match analysis_result {
+            AnalysisResult::DefinitelyTainted { flow } => {
+                log::debug!(
+                    "[CROSS_FILE_NEW] VERIFIED taint flow: {} -> {}",
+                    flow.source_pattern,
+                    flow.sink_pattern
+                );
+
+                // Get the appropriate rule for this flow
+                let Some(rule) = rule_deduplicator
+                    .get_rule_for_combination(&flow.source_pattern, &flow.sink_pattern)
+                else {
+                    return;
+                };
+                let flow_key = (
+                    flow.sink_file.clone(),
+                    flow.sink_line,
+                    flow.sink_variable.clone(),
+                    flow.sink_pattern.clone(),
+                    flow.source_file.clone(),
+                    flow.source_line,
+                    flow.source_pattern.clone(),
+                );
+                if !seen_flows.insert(flow_key) {
+                    log::debug!(
+                        "[CROSS_FILE_NEW] Skipping duplicate flow: {} ({}:{}) -> {} ({}:{})",
+                        flow.source_pattern,
+                        flow.source_file,
+                        flow.source_line,
+                        flow.sink_pattern,
+                        flow.sink_file,
+                        flow.sink_line
+                    );
+                    return;
+                }
+                let finding = self.create_finding_from_verified_flow(&flow, rule);
+                findings.push(finding);
+            }
+            AnalysisResult::DefinitelySafe => {
+                log::debug!("[CROSS_FILE_NEW] SAFE: No taint flow to {}", sink_info.used_variable);
+                // Don't create any finding - this is definitely safe
+            }
+            AnalysisResult::Unknown { reason } => {
+                log::debug!("[CROSS_FILE_NEW] UNKNOWN: {} for {}", reason, sink_info.used_variable);
+                // For now, don't create findings for unknown cases to reduce false positives
+                // Could add a flag to include these if needed
+            }
+        }
+    }
+
     fn analyze_cross_file_flows(
         &mut self,
         files_by_language: &std::collections::BTreeMap<String, Vec<std::path::PathBuf>>,
@@ -3768,36 +3861,13 @@ impl MultiFileTaintAnalyzer {
     ) -> Result<Vec<crate::models::Finding>> {
         log::debug!("[CROSS_FILE_NEW] Starting enhanced cross-file taint analysis");
 
-        // UPDATED: Check language_filter first, then fall back to original logic
-        let mut target_files = Vec::new();
-        let mut target_language = None;
-
-        // If language_filter is specified, use that language exclusively
-        if let Some(filter_lang) = language_filter {
-            if let Some(filtered_files) = files_by_language.get(filter_lang) {
-                if !filtered_files.is_empty() {
-                    target_files.extend(filtered_files.clone());
-                    target_language = Some(filter_lang);
-                    log::debug!(
-                        "[CROSS_FILE_NEW] Using language_filter: {} ({} files)",
-                        filter_lang,
-                        filtered_files.len()
-                    );
-                }
-            }
-        } else if let Some(python_files) = files_by_language.get("python") {
-            if !python_files.is_empty() {
-                target_files.extend(python_files.clone());
-                target_language = Some("python");
-            }
-        }
         // If still no files, skip cross-file analysis
-        if target_files.is_empty() {
+        let Some((target_files, language)) =
+            Self::select_cross_file_targets(files_by_language, language_filter)
+        else {
             log::debug!("[CROSS_FILE_NEW] No suitable files found for cross-file analysis");
             return Ok(Vec::new());
-        }
-
-        let language = target_language.unwrap();
+        };
         log::debug!(
             "[CROSS_FILE_NEW] Analyzing {} {} files for cross-file taint flows",
             target_files.len(),
@@ -3816,15 +3886,10 @@ impl MultiFileTaintAnalyzer {
         // separate TaintSinkInfo per used variable) stay separate findings; only a flow whose
         // source AND sink are byte-for-byte identical is collapsed. BTreeSet keeps the dedup
         // deterministic per repo convention.
-        let mut seen_flows: std::collections::BTreeSet<(
-            String, // sink_file
-            usize,  // sink_line
-            String, // sink_variable
-            String, // sink_pattern
-            String, // source_file
-            usize,  // source_line
-            String, // source_pattern
-        )> = std::collections::BTreeSet::new();
+        // Key: (sink_file, sink_line, sink_variable, sink_pattern, source_file, source_line,
+        // source_pattern) -- see `CrossFileFlowKey`.
+        let mut seen_flows: std::collections::BTreeSet<CrossFileFlowKey> =
+            std::collections::BTreeSet::new();
 
         // Build legacy import/export maps for sink discovery (temporary)
         self.build_import_export_maps(files_by_language, taint_rules, language_filter)?;
@@ -3862,60 +3927,13 @@ impl MultiFileTaintAnalyzer {
                     &rule_deduplicator,
                 );
 
-                match analysis_result {
-                    AnalysisResult::DefinitelyTainted { flow } => {
-                        log::debug!(
-                            "[CROSS_FILE_NEW] VERIFIED taint flow: {} -> {}",
-                            flow.source_pattern,
-                            flow.sink_pattern
-                        );
-
-                        // Get the appropriate rule for this flow
-                        if let Some(rule) = rule_deduplicator
-                            .get_rule_for_combination(&flow.source_pattern, &flow.sink_pattern)
-                        {
-                            let flow_key = (
-                                flow.sink_file.clone(),
-                                flow.sink_line,
-                                flow.sink_variable.clone(),
-                                flow.sink_pattern.clone(),
-                                flow.source_file.clone(),
-                                flow.source_line,
-                                flow.source_pattern.clone(),
-                            );
-                            if seen_flows.insert(flow_key) {
-                                let finding = self.create_finding_from_verified_flow(&flow, rule);
-                                findings.push(finding);
-                            } else {
-                                log::debug!(
-                                    "[CROSS_FILE_NEW] Skipping duplicate flow: {} ({}:{}) -> {} ({}:{})",
-                                    flow.source_pattern,
-                                    flow.source_file,
-                                    flow.source_line,
-                                    flow.sink_pattern,
-                                    flow.sink_file,
-                                    flow.sink_line
-                                );
-                            }
-                        }
-                    }
-                    AnalysisResult::DefinitelySafe => {
-                        log::debug!(
-                            "[CROSS_FILE_NEW] SAFE: No taint flow to {}",
-                            sink_info.used_variable
-                        );
-                        // Don't create any finding - this is definitely safe
-                    }
-                    AnalysisResult::Unknown { reason } => {
-                        log::debug!(
-                            "[CROSS_FILE_NEW] UNKNOWN: {} for {}",
-                            reason,
-                            sink_info.used_variable
-                        );
-                        // For now, don't create findings for unknown cases to reduce false positives
-                        // Could add a flag to include these if needed
-                    }
-                }
+                self.process_sink_analysis_result(
+                    analysis_result,
+                    sink_info,
+                    &rule_deduplicator,
+                    &mut seen_flows,
+                    &mut findings,
+                );
             }
         }
 
