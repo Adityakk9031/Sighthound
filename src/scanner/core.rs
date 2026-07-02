@@ -3689,6 +3689,21 @@ impl VariableFlowTracker {
 // ENHANCED DATA STRUCTURES - Phase 1: Precise Cross-File Analysis
 // ============================================================================
 
+/// Source/sink endpoints for [`MultiFileTaintAnalyzer::create_verified_flow`], bundled to keep
+/// that function's signature under the 8-parameter gate.
+struct VerifiedFlowEndpoints<'a> {
+    source_file: &'a str,
+    source_function: &'a str,
+    source_pattern: &'a str,
+    source_line: usize,
+    sink_file: &'a str,
+    sink_function: &'a str,
+    sink_pattern: &'a str,
+    sink_line: usize,
+    sink_variable: &'a str,
+    call_chain_len: usize,
+}
+
 /// A verified taint flow with complete evidence chain
 #[derive(Debug, Clone)]
 struct VerifiedTaintFlow {
@@ -4374,6 +4389,60 @@ impl DataFlowTracer {
     }
 
     /// Analyze whether a sink variable in a function truly receives tainted data
+    /// Handle the `FunctionParameter` variable-source case: treat the parameter as a taint
+    /// source only when its name matches a known source pattern (broad names like `token` are
+    /// too noisy to assume tainted).
+    fn analyze_function_parameter_source(
+        &mut self,
+        sink_file: &str,
+        sink_function: &str,
+        sink_pattern: &str,
+        sink_line: usize,
+        sink_variable: &str,
+        parameter_index: usize,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> AnalysisResult {
+        log::debug!("[DATA_FLOW_TRACER] Variable from function parameter {}", parameter_index);
+
+        // Only treat parameters as sources when the parameter shape is
+        // explicitly user controlled; broad names like `token` are too noisy.
+        let ValueSourceClassification::Tainted(source_pattern) =
+            self.classify_value_source(sink_variable, rule_deduplicator)
+        else {
+            return AnalysisResult::Unknown {
+                reason: format!(
+                    "Function parameter {} - requires caller analysis",
+                    parameter_index
+                ),
+            };
+        };
+
+        log::debug!(
+            "[DATA_FLOW_TRACER] Function parameter '{}' matches source pattern '{}'",
+            sink_variable,
+            source_pattern
+        );
+
+        // Treat function parameters that match source patterns as taint sources
+        let flow = VerifiedTaintFlow {
+            source_file: sink_file.to_string(),
+            source_function: sink_function.to_string(),
+            source_pattern: source_pattern.clone(),
+            source_line: 1, // Function definition line (approximate)
+
+            sink_file: sink_file.to_string(),
+            sink_function: sink_function.to_string(),
+            sink_pattern: sink_pattern.to_string(),
+            sink_line,
+            sink_variable: sink_variable.to_string(),
+
+            call_chain_len: 0,
+        };
+
+        self.verified_flows.push(flow.clone());
+        AnalysisResult::DefinitelyTainted { flow }
+    }
+
     fn analyze_sink_variable(
         &mut self,
         sink_file: &str,
@@ -4410,18 +4479,18 @@ impl DataFlowTracer {
                     pattern,
                     line
                 );
-                self.create_verified_flow(
-                    sink_file,
-                    sink_function,
-                    &pattern,
-                    line,
+                self.create_verified_flow(VerifiedFlowEndpoints {
+                    source_file: sink_file,
+                    source_function: sink_function,
+                    source_pattern: &pattern,
+                    source_line: line,
                     sink_file,
                     sink_function,
                     sink_pattern,
                     sink_line,
                     sink_variable,
-                    0,
-                )
+                    call_chain_len: 0,
+                })
             }
 
             VariableSource::LocalAssignment { source_expression, line } => {
@@ -4443,50 +4512,16 @@ impl DataFlowTracer {
                 )
             }
 
-            VariableSource::FunctionParameter { parameter_index } => {
-                log::debug!(
-                    "[DATA_FLOW_TRACER] Variable from function parameter {}",
-                    parameter_index
-                );
-
-                // Only treat parameters as sources when the parameter shape is
-                // explicitly user controlled; broad names like `token` are too noisy.
-                if let ValueSourceClassification::Tainted(source_pattern) =
-                    self.classify_value_source(sink_variable, rule_deduplicator)
-                {
-                    log::debug!(
-                        "[DATA_FLOW_TRACER] Function parameter '{}' matches source pattern '{}'",
-                        sink_variable,
-                        source_pattern
-                    );
-
-                    // Treat function parameters that match source patterns as taint sources
-                    let flow = VerifiedTaintFlow {
-                        source_file: sink_file.to_string(),
-                        source_function: sink_function.to_string(),
-                        source_pattern: source_pattern.clone(),
-                        source_line: 1, // Function definition line (approximate)
-
-                        sink_file: sink_file.to_string(),
-                        sink_function: sink_function.to_string(),
-                        sink_pattern: sink_pattern.to_string(),
-                        sink_line,
-                        sink_variable: sink_variable.to_string(),
-
-                        call_chain_len: 0,
-                    };
-
-                    self.verified_flows.push(flow.clone());
-                    return AnalysisResult::DefinitelyTainted { flow };
-                }
-
-                AnalysisResult::Unknown {
-                    reason: format!(
-                        "Function parameter {} - requires caller analysis",
-                        parameter_index
-                    ),
-                }
-            }
+            VariableSource::FunctionParameter { parameter_index } => self
+                .analyze_function_parameter_source(
+                    sink_file,
+                    sink_function,
+                    sink_pattern,
+                    sink_line,
+                    sink_variable,
+                    parameter_index,
+                    rule_deduplicator,
+                ),
         }
     }
 
@@ -4517,38 +4552,26 @@ impl DataFlowTracer {
     }
 
     /// Create a verified taint flow with complete evidence
-    fn create_verified_flow(
-        &mut self,
-        source_file: &str,
-        source_function: &str,
-        source_pattern: &str,
-        source_line: usize,
-        sink_file: &str,
-        sink_function: &str,
-        sink_pattern: &str,
-        sink_line: usize,
-        sink_variable: &str,
-        call_chain_len: usize,
-    ) -> AnalysisResult {
+    fn create_verified_flow(&mut self, endpoints: VerifiedFlowEndpoints) -> AnalysisResult {
         let verified_flow = VerifiedTaintFlow {
-            source_file: source_file.to_string(),
-            source_function: source_function.to_string(),
-            source_pattern: source_pattern.to_string(),
-            source_line,
+            source_file: endpoints.source_file.to_string(),
+            source_function: endpoints.source_function.to_string(),
+            source_pattern: endpoints.source_pattern.to_string(),
+            source_line: endpoints.source_line,
 
-            sink_file: sink_file.to_string(),
-            sink_function: sink_function.to_string(),
-            sink_pattern: sink_pattern.to_string(),
-            sink_line,
-            sink_variable: sink_variable.to_string(),
+            sink_file: endpoints.sink_file.to_string(),
+            sink_function: endpoints.sink_function.to_string(),
+            sink_pattern: endpoints.sink_pattern.to_string(),
+            sink_line: endpoints.sink_line,
+            sink_variable: endpoints.sink_variable.to_string(),
 
-            call_chain_len,
+            call_chain_len: endpoints.call_chain_len,
         };
 
         log::debug!(
             "[DATA_FLOW_TRACER] Verified taint flow: {} -> {} via {:?}",
-            source_pattern,
-            sink_pattern,
+            endpoints.source_pattern,
+            endpoints.sink_pattern,
             verified_flow.call_chain_len
         );
 
