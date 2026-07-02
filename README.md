@@ -24,18 +24,25 @@ A high-performance vulnerability scanner for source code using tree-sitter parsi
 
 ### Language Support
 
-| Language | Parsing | Bundled Rules |
-|---|---|---|
-| Python (`.py`)            | ✅ | ✅ |
-| JavaScript (`.js`)        | ✅ | ✅ |
-| Java (`.java`)            | ✅ | — (parser only; bring your own rules) |
-| TypeScript / TSX (`.tsx`) | ✅ | ✅ (shares JavaScript rules) |
-| HTML (`.html`)            | ✅ | — (parser only) |
-| Django templates          | ✅ | — (parser only) |
+**Shipped on `main`**
 
-Python, JavaScript, and TypeScript/TSX ship with curated rule sets (TSX reuses the
-JavaScript rules). The remaining languages have working tree-sitter parsers but no
-bundled rules yet — point Sighthound at your own `.ron` rules to scan them.
+| Language | Extensions | Parsing | Bundled Rules |
+|---|---|---|---|
+| Python | `.py`, `.pyw`, `.pyi`, `.pyx` | ✅ | ✅ |
+| JavaScript | `.js`, `.mjs`, `.cjs`, `.jsx`, `.vue`, `.svelte` | ✅ | ✅ |
+| TypeScript / TSX | `.ts`, `.tsx`, `.mts`, `.cts` | ✅ | ✅ (reuses JavaScript rules) |
+| Java | `.java` | ✅ | — (parser only; bring your own `.ron` rules) |
+| HTML | `.html`, `.htm`, `.twig`, `.ejs`, `.hbs`, … | ✅ | — (parser only) |
+| Django templates | `.html` (Django syntax) | ✅ | — (parser only) |
+
+Python, JavaScript, and TypeScript/TSX ship with curated embedded rule sets. Java,
+HTML, and Django have working tree-sitter parsers but no bundled rules on `main` —
+point Sighthound at your own `.ron` rules to scan them.
+
+**In development** on [`feature/more_language_support`](https://github.com/Corgea/Sighthound/tree/feature/more_language_support): PHP, C#, Go, and bundled Java/HTML rules.
+
+**Not yet supported**: Razor (`.cshtml`), C/C++ (`.c`, `.h`). Template files such as
+`.twig` are parsed as HTML but do not have dedicated rule packs yet.
 
 ### Scanning Modes
 - **Auto-Detection Mode**: Automatically detects languages and loads appropriate rules
@@ -278,11 +285,57 @@ graph TD
 
 ## 📊 Performance
 
-### Benchmarks
-- **Large Codebase**: ~100,000 files scanned in under 2 minutes
-- **Memory Usage**: ~50MB for typical enterprise applications
-- **Accuracy**: 95%+ precision with advanced taint analysis
-- **Parallelization**: Linear scaling up to available CPU cores
+### fusion-benchmarks
+
+Sighthound is evaluated against the [fusion-benchmarks](https://github.com/Corgea/fusion-benchmarks)
+corpus: **907 expected true positives** and **238 expected false positives** across
+Python, JavaScript, Java, PHP, C#, HTML, and Razor fixtures. Scoring follows the
+harness definition — precision/recall/F1 are computed over curated cases only;
+findings that match no case are reported separately as *unmatched*.
+
+Results below are from a July 2026 run of `fusion-benchmarks/bench_sighthound_vs_semgrep.py`
+against `datasets/` (Sighthound release build vs Semgrep `--config=auto`).
+
+| Metric | Sighthound | Semgrep |
+|---|---:|---:|
+| Wall time | **24.1 s** | 185.7 s |
+| Raw findings | 477 | 846 |
+| Precision (lenient) | **97.3%** | 88.0% |
+| Recall (lenient) | **28.7%** | 9.0% |
+| F1 | **0.44** | 0.16 |
+| Unmatched findings | 224 | 741 |
+
+**Recall by language** (expected-TP cases on `main`; languages without bundled rules
+rely on parser-only detection or in-flight rule packs):
+
+| Language | Expected TP cases | Recall |
+|---|---:|---:|
+| JavaScript | 222 | **45.9%** |
+| Java | 187 | 33.7% † |
+| Python | 167 | 19.8% |
+| C# | 146 | 21.2% † |
+| PHP | 173 | 11.0% † |
+| HTML | 3 | 66.7% † |
+| Razor (`.cshtml`) | 9 | 0.0% |
+
+† Java, PHP, C#, and HTML figures reflect builds that include in-development rule
+packs from `feature/more_language_support`. On `main` today, only Python and
+JavaScript/TSX ship bundled rules — expect lower recall on the other languages until
+those packs land.
+
+**Takeaways:** JavaScript is the strongest language today. Razor views are not scanned
+yet (`.cshtml` is not detected). Overall recall still has significant room to improve
+despite high precision.
+
+To reproduce locally (requires a `fusion-benchmarks` checkout alongside this repo):
+
+```bash
+cargo build --release
+cd fusion-benchmarks
+uv sync
+python bench_sighthound_vs_semgrep.py
+# Artifacts: bench_out/summary.json, scoreboard.csv, unmatched_findings.csv
+```
 
 ### Optimization Features
 - **Memory Mapping**: Efficient file reading for large files
@@ -346,18 +399,26 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 🐛 Known Issues & Limitations
 
 ### Current Limitations
-- **JavaScript Minified Files**: May produce false positives (use `--skip-minified`). This needs improving as it currently relies on file name only.
-- **Multi-file Taint**: Requires more testing
-- **Dynamic Languages**: Runtime-only vulnerabilities may not be detected
-- **Performance**: Very large files (>10MB) may impact scanning speed
+- **Bundled rules**: Only Python and JavaScript/TSX ship rules on `main`; Java, HTML,
+  and Django are parser-only until you supply `.ron` rules or the expanded language
+  packs merge.
+- **Razor / ASP.NET views**: `.cshtml` files are not detected or scanned (0% recall on
+  fusion-benchmarks Razor cases).
+- **JavaScript minified files**: May produce false positives (use `--skip-minified`).
+  Detection currently relies on file naming patterns.
+- **Multi-file taint**: Requires more testing.
+- **Dynamic languages**: Runtime-only vulnerabilities may not be detected.
+- **Performance**: Very large files (>10MB) may impact scanning speed.
 
 
 ### Roadmap
-- [ ] **IDE Integration**: VS Code and JetBrains plugins
-- [ ] **CI/CD Integration**: GitHub Actions, GitLab CI templates
-- [ ] **Additional Languages**: Go, C/C++, PHP, Ruby support
-- [ ] **Advanced Analysis**: Control flow and symbolic execution
-- [ ] **Incremental Scanning**: Cache and diff-based analysis
+- [ ] **Additional language packs**: Merge PHP, C#, Go, and Java rules from
+  `feature/more_language_support`
+- [ ] **Razor support**: `.cshtml` detection and view-layer XSS/CSRF rules
+- [ ] **IDE integration**: VS Code and JetBrains plugins
+- [ ] **CI/CD integration**: GitHub Actions, GitLab CI templates
+- [ ] **Advanced analysis**: Control flow and symbolic execution
+- [ ] **Incremental scanning**: Cache and diff-based analysis
 
 ## 🏢 Credits
 
