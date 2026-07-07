@@ -294,8 +294,7 @@ fn print_finding_code_context(
     let color = crate::ui::color_enabled();
     if let (Some(syntax), true) = (syntax, color) {
         let mut h = HighlightLines::new(syntax, theme);
-        for i in start_line..end_line {
-            let line = lines[i];
+        for (i, &line) in lines.iter().enumerate().take(end_line).skip(start_line) {
             let ranges: Vec<(Style, &str)> = h.highlight_line(line, ps).unwrap_or_default();
             print!("    {}{:4} | ", context_line_marker(i + 1 == line_num, color), i + 1);
 
@@ -307,13 +306,8 @@ fn print_finding_code_context(
         }
     } else {
         // Plain text when highlighting is unavailable or color is disabled
-        for i in start_line..end_line {
-            println!(
-                "    {}{:4} | {}",
-                context_line_marker(i + 1 == line_num, color),
-                i + 1,
-                lines[i]
-            );
+        for (i, &line) in lines.iter().enumerate().take(end_line).skip(start_line) {
+            println!("    {}{:4} | {}", context_line_marker(i + 1 == line_num, color), i + 1, line);
         }
     }
 }
