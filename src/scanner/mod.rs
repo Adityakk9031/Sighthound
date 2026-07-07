@@ -1,8 +1,17 @@
 pub mod conditions;
 pub mod core;
+mod dataflow;
+mod flow_tracker;
 pub mod modes;
+mod multifile_taint;
+mod output;
+mod parser_helper;
 pub mod prefilter;
+mod scan_context;
+mod scanning_logic;
+mod taint_utils;
 pub mod utils;
+mod vulnerability_scanner;
 
 pub use crate::models::Finding;
 pub use core::{ScanningLogic, VulnerabilityScanner};

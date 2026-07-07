@@ -119,9 +119,9 @@ impl Rules {
         let mut parsed = Vec::with_capacity(files.len());
         for file in files {
             let filename = file.path().display();
-            let content = file
-                .contents_utf8()
-                .with_context(|| format!("Embedded {} rule {} is not valid UTF-8", language, filename))?;
+            let content = file.contents_utf8().with_context(|| {
+                format!("Embedded {} rule {} is not valid UTF-8", language, filename)
+            })?;
             let rules: Rules = ron::from_str(content).with_context(|| {
                 format!("Failed to parse embedded {} rule {}", language, filename)
             })?;
