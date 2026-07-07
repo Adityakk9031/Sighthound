@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use include_dir::{include_dir, Dir};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -10,96 +11,21 @@ use crate::language::LanguageSupport;
 // Re-export for backward compatibility
 pub use crate::models::{Condition, FileTypes, UnifiedRule};
 
-// Embedded rules - rule files included at compile time, grouped per language.
-// Each entry must be a valid `Rules` RON document; exclusion-pattern files use a
-// different schema and are intentionally excluded.
-const EMBEDDED_PYTHON: &[&str] = &[
-    include_str!("../rules/python/general_security.ron"),
-    include_str!("../rules/python/command_injection.ron"),
-    include_str!("../rules/python/cryptography.ron"),
-    include_str!("../rules/python/file_system.ron"),
-    include_str!("../rules/python/sql_injection.ron"),
-    include_str!("../rules/python/working.ron"),
-];
-
+// Embedded rule directories - every `.ron` rule document under each language dir is
+// embedded at compile time. New rule files auto-wire: drop a `.ron` into the relevant
+// dir and it loads with no edits here. `exclusion_patterns.ron` uses a different RON
+// schema (see `ExclusionPatterns`) and is skipped at load time in `parse_embedded_dir`.
+static RULES_PYTHON: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/python");
 // Always-on JavaScript/TypeScript rules (frontend + Node backend).
-const EMBEDDED_JAVASCRIPT: &[&str] = &[
-    include_str!("../rules/javascript/frontend_security.ron"),
-    include_str!("../rules/javascript/frontend_taint_security.ron"),
-    include_str!("../rules/javascript/backend_node_security.ron"),
-];
-
+static RULES_JAVASCRIPT: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/javascript");
 // Additional backend JS rules, loaded only when code_type is not "frontend".
-const EMBEDDED_JAVASCRIPT_BACKEND: &[&str] =
-    &[include_str!("../rules/backend_javascript/backend_security.ron")];
-
-const EMBEDDED_JAVA: &[&str] = &[
-    include_str!("../rules/java/sql_injection.ron"),
-    include_str!("../rules/java/command_injection.ron"),
-    include_str!("../rules/java/path_traversal.ron"),
-    include_str!("../rules/java/xss.ron"),
-    include_str!("../rules/java/xxe.ron"),
-    include_str!("../rules/java/deserialization.ron"),
-    include_str!("../rules/java/ssrf.ron"),
-    include_str!("../rules/java/weak_crypto.ron"),
-    include_str!("../rules/java/open_redirect.ron"),
-    include_str!("../rules/java/access_control.ron"),
-    include_str!("../rules/java/broken_auth.ron"),
-    include_str!("../rules/java/info_disclosure.ron"),
-];
-
-const EMBEDDED_CSHARP: &[&str] = &[
-    include_str!("../rules/csharp/sql_injection.ron"),
-    include_str!("../rules/csharp/injection.ron"),
-    include_str!("../rules/csharp/path_traversal.ron"),
-    include_str!("../rules/csharp/ssrf.ron"),
-    include_str!("../rules/csharp/crypto.ron"),
-    include_str!("../rules/csharp/header_injection.ron"),
-    include_str!("../rules/csharp/authn_authz.ron"),
-    include_str!("../rules/csharp/mass_assignment.ron"),
-    include_str!("../rules/csharp/misc.ron"),
-    include_str!("../rules/csharp/open_redirect.ron"),
-    include_str!("../rules/csharp/info_disclosure.ron"),
-];
-
-const EMBEDDED_GO: &[&str] = &[
-    include_str!("../rules/go/sql_injection.ron"),
-    include_str!("../rules/go/command_injection.ron"),
-    include_str!("../rules/go/code_injection.ron"),
-    include_str!("../rules/go/path_traversal.ron"),
-    include_str!("../rules/go/xss.ron"),
-    include_str!("../rules/go/ssrf.ron"),
-    include_str!("../rules/go/deserialization.ron"),
-    include_str!("../rules/go/weak_crypto.ron"),
-    include_str!("../rules/go/insecure_tls.ron"),
-];
-
-const EMBEDDED_RUBY: &[&str] = &[
-    include_str!("../rules/ruby/sql_injection.ron"),
-    include_str!("../rules/ruby/command_injection.ron"),
-    include_str!("../rules/ruby/code_injection.ron"),
-    include_str!("../rules/ruby/path_traversal.ron"),
-    include_str!("../rules/ruby/xss.ron"),
-    include_str!("../rules/ruby/ssrf.ron"),
-    include_str!("../rules/ruby/deserialization.ron"),
-    include_str!("../rules/ruby/mass_assignment.ron"),
-    include_str!("../rules/ruby/open_redirect.ron"),
-    include_str!("../rules/ruby/weak_crypto.ron"),
-    include_str!("../rules/ruby/redos.ron"),
-];
-
-const EMBEDDED_HTML: &[&str] =
-    &[include_str!("../rules/html/xss.ron"), include_str!("../rules/html/thymeleaf.ron")];
-
-const EMBEDDED_PHP: &[&str] = &[
-    include_str!("../rules/php/sql_injection.ron"),
-    include_str!("../rules/php/command_injection.ron"),
-    include_str!("../rules/php/code_injection.ron"),
-    include_str!("../rules/php/ssrf.ron"),
-    include_str!("../rules/php/deserialization.ron"),
-    include_str!("../rules/php/file_upload.ron"),
-    include_str!("../rules/php/taint.ron"),
-];
+static RULES_BACKEND_JAVASCRIPT: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/backend_javascript");
+static RULES_JAVA: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/java");
+static RULES_CSHARP: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/csharp");
+static RULES_GO: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/go");
+static RULES_RUBY: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/ruby");
+static RULES_HTML: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/html");
+static RULES_PHP: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/php");
 
 // Structure for centralized exclusion patterns
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -174,12 +100,31 @@ pub struct Rules {
 }
 
 impl Rules {
-    /// Parse a set of embedded RON documents into `Rules` instances.
-    fn parse_embedded(contents: &[&str], language: &str) -> Result<Vec<Self>> {
-        let mut parsed = Vec::with_capacity(contents.len());
-        for content in contents {
-            let rules: Rules = ron::from_str(content)
-                .context(format!("Failed to parse embedded {} rules", language))?;
+    /// Parse every embedded `.ron` rule document in `dir` into `Rules` instances.
+    ///
+    /// Files are sorted by name for deterministic rule order. `exclusion_patterns.ron`
+    /// uses a different RON schema (`ExclusionPatterns`) and is skipped.
+    fn parse_embedded_dir(dir: &Dir, language: &str) -> Result<Vec<Self>> {
+        let mut files: Vec<_> = dir
+            .files()
+            .filter(|file| {
+                let path = file.path();
+                path.extension().and_then(|ext| ext.to_str()) == Some("ron")
+                    && path.file_name().and_then(|name| name.to_str())
+                        != Some("exclusion_patterns.ron")
+            })
+            .collect();
+        files.sort_by(|a, b| a.path().cmp(b.path()));
+
+        let mut parsed = Vec::with_capacity(files.len());
+        for file in files {
+            let filename = file.path().display();
+            let content = file
+                .contents_utf8()
+                .with_context(|| format!("Embedded {} rule {} is not valid UTF-8", language, filename))?;
+            let rules: Rules = ron::from_str(content).with_context(|| {
+                format!("Failed to parse embedded {} rule {}", language, filename)
+            })?;
             parsed.push(rules);
         }
         Ok(parsed)
@@ -190,24 +135,24 @@ impl Rules {
         let mut all_rules = Vec::new();
 
         match language {
-            "python" => all_rules.extend(Self::parse_embedded(EMBEDDED_PYTHON, "Python")?),
+            "python" => all_rules.extend(Self::parse_embedded_dir(&RULES_PYTHON, "Python")?),
             "javascript" | "tsx" | "typescript" => {
-                all_rules.extend(Self::parse_embedded(EMBEDDED_JAVASCRIPT, "JavaScript")?);
+                all_rules.extend(Self::parse_embedded_dir(&RULES_JAVASCRIPT, "JavaScript")?);
                 // Legacy backend JS rules load only when explicitly non-frontend,
                 // matching the file-rules auto-detect path the benchmark measured.
                 if code_type.is_some_and(|ct| ct != "frontend") {
-                    all_rules.extend(Self::parse_embedded(
-                        EMBEDDED_JAVASCRIPT_BACKEND,
+                    all_rules.extend(Self::parse_embedded_dir(
+                        &RULES_BACKEND_JAVASCRIPT,
                         "JavaScript backend",
                     )?);
                 }
             }
-            "java" => all_rules.extend(Self::parse_embedded(EMBEDDED_JAVA, "Java")?),
-            "csharp" => all_rules.extend(Self::parse_embedded(EMBEDDED_CSHARP, "C#")?),
-            "go" => all_rules.extend(Self::parse_embedded(EMBEDDED_GO, "Go")?),
-            "ruby" => all_rules.extend(Self::parse_embedded(EMBEDDED_RUBY, "Ruby")?),
-            "html" | "django" => all_rules.extend(Self::parse_embedded(EMBEDDED_HTML, "HTML")?),
-            "php" => all_rules.extend(Self::parse_embedded(EMBEDDED_PHP, "PHP")?),
+            "java" => all_rules.extend(Self::parse_embedded_dir(&RULES_JAVA, "Java")?),
+            "csharp" => all_rules.extend(Self::parse_embedded_dir(&RULES_CSHARP, "C#")?),
+            "go" => all_rules.extend(Self::parse_embedded_dir(&RULES_GO, "Go")?),
+            "ruby" => all_rules.extend(Self::parse_embedded_dir(&RULES_RUBY, "Ruby")?),
+            "html" | "django" => all_rules.extend(Self::parse_embedded_dir(&RULES_HTML, "HTML")?),
+            "php" => all_rules.extend(Self::parse_embedded_dir(&RULES_PHP, "PHP")?),
             _ => {
                 return Err(anyhow::anyhow!(
                     "No embedded rules available for language: {}",
@@ -528,4 +473,30 @@ pub fn is_in_protective_context(node: &tree_sitter::Node) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod embedded_rules_tests {
+    use super::*;
+
+    #[test]
+    fn python_embedded_rules_load_and_skip_exclusion_patterns() {
+        // Directory embedding must skip `exclusion_patterns.ron` (different RON schema);
+        // if it were parsed as a `Rules` doc this would error instead of returning rules.
+        let rules = Rules::load_embedded_rules("python", None).expect("python rules should load");
+        assert!(rules.count_rules() > 0, "python embedded rules should not be empty");
+    }
+
+    #[test]
+    fn javascript_backend_gate_respects_code_type() {
+        let frontend = Rules::load_embedded_rules("javascript", Some("frontend"))
+            .expect("frontend js rules should load");
+        let backend = Rules::load_embedded_rules("javascript", Some("backend"))
+            .expect("backend js rules should load");
+        // Backend adds the extra backend_javascript rules on top of the always-on set.
+        assert!(
+            backend.count_rules() > frontend.count_rules(),
+            "non-frontend code_type must load additional backend JS rules"
+        );
+    }
 }

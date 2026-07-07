@@ -1,7 +1,9 @@
 (
     rules: [
         // CWE-256: Plaintext storage of a password — setPassword called with a
-        // raw value (no hashing/PasswordEncoder).
+        // raw value (no hashing/PasswordEncoder). The argument_not_sanitized
+        // condition drops the safe idiom setPassword(encoder.encode(pw)) so a
+        // bare callee-name match does not flag hashed values.
         (
             id: Some("java-plaintext-password-storage"),
             name: Some("Plaintext Password Storage"),
@@ -18,6 +20,15 @@
             file_types: Some((
                 extensions: Some([".java"])
             )),
+            conditions: Some([
+                (
+                    field: "argument",
+                    operator: "not_sanitized",
+                    value: "",
+                    condition_type: Some("argument_not_sanitized"),
+                    patterns: Some(["*encode*", "*hash*", "*crypt*"])
+                )
+            ]),
             tags: Some(["auth", "credentials", "cwe-256", "java"])
         ),
 

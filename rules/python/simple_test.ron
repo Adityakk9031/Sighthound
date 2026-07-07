@@ -1,4 +1,0 @@
-(
-    // Intentionally empty: eval() coverage lives in general_security.ron.
-    rules: []
-)

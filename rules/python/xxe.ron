@@ -1,0 +1,29 @@
+(
+    rules: [
+        // ---- XXE ----
+        (
+            id: Some("python-xxe-001"),
+            name: Some("XML External Entity Injection"),
+            category: Some("xxe"),
+            mode: "search",
+            patterns: Some([
+                "etree.fromstring",
+                "etree.parse",
+                "etree.XMLParser",
+                "minidom.parse",
+                "minidom.parseString",
+                "sax.parse",
+                "pulldom.parse",
+            ]),
+            finding_type: Some("XXE"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            cwe_id: Some("cwe-611"),
+            description: Some("XML parsing without disabling external entities can lead to XXE"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["xxe", "xml"])
+        ),
+    ]
+)

@@ -1,7 +1,0 @@
-(
-    // Intentionally empty: coverage consolidated into general_security.ron,
-    // command_injection.ron and cryptography.ron. The previous bare "eval"/"exec"
-    // substring patterns matched `cursor.execute(...)` and produced large numbers
-    // of CWE-95 false positives.
-    rules: []
-)

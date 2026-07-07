@@ -79,3 +79,38 @@ public class UserView {
     );
     assert_eq!(xss[0].line, 4, "unsafe append should be on line 4");
 }
+
+#[test]
+#[cfg(feature = "java")]
+fn java_password_encoder_suppresses_plaintext_storage() {
+    let rules = Rules::load_from_file("rules/java/broken_auth.ron").expect("load java auth rules");
+    let staging = stage_dir();
+
+    write_staged_file(
+        staging.path(),
+        "src/User.java",
+        r#"
+public class User {
+    public void setHashed(User user, String raw, PasswordEncoder passwordEncoder) {
+        user.setPassword(passwordEncoder.encode(raw));
+    }
+
+    public void setPlaintext(User user, String raw) {
+        user.setPassword(raw);
+    }
+}
+"#,
+    );
+
+    let findings = scan_java_simple_with_rules(staging.path(), rules);
+    let storage: Vec<_> =
+        findings.iter().filter(|f| f.finding_type.contains("Plaintext Password Storage")).collect();
+
+    assert_eq!(
+        storage.len(),
+        1,
+        "only the raw (unhashed) setPassword should be flagged, got: {:?}",
+        storage.iter().map(|f| (f.line, f.snippet.as_str())).collect::<Vec<_>>()
+    );
+    assert_eq!(storage[0].line, 8, "plaintext setPassword should be on line 8");
+}

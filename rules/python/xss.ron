@@ -1,0 +1,61 @@
+(
+    rules: [
+        // ---- Reflected/stored XSS via server-side template / HTML rendering ----
+        (
+            id: Some("python-xss-001"),
+            name: Some("XSS via Template/HTML Rendering"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                "render_template_string",
+                "markdown.markdown",
+                "HTMLResponse",
+                "make_response",
+            ]),
+            finding_type: Some("Cross-Site Scripting"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            cwe_id: Some("cwe-79"),
+            description: Some("Untrusted data rendered into HTML without escaping can lead to XSS"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["xss", "html", "template"])
+        ),
+
+        // ---- Reflected/stored XSS via f-string-built HTML ----
+        // An assignment whose value is an HTML fragment built with interpolation
+        // (`{...}`). Evaluated by the Python assignment scanner against the whole
+        // statement; the `=` forces full-statement matching and requiring a `{`
+        // after the tag keeps static HTML literals from matching. Untrusted data
+        // glued into markup like this is returned to the client (render_template_string,
+        // jsonify'd *_html fields, etc.) without escaping.
+        (
+            id: Some("python-xss-002"),
+            name: Some("XSS via Interpolated HTML String"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                "*=*<div*{*",
+                "*=*<p>*{*",
+                "*=*<p *{*",
+                "*=*<h1*{*",
+                "*=*<h2*{*",
+                "*=*<span*{*",
+                "*=*<html*{*",
+                "*=*<body*{*",
+                "*=*<a href*{*",
+                "*=*<img*{*",
+            ]),
+            finding_type: Some("Cross-Site Scripting"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            cwe_id: Some("cwe-79"),
+            description: Some("HTML markup built from interpolated values; if any value is attacker-controlled this is reflected/stored XSS"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["xss", "html", "injection"])
+        ),
+    ]
+)

@@ -1,0 +1,43 @@
+(
+    rules: [
+        // ---- Debug mode / interactive debugger exposed ----
+        (
+            id: Some("python-debug-001"),
+            name: Some("Debug Mode Enabled"),
+            category: Some("misconfiguration"),
+            mode: "search",
+            patterns: Some([
+                "*app.run(*debug=True*",
+                "*.run(*debug=True*",
+            ]),
+            finding_type: Some("Debug Mode Enabled"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-489"),
+            description: Some("Flask/served app started with debug=True exposes the interactive debugger"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["debug", "misconfiguration"])
+        ),
+        (
+            id: Some("python-debug-002"),
+            name: Some("Werkzeug Interactive Debugger Exposed"),
+            category: Some("misconfiguration"),
+            mode: "search",
+            patterns: Some([
+                "*run_simple(*use_debugger=True*",
+                "*run_simple(*use_reloader=True*",
+            ]),
+            finding_type: Some("Interactive Debugger Exposed"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-94"),
+            description: Some("Werkzeug run_simple with the interactive debugger enables remote code execution"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["debug", "rce", "misconfiguration"])
+        ),
+    ]
+)

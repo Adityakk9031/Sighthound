@@ -1,0 +1,30 @@
+(
+    rules: [
+        // ==================== CWE-1321: Prototype Pollution / Object Injection ====================
+        (
+            id: Some("js-node-object-injection-001"),
+            name: Some("Object Property Injection via dynamic key assignment"),
+            category: Some("object-injection"),
+            mode: "search",
+            patterns: Some([
+                // obj[key] = <value> where the right-hand side is a plain
+                // identifier/member or a bracket access (the classic deep-merge /
+                // clone shape). Excluding a call RHS (next char "(") drops noise like
+                // req.params[name] = decodeURIComponent(...) and collapses recursive
+                // merges to the named-function patterns below, avoiding duplicate
+                // findings on the same merge routine.
+                "regex:[\\w)\\]][\\w.]*\\[[A-Za-z_$][\\w$.()\\-]*\\]\\s*=\\s*[A-Za-z_$][\\w$.]*(?:\\[[^\\]]*\\])?(?:[^\\w(]|$)",
+                "regex:mergeSettings\\((?:key)?",
+                "regex:setDeep\\((?:key)?",
+                "regex:Object.assign\\([\\s\\S]{0,40}Object.prototype(?:key)?",
+            ]),
+            finding_type: Some("Object Property Injection"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            cwe_id: Some("cwe-1321"),
+            description: Some("Attacker-controlled key assigned to an object can pollute the prototype chain"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["object-injection", "prototype", "backend", "cwe-1321"])
+        ),
+    ],
+)

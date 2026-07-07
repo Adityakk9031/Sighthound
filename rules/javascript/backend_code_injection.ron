@@ -1,0 +1,22 @@
+(
+    rules: [
+        // ==================== CWE-94: Code Injection ====================
+        (
+            id: Some("js-node-code-injection-001"),
+            name: Some("Code Injection via dynamic evaluation"),
+            category: Some("code-injection"),
+            mode: "search",
+            patterns: Some([
+                "regex:eval\\(\\s*[A-Za-z_$](?:key)?",
+                "regex:new Function\\(\\s*[A-Za-z_$](?:key)?",
+            ]),
+            finding_type: Some("Code Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-94"),
+            description: Some("User-controlled input passed to a dynamic code evaluation sink"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["injection", "code", "backend", "cwe-94"])
+        ),
+    ],
+)

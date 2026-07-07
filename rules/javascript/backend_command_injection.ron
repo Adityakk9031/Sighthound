@@ -1,0 +1,25 @@
+(
+    rules: [
+        // ==================== CWE-78: OS Command Injection ====================
+        (
+            id: Some("js-node-command-injection-001"),
+            name: Some("OS Command Injection via child_process exec"),
+            category: Some("command-injection"),
+            mode: "search",
+            patterns: Some([
+                "regex:exec\\([^)]*\\+",
+                "regex:execSync\\([^)]*\\+",
+                "regex:execCommand\\([^)]*\\+",
+                "regex:exec\\(\\s*[A-Za-z_$][\\w$]*\\s*[,)]",
+                "regex:execSync\\(\\s*[A-Za-z_$][\\w$]*\\s*[,)]",
+            ]),
+            finding_type: Some("Command Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-78"),
+            description: Some("Untrusted data passed to a shell command execution sink"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["injection", "command", "backend", "cwe-78"])
+        ),
+    ],
+)
