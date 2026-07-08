@@ -1,0 +1,96 @@
+(
+    rules: [
+        // ==================== CWE-526: Environment/Secret Exposure ====================
+        (
+            id: Some("js-node-env-exposure-001"),
+            name: Some("Environment variable exposure in response"),
+            category: Some("info-exposure"),
+            mode: "search",
+            patterns: Some([
+                "regex:Response.json\\([\\s\\S]{0,400}process.env(?:key)?",
+                "regex:res.json\\([\\s\\S]{0,400}process.env(?:key)?",
+                "regex:res.send\\([\\s\\S]{0,200}process.env(?:key)?",
+                "regex:res.html\\([\\s\\S]{0,500}process.env(?:key)?",
+                // Config/secret loaders that fan out to process.env values.
+                "regex:(?i)Response.json\\([\\s\\S]{0,400}secret",
+                "regex:res.json\\([\\s\\S]{0,200}publicRuntime",
+                "regex:res.json\\([\\s\\S]{0,200}supportBundle",
+            ]),
+            finding_type: Some("Information Exposure"),
+            severity: Some("Medium"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-526"),
+            description: Some("Process environment / secrets returned in an HTTP response"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["info-exposure", "secrets", "backend", "cwe-526"])
+        ),
+        // ==================== CWE-532: Sensitive data logging ====================
+        (
+            id: Some("js-node-sensitive-logging-001"),
+            name: Some("Sensitive data written to logs"),
+            category: Some("info-exposure"),
+            mode: "search",
+            patterns: Some([
+                "regex:logEvent\\([^)]*password",
+                "regex:logEvent\\([^)]*token",
+                "regex:console.log\\([^)]*password",
+                "regex:console.error\\([^)]*password",
+                "regex:auditLogger.info\\([\\s\\S]{0,200}password",
+                "regex:auditLogger.info\\([\\s\\S]{0,200}req.body",
+                "regex:auditLogger.info\\([\\s\\S]{0,200}credit_card",
+            ]),
+            finding_type: Some("Sensitive Data Logging"),
+            severity: Some("Medium"),
+            confidence: Some("Medium"),
+            cwe_id: Some("cwe-532"),
+            description: Some("Credentials or tokens written to application logs"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["info-exposure", "logging", "backend", "cwe-532"])
+        ),
+        // ==================== CWE-200: Sensitive object exposure in response ====================
+        (
+            id: Some("js-node-info-exposure-001"),
+            name: Some("Sensitive object exposed in HTTP response"),
+            category: Some("info-exposure"),
+            mode: "search",
+            patterns: Some([
+                // The literal "token"/"key" substrings below also force full-node-text
+                // matching (see rule_needs_full_context) for every pattern in this rule.
+                // Internal session / user records returned verbatim.
+                "regex:res.json\\(\\s*req.session\\b",
+                "regex:(?i)Response.json\\([\\s\\S]{0,200}\\bsession\\b",
+                "regex:Response.json\\(\\s*\\{\\s*users\\s*\\}",
+                // Caller-visible records that carry payment / loyalty secrets.
+                "regex:(?i)Response.json\\([\\s\\S]{0,200}card[_]?token",
+                "regex:res.json\\([\\s\\S]{0,80}contractPayload",
+                "regex:res.json\\([\\s\\S]{0,80}publicProfile",
+                "regex:res.json\\([\\s\\S]{0,80}.receipt\\(",
+            ]),
+            finding_type: Some("Information Exposure"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-200"),
+            description: Some("Internal user/session records or sensitive fields are serialized directly into an HTTP response"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["info-exposure", "backend", "cwe-200", "cwe-201", "cwe-359"])
+        ),
+        // ==================== CWE-312: Credentials returned to client ====================
+        (
+            id: Some("js-node-credential-exposure-001"),
+            name: Some("Stored credentials returned in API response"),
+            category: Some("info-exposure"),
+            mode: "search",
+            patterns: Some([
+                "regex:(?i)res.json\\([\\s\\S]{0,80}withsecrets",
+                "regex:(?i)Response.json\\([\\s\\S]{0,200}password",
+            ]),
+            finding_type: Some("Credential Exposure"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-312"),
+            description: Some("User credential material (passwords, reset tokens) is serialized into an HTTP response"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["info-exposure", "credentials", "backend", "cwe-312", "cwe-522"])
+        ),
+    ],
+)

@@ -19,25 +19,35 @@ path = "harness.rs"
 edition = "2024"
 
 [features]
-default = ["python", "java", "javascript", "tsx", "html", "django"]
+default = ["python", "java", "javascript", "tsx", "typescript", "go", "ruby", "csharp", "html", "django", "php"]
 python = ["tree-sitter-python"]
 java = ["tree-sitter-java"]
 javascript = ["tree-sitter-javascript"]
 tsx = ["tree-sitter-typescript"]
+typescript = ["tree-sitter-typescript"]
+go = ["tree-sitter-go"]
+ruby = ["tree-sitter-ruby"]
+csharp = ["tree-sitter-c-sharp"]
 html = ["tree-sitter-html"]
 django = ["tree-sitter-html"]  # Reuse HTML parser for Django templates
+php = ["tree-sitter-php"]
 
 [dependencies]
-tree-sitter = "0.24"
+tree-sitter = "0.26"
 tree-sitter-python = { version = "0.23", optional = true }
 tree-sitter-java = { version = "0.23", optional = true }
 tree-sitter-javascript = { version = "0.23", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-go = { version = "0.23", optional = true }
+tree-sitter-ruby = { version = "0.23", optional = true }
+tree-sitter-c-sharp = { version = "0.23", optional = true }
 tree-sitter-html = { version = "0.23", optional = true }
+tree-sitter-php = { version = "0.23", optional = true }
 regex = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ron = "0.8"
+include_dir = "0.7"
 walkdir = "2.4"
 clap = { version = "4.0", features = ["derive"] }
 anyhow = "1.0"
@@ -61,6 +71,8 @@ dbg_breakpoint="0.1.1"
 [dev-dependencies]
 tempfile = "3.8"
 proptest = "1"
+cucumber = "0.23.0"
+tokio = { version = "1.52.3", features = ["rt", "macros"] }
 
 [profile.release]
 opt-level = 3
@@ -78,3 +90,11 @@ path = "tests/integration/main.rs"
 name = "end_to_end_tests"
 path = "tests/end_to_end/main.rs"
 
+[[test]]
+name = "strictness_tests"
+path = "tests/strictness/main.rs"
+
+[[test]]
+name = "acceptance"
+path = "tests/acceptance/main.rs"
+harness = false

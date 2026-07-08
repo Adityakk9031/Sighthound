@@ -1,0 +1,25 @@
+(
+    rules: [
+        // ==================== CWE-22: Path Traversal ====================
+        (
+            id: Some("js-node-path-traversal-001"),
+            name: Some("Path Traversal via unsanitized path join"),
+            category: Some("path-traversal"),
+            mode: "search",
+            patterns: Some([
+                "regex:path.join\\([\\s\\S]{0,300},\\s*[A-Za-z_$][\\w$]*\\s*\\)(?:key)?",
+                "regex:path.resolve\\([\\s\\S]{0,300},\\s*[A-Za-z_$][\\w$]*\\s*\\)(?:key)?",
+                "regex:path.join\\([\\s\\S]{0,200},\\s*`[^`]*\\$\\{",
+                "regex:path.resolve\\([\\s\\S]{0,200},\\s*`[^`]*\\$\\{",
+                "regex:makeTenantPath\\([\\s\\S]{0,120},\\s*[A-Za-z_$](?:key)?",
+            ]),
+            finding_type: Some("Path Traversal"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-22"),
+            description: Some("Untrusted value joined into a filesystem path without validation"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["path-traversal", "backend", "cwe-22"])
+        ),
+    ],
+)

@@ -1,0 +1,23 @@
+(
+    rules: [
+        // ==================== CWE-918: SSRF ====================
+        (
+            id: Some("js-node-ssrf-001"),
+            name: Some("SSRF via fetch with caller-controlled URL"),
+            category: Some("ssrf"),
+            mode: "search",
+            patterns: Some([
+                "regex:fetch\\(\\s*[A-Za-z_$][\\w$.]*",
+                "regex:fetchJsonFromUrl\\(\\s*[A-Za-z_$]",
+                "regex:httpClient.fetchText\\(\\s*[A-Za-z_$]",
+            ]),
+            finding_type: Some("SSRF"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-918"),
+            description: Some("Caller-controlled URL passed to an outbound HTTP request"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["ssrf", "backend", "cwe-918"])
+        ),
+    ],
+)

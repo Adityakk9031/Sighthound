@@ -61,9 +61,8 @@
                 "e.data",
                 "message.data",
                 
-                // Network responses (external data)
+                // Network response text that may be rendered as HTML.
                 "*.responseText",
-                "*.response",
                 "fetch(*).then",
                 "XMLHttpRequest.responseText",
                 "axios.get",
@@ -92,15 +91,11 @@
                 "iframe.src",
                 "*.srcdoc",  // iframe srcdoc
                 
-                // Attribute manipulation
-                "*.title",
-                "*.alt",
+                // Attribute manipulation that can inject executable markup.
                 "*.onclick",
                 "*.onload",
                 "*.onerror",
                 "*.setAttribute",
-                "*.dataset.*",
-                
                 // Code execution
                 "eval(",
                 "Function(",
@@ -155,7 +150,7 @@
                 // Exclude safe operations that commonly cause false positives
                 (
                     field: "pattern",
-                    operator: "not_contains", 
+                    operator: "not_contains",
                     value: "addEventListener",
                     condition_type: Some("exclude_safe_operations")
                 ),
@@ -280,9 +275,8 @@
                 // PostMessage (external data)
                 "event.data",
                 
-                // Network responses (external data)
+                // Network response text that may be rendered as HTML.
                 "*.responseText",
-                "*.response",
                 "fetch(*).then",
                 "XMLHttpRequest.responseText",
                 "axios.*.then",
@@ -312,12 +306,12 @@
                 "*.formAction",
                 "*.setAttribute",
                 
-                // Event handlers
+                // Event handlers that execute attacker-controlled code.
                 "*.onclick",
                 "*.onload",
                 "*.onerror",
                 "addEventListener",
-                
+
                 // Template/rendering (dangerous)
                 "template.innerHTML",
                 "*.render",
@@ -454,7 +448,6 @@
                 "$.post",
                 
                 // URL construction
-                "window.location",
                 "location.href",
                 "*.src",
                 "*.href",
@@ -527,14 +520,10 @@
                 // URL contexts without encoding
                 "*.href",
                 "*.src",
-                "window.location",
                 "location.href",
                 
                 // Attribute contexts
                 "*.setAttribute",
-                "*.title",
-                "*.alt",
-                
                 // CSS contexts
                 "*.style",
                 "*.className"
@@ -705,7 +694,6 @@
                 "*.mutate",                // State mutations
                 
                 // DOM data attributes that could be used for redirection
-                "*.dataset.*",             // Dataset attributes
                 "*.setAttribute",          // Setting attributes
                 
                 // Meta refresh (high risk)
@@ -850,7 +838,6 @@
                 "sessionStorage.setItem",
                 
                 // Navigation
-                "window.location",
                 "location.href"
             ]),
             
@@ -906,7 +893,6 @@
                 "*.href",
                 "localStorage.setItem",
                 "sessionStorage.setItem",
-                "window.location",
                 "setTimeout(",
                 "setInterval(",
                 "import("
@@ -1529,27 +1515,12 @@
             ]),
             
             sinks: Some([
-                // Security-sensitive operations
-                "token",
-                "sessionId",
-                "nonce",
-                "csrf",
-                "*.cookie",
-                "localStorage.setItem",
-                "sessionStorage.setItem",
-                
-                // Authentication
-                "authenticate",
-                "login",
-                "password",
-                "key",
-                "secret",
-                
-                // Crypto operations
-                "encrypt(",
-                "decrypt(",
-                "sign(",
-                "verify("
+                // Security-sensitive storage operations (precise to avoid bare-word FPs)
+                "*.cookie =",
+                "localStorage.setItem(",
+                "sessionStorage.setItem(",
+                "crypto.createHmac(",
+                "jwt.sign("
             ]),
             
             sanitizers: Some([
@@ -1804,12 +1775,10 @@
                 "prompt(",
                 "confirm(",
                 
-                // Network responses
+                // Network response values that can carry executable code.
                 "*.responseText",
-                "*.response",
-                "fetch(",
-                "XMLHttpRequest",
-                "axios.*",
+                "*.response.data",
+                "*.responseJSON",
                 
                 // Storage (could contain user data)
                 "localStorage.getItem",
@@ -1824,7 +1793,6 @@
             sinks: Some([
                 // Direct code execution
                 "eval(",
-                "Function(",
                 "new Function(",
                 
                 // Timed execution with string
@@ -1918,15 +1886,12 @@
             
             sinks: Some([
                 // Location manipulation
-                "window.location",
                 "window.location.href",
                 "window.location.assign",
                 "window.location.replace",
                 "location.href",
                 "location.assign",
                 "location.replace",
-                "location.hash",
-                
                 // Navigation
                 "history.pushState",
                 "history.replaceState",

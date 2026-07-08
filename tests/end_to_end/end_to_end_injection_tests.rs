@@ -228,6 +228,182 @@ def run_safe_command():
         assert!(cmd_injection_count >= 2, "Should find command injection vulnerabilities");
     }
 
+    /// Shared per-call-site context for [`scan_call_arguments_for_injection`], to keep that
+    /// helper's own parameter count small.
+    #[cfg(feature = "java")]
+    struct MethodCallSite<'a> {
+        node_text: &'a str,
+        source: &'a [u8],
+        filepath: &'a str,
+        line: usize,
+        func_name: &'a str,
+        indent: &'a str,
+        language_support: &'a dyn sighthound::language::LanguageSupport,
+    }
+
+    #[cfg(feature = "java")]
+    fn is_vulnerable_sql_arg(
+        arg_kind: &str,
+        arg_text: &str,
+        language_support: &dyn sighthound::language::LanguageSupport,
+    ) -> bool {
+        arg_kind == "binary_expression" // String concatenation
+            || arg_kind == "method_invocation" // Method calls like String.format
+            || sighthound::rules::check_for_injection_pattern(arg_text, language_support)
+    }
+
+    #[cfg(feature = "java")]
+    fn is_vulnerable_command_arg(
+        arg_kind: &str,
+        arg_text: &str,
+        language_support: &dyn sighthound::language::LanguageSupport,
+    ) -> bool {
+        arg_kind == "binary_expression" // String concatenation
+            || arg_text.contains('+')
+            || arg_text.contains(';')
+            || sighthound::rules::check_for_injection_pattern(arg_text, language_support)
+    }
+
+    #[cfg(feature = "java")]
+    fn push_injection_finding(
+        findings: &mut Vec<sighthound::models::Finding>,
+        filepath: &str,
+        line: usize,
+        func_name: &str,
+        finding_type: &str,
+        node_text: &str,
+    ) {
+        findings.push(sighthound::models::Finding {
+            file: filepath.to_string(),
+            line,
+            column: 0,
+            end_line: line,
+            end_column: 0,
+            function: func_name.to_string(),
+            finding_type: finding_type.to_string(),
+            snippet: node_text.to_string(),
+            severity: "High".to_string(),
+            confidence: "High".to_string(),
+            description: None,
+            cwe_id: None,
+            source_info: None,
+            sink_info: None,
+            traces: None,
+            tags: None,
+        });
+    }
+
+    /// Check a method-invocation's arguments for injection indicators and record a finding of
+    /// `finding_type` for each argument that `is_vulnerable_arg` flags.
+    #[cfg(feature = "java")]
+    fn scan_call_arguments_for_injection(
+        node: &tree_sitter::Node,
+        site: &MethodCallSite,
+        finding_type: &str,
+        vulnerable_label: &str,
+        is_vulnerable_arg: fn(&str, &str, &dyn sighthound::language::LanguageSupport) -> bool,
+        findings: &mut Vec<sighthound::models::Finding>,
+    ) {
+        let Some(args_node) = site.language_support.get_arguments_node(node) else {
+            return;
+        };
+        for i in 0..args_node.named_child_count() {
+            let Some(arg) = args_node.named_child(i as u32) else {
+                continue;
+            };
+            let arg_text = String::from_utf8_lossy(&site.source[arg.start_byte()..arg.end_byte()]);
+            let arg_kind = arg.kind();
+
+            println!("{}Argument {}: {} (kind: {})", site.indent, i, arg_text, arg_kind);
+
+            // Check for signs of injection vulnerability
+            if is_vulnerable_arg(arg_kind, &arg_text, site.language_support) {
+                println!("{}VULNERABLE: {} found", site.indent, vulnerable_label);
+                push_injection_finding(
+                    findings,
+                    site.filepath,
+                    site.line,
+                    site.func_name,
+                    finding_type,
+                    site.node_text,
+                );
+            }
+        }
+    }
+
+    /// Recursively search for method invocations and flag SQL/command injection in their
+    /// arguments.
+    #[cfg(feature = "java")]
+    fn find_vulnerabilities(
+        node: &tree_sitter::Node,
+        source: &[u8],
+        filepath: &str,
+        language_support: &dyn sighthound::language::LanguageSupport,
+        findings: &mut Vec<sighthound::models::Finding>,
+        depth: usize,
+    ) {
+        let indent = "  ".repeat(depth);
+
+        // Check if this node is a method invocation
+        if node.kind() == "method_invocation" {
+            let node_text = String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
+            let line = node.start_position().row + 1;
+
+            // If this is an execute()/exec() method, check its arguments for injection patterns
+            if let Some(func_name) = language_support.get_function_name(node, source) {
+                println!("{}Processing method: {}", indent, func_name);
+
+                let site = MethodCallSite {
+                    node_text: &node_text,
+                    source,
+                    filepath,
+                    line,
+                    func_name,
+                    indent: &indent,
+                    language_support,
+                };
+
+                // Check for SQL injection
+                if func_name == "execute" {
+                    scan_call_arguments_for_injection(
+                        node,
+                        &site,
+                        "sql_injection",
+                        "SQL injection",
+                        is_vulnerable_sql_arg,
+                        findings,
+                    );
+                }
+
+                // Check for command injection
+                if func_name == "exec" {
+                    scan_call_arguments_for_injection(
+                        node,
+                        &site,
+                        "command_injection",
+                        "Command injection",
+                        is_vulnerable_command_arg,
+                        findings,
+                    );
+                }
+            }
+        }
+
+        // Recursively process all children
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i as u32) {
+                find_vulnerabilities(
+                    &child,
+                    source,
+                    filepath,
+                    language_support,
+                    findings,
+                    depth + 1,
+                );
+            }
+        }
+    }
+
     #[test]
     #[cfg(feature = "java")]
     fn test_java_sql_injection_detection() {
@@ -272,10 +448,7 @@ public class VulnerableService {
         // 2. Directly validate the injection pattern detection logic
         #[cfg(feature = "java")]
         {
-            use sighthound::language::LanguageSupport;
-            use sighthound::models::Finding;
             use sighthound::parser::LanguageParser;
-            use sighthound::rules::check_for_injection_pattern;
 
             // Create findings vector to store our results
             let mut findings = Vec::new();
@@ -289,142 +462,6 @@ public class VulnerableService {
             let tree = parser.parse(&source).expect("Failed to parse Java file");
             let root_node = tree.root_node();
             let language_support = parser.language_support();
-
-            // Define a function to recursively search for method invocations
-            fn find_vulnerabilities(
-                node: &tree_sitter::Node,
-                source: &[u8],
-                filepath: &str,
-                language_support: &dyn LanguageSupport,
-                findings: &mut Vec<Finding>,
-                depth: usize,
-            ) {
-                let indent = "  ".repeat(depth);
-
-                // Check if this node is a method invocation
-                if node.kind() == "method_invocation" {
-                    let node_text =
-                        String::from_utf8_lossy(&source[node.start_byte()..node.end_byte()]);
-                    let line = node.start_position().row + 1;
-
-                    // If this is an execute() method, check its arguments for injection patterns
-                    if let Some(func_name) = language_support.get_function_name(node, source) {
-                        println!("{}Processing method: {}", indent, func_name);
-
-                        // Check for SQL injection
-                        if func_name == "execute" {
-                            if let Some(args_node) = language_support.get_arguments_node(node) {
-                                for i in 0..args_node.named_child_count() {
-                                    if let Some(arg) = args_node.named_child(i) {
-                                        let arg_text = String::from_utf8_lossy(
-                                            &source[arg.start_byte()..arg.end_byte()],
-                                        );
-                                        let arg_kind = arg.kind();
-
-                                        println!(
-                                            "{}Argument {}: {} (kind: {})",
-                                            indent, i, arg_text, arg_kind
-                                        );
-
-                                        // Check for signs of injection vulnerability
-                                        let is_vulnerable = arg_kind == "binary_expression" || // String concatenation
-                                                           arg_kind == "method_invocation" || // Method calls like String.format
-                                                           check_for_injection_pattern(&arg_text, language_support);
-
-                                        if is_vulnerable {
-                                            println!("{}VULNERABLE: SQL injection found", indent);
-
-                                            findings.push(Finding {
-                                                file: filepath.to_string(),
-                                                line,
-                                                column: 0,
-                                                end_line: line,
-                                                end_column: 0,
-                                                function: func_name.to_string(),
-                                                finding_type: "sql_injection".to_string(),
-                                                snippet: node_text.to_string(),
-                                                severity: "High".to_string(),
-                                                confidence: "High".to_string(),
-                                                description: None,
-                                                cwe_id: None,
-                                                source_info: None,
-                                                sink_info: None,
-                                                traces: None,
-                                                tags: None,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Check for command injection
-                        if func_name == "exec" {
-                            if let Some(args_node) = language_support.get_arguments_node(node) {
-                                for i in 0..args_node.named_child_count() {
-                                    if let Some(arg) = args_node.named_child(i) {
-                                        let arg_text = String::from_utf8_lossy(
-                                            &source[arg.start_byte()..arg.end_byte()],
-                                        );
-                                        let arg_kind = arg.kind();
-
-                                        println!(
-                                            "{}Argument {}: {} (kind: {})",
-                                            indent, i, arg_text, arg_kind
-                                        );
-
-                                        // Check for signs of injection vulnerability
-                                        let is_vulnerable = arg_kind == "binary_expression" || // String concatenation
-                                                           arg_text.contains("+") ||
-                                                           arg_text.contains(";") ||
-                                                           check_for_injection_pattern(&arg_text, language_support);
-
-                                        if is_vulnerable {
-                                            println!(
-                                                "{}VULNERABLE: Command injection found",
-                                                indent
-                                            );
-
-                                            findings.push(Finding {
-                                                file: filepath.to_string(),
-                                                line,
-                                                column: 0,
-                                                end_line: line,
-                                                end_column: 0,
-                                                function: func_name.to_string(),
-                                                finding_type: "command_injection".to_string(),
-                                                snippet: node_text.to_string(),
-                                                severity: "High".to_string(),
-                                                confidence: "High".to_string(),
-                                                description: None,
-                                                cwe_id: None,
-                                                source_info: None,
-                                                sink_info: None,
-                                                traces: None,
-                                                tags: None,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Recursively process all children
-                for i in 0..node.child_count() {
-                    if let Some(child) = node.child(i) {
-                        find_vulnerabilities(
-                            &child,
-                            &source,
-                            filepath,
-                            language_support,
-                            findings,
-                            depth + 1,
-                        );
-                    }
-                }
-            }
 
             // Analyze the Java file directly
             find_vulnerabilities(

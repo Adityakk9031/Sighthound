@@ -1,0 +1,84 @@
+(
+    rules: [
+        // ==================== CWE-79: Reflected XSS via raw HTML response ====================
+        (
+            id: Some("js-node-xss-response-001"),
+            name: Some("Reflected XSS via raw HTML response"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                // The literal "=" in the first pattern forces full-node-text matching
+                // (see rule_needs_full_context) so the call body is inspected, not just
+                // the constructor name.
+                "regex:new Response\\([\\s\\S]{0,200}=[\\s\\S]{0,200}text/html",
+                "regex:new Response\\(\\s*[A-Za-z_$][\\w$]*,[\\s\\S]{0,160}text/html",
+                "regex:res.send\\(\\s*`[^`]*\\$\\{[\\s\\S]{0,200}`",
+                "regex:res.write\\(\\s*[A-Za-z_$][\\w$.]*\\s*\\)",
+                "regex:res.end\\(\\s*`[^`]*\\$\\{[\\s\\S]{0,200}`",
+            ]),
+            finding_type: Some("Reflected XSS"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-79"),
+            description: Some("HTML response body built from caller input returned with text/html content type"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["xss", "backend", "cwe-79"])
+        ),
+        // ==================== CWE-79/80/116: Reflected XSS via HTML template literal ====================
+        // A compact HTML template literal (tag immediately after the opening backtick,
+        // so multi-line page-shell templates that only re-embed pre-escaped fragments
+        // are skipped) that interpolates a value WITHOUT an escaping wrapper. The token
+        // after "${" must be a bare identifier/member terminated by "}", whitespace, or
+        // an operator ("||", "?", "+") — escapeHtml(...)/encodeURIComponent(...)/money(...)
+        // are excluded because the next char after the name is "(". The literal "<" plus
+        // the "(?:key)?" tail force full-node-text matching (see rule_needs_full_context).
+        (
+            id: Some("js-node-xss-template-001"),
+            name: Some("Reflected XSS via unescaped HTML template literal"),
+            category: Some("xss"),
+            mode: "search",
+            patterns: Some([
+                // "^[^`]*`" anchors so the node's FIRST backtick must open the HTML
+                // template. This keeps view helpers / .map() row builders but drops
+                // enclosing IIFE/arrow ancestor nodes whose first backtick is a SQL
+                // string (full-node-text matching would otherwise flag them too).
+                "regex:^[^`]*`\\s{0,2}<[^`]{0,300}\\$\\{[A-Za-z_$][\\w$.]*\\s*[}|?+](?:key)?",
+            ]),
+            finding_type: Some("Reflected XSS"),
+            severity: Some("High"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-79"),
+            description: Some("Untrusted value interpolated into an HTML template literal without output encoding"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["xss", "backend", "cwe-79", "cwe-80", "cwe-116"])
+        ),
+        // ==================== CWE-79: XSS via dangerouslySetInnerHTML (taint) ====================
+        (
+            id: Some("js-node-xss-dangerous-001"),
+            name: Some("XSS via dangerouslySetInnerHTML"),
+            category: Some("xss"),
+            mode: "taint",
+            sources: Some([
+                "html",
+                "markup",
+                "rawHtml",
+                "dangerousHtml",
+            ]),
+            sinks: Some([
+                "dangerouslySetInnerHTML",
+            ]),
+            sanitizers: Some([
+                "DOMPurify.sanitize",
+                "escapeHTML",
+                "sanitizeHtml",
+            ]),
+            finding_type: Some("XSS"),
+            severity: Some("High"),
+            confidence: Some("Medium"),
+            cwe_id: Some("cwe-79"),
+            description: Some("Component renders caller-controlled value as raw HTML"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["xss", "react", "frontend", "cwe-79"])
+        ),
+    ],
+)

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use include_dir::{include_dir, Dir};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -10,24 +11,21 @@ use crate::language::LanguageSupport;
 // Re-export for backward compatibility
 pub use crate::models::{Condition, FileTypes, UnifiedRule};
 
-// Embedded rules - include rule files at compile time
-const EMBEDDED_PYTHON_GENERAL_RULES: &str = include_str!("../rules/python/general_security.ron");
-const EMBEDDED_PYTHON_COMMAND_INJECTION_RULES: &str =
-    include_str!("../rules/python/command_injection.ron");
-const EMBEDDED_PYTHON_CRYPTOGRAPHY_RULES: &str = include_str!("../rules/python/cryptography.ron");
-const EMBEDDED_PYTHON_FILE_SYSTEM_RULES: &str = include_str!("../rules/python/file_system.ron");
-const EMBEDDED_PYTHON_SQL_INJECTION_RULES: &str = include_str!("../rules/python/sql_injection.ron");
-const EMBEDDED_PYTHON_WORKING_RULES: &str = include_str!("../rules/python/working.ron");
-const EMBEDDED_JAVASCRIPT_FRONTEND_RULES: &str =
-    include_str!("../rules/javascript/frontend_security.ron");
-const EMBEDDED_JAVASCRIPT_BACKEND_RULES: &str =
-    include_str!("../rules/backend_javascript/backend_security.ron");
-const EMBEDDED_JAVASCRIPT_TAINT_RULES: &str =
-    include_str!("../rules/javascript/frontend_taint_security.ron");
-
-// Add more embedded rules as needed
-// const EMBEDDED_JAVA_RULES: &str = include_str!("../rules/java/security.ron");
-// const EMBEDDED_HTML_RULES: &str = include_str!("../rules/html/security.ron");
+// Embedded rule directories - every `.ron` rule document under each language dir is
+// embedded at compile time. New rule files auto-wire: drop a `.ron` into the relevant
+// dir and it loads with no edits here. `exclusion_patterns.ron` uses a different RON
+// schema (see `ExclusionPatterns`) and is skipped at load time in `parse_embedded_dir`.
+static RULES_PYTHON: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/python");
+// Always-on JavaScript/TypeScript rules (frontend + Node backend).
+static RULES_JAVASCRIPT: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/javascript");
+// Additional backend JS rules, loaded only when code_type is not "frontend".
+static RULES_BACKEND_JAVASCRIPT: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/backend_javascript");
+static RULES_JAVA: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/java");
+static RULES_CSHARP: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/csharp");
+static RULES_GO: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/go");
+static RULES_RUBY: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/ruby");
+static RULES_HTML: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/html");
+static RULES_PHP: Dir = include_dir!("$CARGO_MANIFEST_DIR/rules/php");
 
 // Structure for centralized exclusion patterns
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -102,60 +100,59 @@ pub struct Rules {
 }
 
 impl Rules {
+    /// Parse every embedded `.ron` rule document in `dir` into `Rules` instances.
+    ///
+    /// Files are sorted by name for deterministic rule order. `exclusion_patterns.ron`
+    /// uses a different RON schema (`ExclusionPatterns`) and is skipped.
+    fn parse_embedded_dir(dir: &Dir, language: &str) -> Result<Vec<Self>> {
+        let mut files: Vec<_> = dir
+            .files()
+            .filter(|file| {
+                let path = file.path();
+                path.extension().and_then(|ext| ext.to_str()) == Some("ron")
+                    && path.file_name().and_then(|name| name.to_str())
+                        != Some("exclusion_patterns.ron")
+            })
+            .collect();
+        files.sort_by(|a, b| a.path().cmp(b.path()));
+
+        let mut parsed = Vec::with_capacity(files.len());
+        for file in files {
+            let filename = file.path().display();
+            let content = file.contents_utf8().with_context(|| {
+                format!("Embedded {} rule {} is not valid UTF-8", language, filename)
+            })?;
+            let rules: Rules = ron::from_str(content).with_context(|| {
+                format!("Failed to parse embedded {} rule {}", language, filename)
+            })?;
+            parsed.push(rules);
+        }
+        Ok(parsed)
+    }
+
     /// Load embedded rules for a specific language
     pub fn load_embedded_rules(language: &str, code_type: Option<&str>) -> Result<Self> {
         let mut all_rules = Vec::new();
 
         match language {
-            "python" => {
-                // Load all Python rule files
-                let general_rules: Rules = ron::from_str(EMBEDDED_PYTHON_GENERAL_RULES)
-                    .context("Failed to parse embedded Python general rules")?;
-                all_rules.push(general_rules);
-
-                let command_injection_rules: Rules =
-                    ron::from_str(EMBEDDED_PYTHON_COMMAND_INJECTION_RULES)
-                        .context("Failed to parse embedded Python command injection rules")?;
-                all_rules.push(command_injection_rules);
-
-                let cryptography_rules: Rules =
-                    ron::from_str(EMBEDDED_PYTHON_CRYPTOGRAPHY_RULES)
-                        .context("Failed to parse embedded Python cryptography rules")?;
-                all_rules.push(cryptography_rules);
-
-                let file_system_rules: Rules = ron::from_str(EMBEDDED_PYTHON_FILE_SYSTEM_RULES)
-                    .context("Failed to parse embedded Python file system rules")?;
-                all_rules.push(file_system_rules);
-
-                let sql_injection_rules: Rules = ron::from_str(EMBEDDED_PYTHON_SQL_INJECTION_RULES)
-                    .context("Failed to parse embedded Python SQL injection rules")?;
-                all_rules.push(sql_injection_rules);
-
-                let working_rules: Rules = ron::from_str(EMBEDDED_PYTHON_WORKING_RULES)
-                    .context("Failed to parse embedded Python working rules")?;
-                all_rules.push(working_rules);
-            }
-            "javascript" | "tsx" => {
-                // Load frontend rules by default
-                let frontend_rules: Rules = ron::from_str(EMBEDDED_JAVASCRIPT_FRONTEND_RULES)
-                    .context("Failed to parse embedded JavaScript frontend rules")?;
-                all_rules.push(frontend_rules);
-
-                // Load taint rules
-                let taint_rules: Rules = ron::from_str(EMBEDDED_JAVASCRIPT_TAINT_RULES)
-                    .context("Failed to parse embedded JavaScript taint rules")?;
-                all_rules.push(taint_rules);
-
-                // Load backend rules if requested
-                if let Some(code_type) = code_type {
-                    if code_type != "frontend" {
-                        let backend_rules: Rules = ron::from_str(EMBEDDED_JAVASCRIPT_BACKEND_RULES)
-                            .context("Failed to parse embedded JavaScript backend rules")?;
-                        all_rules.push(backend_rules);
-                    }
+            "python" => all_rules.extend(Self::parse_embedded_dir(&RULES_PYTHON, "Python")?),
+            "javascript" | "tsx" | "typescript" => {
+                all_rules.extend(Self::parse_embedded_dir(&RULES_JAVASCRIPT, "JavaScript")?);
+                // Legacy backend JS rules load only when explicitly non-frontend,
+                // matching the file-rules auto-detect path the benchmark measured.
+                if code_type.is_some_and(|ct| ct != "frontend") {
+                    all_rules.extend(Self::parse_embedded_dir(
+                        &RULES_BACKEND_JAVASCRIPT,
+                        "JavaScript backend",
+                    )?);
                 }
             }
-            // Add more languages as needed
+            "java" => all_rules.extend(Self::parse_embedded_dir(&RULES_JAVA, "Java")?),
+            "csharp" => all_rules.extend(Self::parse_embedded_dir(&RULES_CSHARP, "C#")?),
+            "go" => all_rules.extend(Self::parse_embedded_dir(&RULES_GO, "Go")?),
+            "ruby" => all_rules.extend(Self::parse_embedded_dir(&RULES_RUBY, "Ruby")?),
+            "html" | "django" => all_rules.extend(Self::parse_embedded_dir(&RULES_HTML, "HTML")?),
+            "php" => all_rules.extend(Self::parse_embedded_dir(&RULES_PHP, "PHP")?),
             _ => {
                 return Err(anyhow::anyhow!(
                     "No embedded rules available for language: {}",
@@ -476,4 +473,30 @@ pub fn is_in_protective_context(node: &tree_sitter::Node) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod embedded_rules_tests {
+    use super::*;
+
+    #[test]
+    fn python_embedded_rules_load_and_skip_exclusion_patterns() {
+        // Directory embedding must skip `exclusion_patterns.ron` (different RON schema);
+        // if it were parsed as a `Rules` doc this would error instead of returning rules.
+        let rules = Rules::load_embedded_rules("python", None).expect("python rules should load");
+        assert!(rules.count_rules() > 0, "python embedded rules should not be empty");
+    }
+
+    #[test]
+    fn javascript_backend_gate_respects_code_type() {
+        let frontend = Rules::load_embedded_rules("javascript", Some("frontend"))
+            .expect("frontend js rules should load");
+        let backend = Rules::load_embedded_rules("javascript", Some("backend"))
+            .expect("backend js rules should load");
+        // Backend adds the extra backend_javascript rules on top of the always-on set.
+        assert!(
+            backend.count_rules() > frontend.count_rules(),
+            "non-frontend code_type must load additional backend JS rules"
+        );
+    }
 }

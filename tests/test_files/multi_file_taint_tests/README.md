@@ -1,8 +1,8 @@
 # Comprehensive Multi-File Taint Analysis Test Suite
 
-This directory contains a comprehensive test suite designed to validate the multi-file taint analysis fixes implemented in Greppy.
+This directory contains a comprehensive test suite designed to validate the multi-file taint analysis fixes implemented in Sighthound.
 
-## 🎯 **Test Strategy Overview**
+## Test Strategy Overview
 
 The test suite focuses on 5 critical categories:
 

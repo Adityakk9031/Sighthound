@@ -45,111 +45,115 @@ impl Default for FrameworkRegistry {
     }
 }
 
+/// Signature list for frontend frameworks, keyed by framework name.
+fn frontend_framework_signatures() -> Vec<(&'static str, Vec<&'static str>)> {
+    vec![
+        ("React", vec!["react", "react-dom"]),
+        ("Next.js", vec!["next/link", "next/router", "next/head", "@next/"]),
+        ("Angular", vec!["@angular/core"]),
+        ("Vue", vec!["vue", "vue-router"]),
+        ("Nuxt.js", vec!["nuxt", "@nuxtjs", "@nuxt/"]),
+        ("Svelte", vec!["svelte"]),
+        ("SvelteKit", vec!["@sveltejs/kit"]),
+        ("SolidJS", vec!["solid-js"]),
+        ("Qwik", vec!["@builder.io/qwik"]),
+        ("Ember", vec!["@ember"]),
+        ("Remix", vec!["@remix-run"]),
+        ("Astro", vec!["astro", "@astrojs/"]),
+        ("Gatsby", vec!["gatsby"]),
+        ("jQuery", vec!["jquery"]),
+        ("HTMX", vec!["htmx", "hx-"]),
+        ("Alpine.js", vec!["alpinejs", "alpine.js", "x-data"]),
+        ("Stimulus", vec!["@hotwired/stimulus"]),
+        ("TailwindCSS", vec!["tailwindcss"]),
+        ("Styled Components", vec!["styled-components"]),
+        ("Emotion", vec!["@emotion"]),
+        ("Material-UI", vec!["@mui/material", "@material-ui/core"]),
+        ("Ant Design", vec!["antd"]),
+        ("Chakra UI", vec!["@chakra-ui"]),
+        ("Redux", vec!["redux", "@reduxjs/toolkit"]),
+        ("Zustand", vec!["zustand"]),
+        ("Jotai", vec!["jotai"]),
+        ("Recoil", vec!["recoil"]),
+        ("MobX", vec!["mobx"]),
+        ("Pinia", vec!["pinia"]),
+        ("TanStack Query", vec!["@tanstack/react-query", "@tanstack/vue-query"]),
+        ("SWR", vec!["swr"]),
+        ("Vite", vec!["vite", "@vitejs/"]),
+        ("Webpack", vec!["webpack"]),
+        ("Rollup", vec!["rollup"]),
+        ("Parcel", vec!["parcel"]),
+        ("esbuild", vec!["esbuild"]),
+        ("SWC", vec!["@swc/"]),
+        ("Turbopack", vec!["turbopack"]),
+        ("Rspack", vec!["@rspack/"]),
+        ("Jest", vec!["jest"]),
+        ("Vitest", vec!["vitest", "@vitest/"]),
+        ("Cypress", vec!["cypress"]),
+        ("Playwright", vec!["playwright"]),
+        ("Testing Library", vec!["@testing-library/"]),
+        ("Storybook", vec!["@storybook/"]),
+        ("TensorFlow.js", vec!["@tensorflow/tfjs"]),
+        ("ML5.js", vec!["ml5"]),
+        ("Brain.js", vec!["brain.js"]),
+        ("Synaptic", vec!["synaptic"]),
+        ("Web3.js", vec!["web3"]),
+        ("Ethers.js", vec!["ethers"]),
+        ("Wagmi", vec!["wagmi"]),
+        ("RainbowKit", vec!["@rainbow-me/rainbowkit"]),
+        ("Moralis", vec!["moralis"]),
+        ("React Native", vec!["react-native"]),
+        ("Expo", vec!["expo", "@expo/"]),
+        ("Tauri", vec!["@tauri-apps/tauri"]),
+        ("Capacitor", vec!["@capacitor/core"]),
+        ("D3", vec!["d3"]),
+        ("Backbone", vec!["backbone"]),
+        ("Underscore", vec!["underscore"]),
+        ("Tipped", vec!["tipped"]),
+    ]
+}
+
+/// Signature list for backend frameworks, keyed by framework name.
+fn backend_framework_signatures() -> Vec<(&'static str, Vec<&'static str>)> {
+    vec![
+        ("Express", vec!["express"]),
+        ("Koa", vec!["koa"]),
+        ("Fastify", vec!["fastify"]),
+        ("NestJS", vec!["@nestjs/common", "@nestjs/core"]),
+        ("Hapi", vec!["@hapi/hapi"]),
+        ("Hono", vec!["hono"]),
+        ("tRPC", vec!["@trpc/server", "@trpc/client"]),
+        ("Elysia", vec!["elysia"]),
+        ("Prisma", vec!["prisma", "@prisma/client"]),
+        ("Drizzle", vec!["drizzle-orm"]),
+        ("TypeORM", vec!["typeorm"]),
+        ("Sequelize", vec!["sequelize"]),
+        ("Mongoose", vec!["mongoose"]),
+        ("Knex", vec!["knex"]),
+        ("MikroORM", vec!["@mikro-orm/core"]),
+        ("Vercel", vec!["@vercel/node", "@vercel/edge"]),
+        ("Netlify", vec!["@netlify/functions"]),
+        ("Cloudflare Workers", vec!["@cloudflare/workers-types"]),
+        ("AWS Lambda", vec!["aws-lambda"]),
+        ("Auth0", vec!["auth0", "@auth0/nextjs-auth0"]),
+        ("Supabase", vec!["@supabase/supabase-js"]),
+        ("Firebase", vec!["firebase"]),
+        ("Clerk", vec!["@clerk/nextjs"]),
+        ("NextAuth", vec!["next-auth"]),
+        ("Cheerio", vec!["cheerio"]),
+    ]
+}
+
 impl FrameworkRegistry {
     pub fn new() -> Self {
         let mut frameworks = HashMap::new();
 
-        // Frontend frameworks
-        let frontend_frameworks = vec![
-            ("React", vec!["react", "react-dom"]),
-            ("Next.js", vec!["next/link", "next/router", "next/head", "@next/"]),
-            ("Angular", vec!["@angular/core"]),
-            ("Vue", vec!["vue", "vue-router"]),
-            ("Nuxt.js", vec!["nuxt", "@nuxtjs", "@nuxt/"]),
-            ("Svelte", vec!["svelte"]),
-            ("SvelteKit", vec!["@sveltejs/kit"]),
-            ("SolidJS", vec!["solid-js"]),
-            ("Qwik", vec!["@builder.io/qwik"]),
-            ("Ember", vec!["@ember"]),
-            ("Remix", vec!["@remix-run"]),
-            ("Astro", vec!["astro", "@astrojs/"]),
-            ("Gatsby", vec!["gatsby"]),
-            ("jQuery", vec!["jquery"]),
-            ("HTMX", vec!["htmx", "hx-"]),
-            ("Alpine.js", vec!["alpinejs", "alpine.js", "x-data"]),
-            ("Stimulus", vec!["@hotwired/stimulus"]),
-            ("TailwindCSS", vec!["tailwindcss"]),
-            ("Styled Components", vec!["styled-components"]),
-            ("Emotion", vec!["@emotion"]),
-            ("Material-UI", vec!["@mui/material", "@material-ui/core"]),
-            ("Ant Design", vec!["antd"]),
-            ("Chakra UI", vec!["@chakra-ui"]),
-            ("Redux", vec!["redux", "@reduxjs/toolkit"]),
-            ("Zustand", vec!["zustand"]),
-            ("Jotai", vec!["jotai"]),
-            ("Recoil", vec!["recoil"]),
-            ("MobX", vec!["mobx"]),
-            ("Pinia", vec!["pinia"]),
-            ("TanStack Query", vec!["@tanstack/react-query", "@tanstack/vue-query"]),
-            ("SWR", vec!["swr"]),
-            ("Vite", vec!["vite", "@vitejs/"]),
-            ("Webpack", vec!["webpack"]),
-            ("Rollup", vec!["rollup"]),
-            ("Parcel", vec!["parcel"]),
-            ("esbuild", vec!["esbuild"]),
-            ("SWC", vec!["@swc/"]),
-            ("Turbopack", vec!["turbopack"]),
-            ("Rspack", vec!["@rspack/"]),
-            ("Jest", vec!["jest"]),
-            ("Vitest", vec!["vitest", "@vitest/"]),
-            ("Cypress", vec!["cypress"]),
-            ("Playwright", vec!["playwright"]),
-            ("Testing Library", vec!["@testing-library/"]),
-            ("Storybook", vec!["@storybook/"]),
-            ("TensorFlow.js", vec!["@tensorflow/tfjs"]),
-            ("ML5.js", vec!["ml5"]),
-            ("Brain.js", vec!["brain.js"]),
-            ("Synaptic", vec!["synaptic"]),
-            ("Web3.js", vec!["web3"]),
-            ("Ethers.js", vec!["ethers"]),
-            ("Wagmi", vec!["wagmi"]),
-            ("RainbowKit", vec!["@rainbow-me/rainbowkit"]),
-            ("Moralis", vec!["moralis"]),
-            ("React Native", vec!["react-native"]),
-            ("Expo", vec!["expo", "@expo/"]),
-            ("Tauri", vec!["@tauri-apps/tauri"]),
-            ("Capacitor", vec!["@capacitor/core"]),
-            ("D3", vec!["d3"]),
-            ("Backbone", vec!["backbone"]),
-            ("Underscore", vec!["underscore"]),
-            ("Tipped", vec!["tipped"]),
-        ];
-
-        for (name, sigs) in frontend_frameworks {
+        for (name, sigs) in frontend_framework_signatures() {
             frameworks
                 .insert(name, FrameworkInfo { signatures: sigs, code_type: CodeType::Frontend });
         }
 
-        // Backend frameworks
-        let backend_frameworks = vec![
-            ("Express", vec!["express"]),
-            ("Koa", vec!["koa"]),
-            ("Fastify", vec!["fastify"]),
-            ("NestJS", vec!["@nestjs/common", "@nestjs/core"]),
-            ("Hapi", vec!["@hapi/hapi"]),
-            ("Hono", vec!["hono"]),
-            ("tRPC", vec!["@trpc/server", "@trpc/client"]),
-            ("Elysia", vec!["elysia"]),
-            ("Prisma", vec!["prisma", "@prisma/client"]),
-            ("Drizzle", vec!["drizzle-orm"]),
-            ("TypeORM", vec!["typeorm"]),
-            ("Sequelize", vec!["sequelize"]),
-            ("Mongoose", vec!["mongoose"]),
-            ("Knex", vec!["knex"]),
-            ("MikroORM", vec!["@mikro-orm/core"]),
-            ("Vercel", vec!["@vercel/node", "@vercel/edge"]),
-            ("Netlify", vec!["@netlify/functions"]),
-            ("Cloudflare Workers", vec!["@cloudflare/workers-types"]),
-            ("AWS Lambda", vec!["aws-lambda"]),
-            ("Auth0", vec!["auth0", "@auth0/nextjs-auth0"]),
-            ("Supabase", vec!["@supabase/supabase-js"]),
-            ("Firebase", vec!["firebase"]),
-            ("Clerk", vec!["@clerk/nextjs"]),
-            ("NextAuth", vec!["next-auth"]),
-            ("Cheerio", vec!["cheerio"]),
-        ];
-
-        for (name, sigs) in backend_frameworks {
+        for (name, sigs) in backend_framework_signatures() {
             frameworks
                 .insert(name, FrameworkInfo { signatures: sigs, code_type: CodeType::Backend });
         }
@@ -284,7 +288,7 @@ impl CodeTypeDetector {
 
         if frontend_score > 0 && backend_score == 0 {
             CodeType::Frontend
-        } else if backend_score > frontend_score {
+        } else if backend_score > 0 && (frontend_score == 0 || backend_score > frontend_score) {
             CodeType::Backend
         } else if frontend_score > backend_score {
             CodeType::Frontend
@@ -455,5 +459,43 @@ impl CodeTypeDetector {
 impl Default for CodeTypeDetector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `detect_from_imports` is only reached from `detect_code_type` after framework
+    // detection already returned `Unknown` for the very same imports, which (given
+    // both use the same signature pool) means its non-Unknown branches are not
+    // reachable through the public entry point. Call it directly to cover them.
+
+    #[test]
+    fn detect_from_imports_frontend_only() {
+        let detector = CodeTypeDetector::new();
+        let imports = vec!["react".to_string()];
+        assert_eq!(detector.detect_from_imports(&imports), CodeType::Frontend);
+    }
+
+    #[test]
+    fn detect_from_imports_backend_only() {
+        let detector = CodeTypeDetector::new();
+        let imports = vec!["express".to_string()];
+        assert_eq!(detector.detect_from_imports(&imports), CodeType::Backend);
+    }
+
+    #[test]
+    fn detect_from_imports_both() {
+        let detector = CodeTypeDetector::new();
+        let imports = vec!["react".to_string(), "express".to_string()];
+        assert_eq!(detector.detect_from_imports(&imports), CodeType::Both);
+    }
+
+    #[test]
+    fn detect_from_imports_unknown_when_no_signature_matches() {
+        let detector = CodeTypeDetector::new();
+        let imports = vec!["totally-unrelated-package".to_string()];
+        assert_eq!(detector.detect_from_imports(&imports), CodeType::Unknown);
     }
 }

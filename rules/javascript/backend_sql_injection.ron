@@ -1,0 +1,55 @@
+(
+    rules: [
+        // ==================== CWE-89: SQL Injection (inline concat / template) ====================
+        (
+            id: Some("js-node-sqli-inline-001"),
+            name: Some("SQL Injection via concatenated/interpolated query"),
+            category: Some("sql-injection"),
+            mode: "search",
+            patterns: Some([
+                "regex:runSql\\([^)]*\\+",
+                "regex:rawQuery\\([^)]*\\+",
+                "regex:rawQuery\\(\\s*[A-Za-z_$]",
+                "regex:db.rawGet\\([^)]*\\+",
+                "regex:db.rawAll\\([^)]*\\+",
+                "regex:connection.query\\([^)]*\\+",
+                "regex:sequelize.literal\\((?:key)?",
+            ]),
+            finding_type: Some("SQL Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-89"),
+            description: Some("User-controlled data concatenated/interpolated into a SQL query string"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["injection", "sql", "backend", "cwe-89"])
+        ),
+        // ==================== CWE-89: SQL Injection (dynamic query reaching a sink) ====================
+        // Search (not taint) so exactly one finding is emitted on the sink call node.
+        // The taint engine matched every enclosing node (.push(...), arrow fn, sink),
+        // producing duplicate findings on a single flow that scored as FPs.
+        // A quoted string literal first arg (e.g. db.all("SELECT ...")) is parameterized
+        // and excluded by the leading identifier/backtick character class. The trailing
+        // "(?:key)?" forces full-node-text matching (see rule_needs_full_context).
+        (
+            id: Some("js-node-sqli-sink-001"),
+            name: Some("SQL Injection via dynamic query passed to a sink"),
+            category: Some("sql-injection"),
+            mode: "search",
+            patterns: Some([
+                "regex:connection.query\\(\\s*[A-Za-z_$][\\w$.]*\\s*[,)](?:key)?",
+                "regex:connection.query\\(\\s*`[^`]*\\$\\{(?:key)?",
+                "regex:sequelize.query\\(\\s*[A-Za-z_$][\\w$.]*\\s*[,)](?:key)?",
+                "regex:sequelize.query\\(\\s*`[^`]*\\$\\{(?:key)?",
+                "regex:db.all\\(\\s*[A-Za-z_$][\\w$.]*\\s*[,)](?:key)?",
+                "regex:db.all\\(\\s*`[^`]*\\$\\{(?:key)?",
+            ]),
+            finding_type: Some("SQL Injection"),
+            severity: Some("Critical"),
+            confidence: Some("High"),
+            cwe_id: Some("cwe-89"),
+            description: Some("A pre-built or interpolated query string is passed to a SQL execution sink"),
+            file_types: Some((extensions: Some([".js", ".jsx", ".ts", ".tsx"]))),
+            tags: Some(["injection", "sql", "backend", "cwe-89"])
+        ),
+    ],
+)
