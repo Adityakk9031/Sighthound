@@ -34,9 +34,14 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/sighthound /usr/local/bin/sighthound
 COPY --from=builder /app/rules /rules
+# BSD-2-Clause (Oniguruma, statically linked) requires the notice to accompany
+# binary redistributions. /licenses is the OCI convention.
+COPY --from=builder /app/LICENSE /app/THIRD-PARTY-NOTICES.md /licenses/
 ENTRYPOINT ["/usr/local/bin/sighthound"]
 
 # Export stage - minimal stage with just the binary and required files
 FROM scratch AS export
 COPY --from=builder /app/target/release/sighthound /sighthound
 COPY --from=builder /app/rules /rules
+COPY --from=builder /app/LICENSE /LICENSE
+COPY --from=builder /app/THIRD-PARTY-NOTICES.md /THIRD-PARTY-NOTICES.md

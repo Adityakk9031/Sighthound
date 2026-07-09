@@ -53,6 +53,8 @@ cargo build --release
 mkdir -p ./build/sighthound_macos/
 cp ./target/release/sighthound ./build/sighthound_macos/
 cp -r rules/ ./build/sighthound_macos/
+# The Linux dirs get these from the Dockerfile export stage; macOS builds natively.
+cp LICENSE THIRD-PARTY-NOTICES.md ./build/sighthound_macos/
 
 # Copy binaries to destination folder if specified
 if [ -n "$SIGHTHOUND_DESTINATION_FOLDER" ]; then
