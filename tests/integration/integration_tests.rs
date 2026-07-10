@@ -437,4 +437,64 @@ def malicious_functions():
         assert!(rule_matches_pattern_unified(url_rule, "t.co"));
         assert!(!rule_matches_pattern_unified(url_rule, "github.com"));
     }
+
+    #[test]
+    fn test_cli_exit_code_gating() {
+        let bin_path = if let Ok(path) = std::env::var("CARGO_BIN_EXE_sighthound") {
+            std::path::PathBuf::from(path)
+        } else {
+            std::path::PathBuf::from("target/debug/sighthound")
+        };
+
+        if !bin_path.exists() {
+            return;
+        }
+
+        // os.system(cmd) is a known critical finding in the embedded python rules
+        let python_content = r#"
+import os
+
+def run(cmd):
+    os.system(cmd)
+"#;
+        let temp_file = create_test_python_file(python_content);
+        let file_path = temp_file.path().to_str().unwrap();
+
+        // no gate flag — should always succeed
+        let status = std::process::Command::new(&bin_path)
+            .args(&[file_path, "python", "--simple-analysis"])
+            .status()
+            .expect("failed to run sighthound");
+        assert!(status.success());
+
+        // --error-on-findings should flip exit code when there are findings
+        let status = std::process::Command::new(&bin_path)
+            .args(&[file_path, "python", "--simple-analysis", "--error-on-findings"])
+            .status()
+            .expect("failed to run sighthound");
+        assert_eq!(status.code(), Some(1));
+
+        // critical threshold — os.system is Critical, so this should trigger
+        let status = std::process::Command::new(&bin_path)
+            .args(&[file_path, "python", "--simple-analysis", "--fail-on-severity", "critical"])
+            .status()
+            .expect("failed to run sighthound");
+        assert_eq!(status.code(), Some(1));
+
+        // low threshold — still triggered since critical >= low
+        let status = std::process::Command::new(&bin_path)
+            .args(&[file_path, "python", "--simple-analysis", "--fail-on-severity", "low"])
+            .status()
+            .expect("failed to run sighthound");
+        assert_eq!(status.code(), Some(1));
+
+        // bad severity value — validation should reject it
+        let output = std::process::Command::new(&bin_path)
+            .args(&[file_path, "python", "--simple-analysis", "--fail-on-severity", "invalid_level"])
+            .output()
+            .expect("failed to run sighthound");
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Invalid severity level: 'invalid_level'"), "got: {stderr}");
+    }
 }

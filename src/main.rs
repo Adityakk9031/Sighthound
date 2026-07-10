@@ -48,6 +48,17 @@ fn validate_scan_flags(cli: &Cli) -> Result<()> {
     if cli.taint_analysis && cli.simple_analysis {
         return Err(anyhow::anyhow!("Cannot specify both --taint-analysis and --simple-analysis. Use one or neither (default: both modes)."));
     }
+    if let Some(ref severity) = cli.fail_on_severity {
+        match severity.to_lowercase().as_str() {
+            "critical" | "high" | "medium" | "low" => {}
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Invalid severity level: '{}'. Choose from: critical, high, medium, low",
+                    severity
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -172,7 +183,37 @@ fn main() -> Result<()> {
     let duration = start_time.elapsed();
     output_findings(&cli, &findings, duration)?;
 
+    // Check if we need to fail (exit 1) based on severity or findings count
+    let should_fail = if cli.error_on_findings && !findings.is_empty() {
+        true
+    } else if let Some(ref fail_severity) = cli.fail_on_severity {
+        let target_num = severity_to_num(fail_severity);
+        findings.iter().any(|f| severity_to_num(&f.severity) >= target_num)
+    } else {
+        false
+    };
+
+    if should_fail {
+        let threshold = cli
+            .fail_on_severity
+            .as_deref()
+            .map(|s| format!(" (threshold: {})", s))
+            .unwrap_or_default();
+        sighthound::ui::error_line(&format!("exiting non-zero: findings above threshold{}", threshold));
+        std::process::exit(1);
+    }
+
     Ok(())
+}
+
+fn severity_to_num(severity: &str) -> u8 {
+    match severity.to_lowercase().as_str() {
+        "critical" => 4,
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
 }
 
 fn deduplicate_findings(findings: &mut Vec<sighthound::Finding>) {
