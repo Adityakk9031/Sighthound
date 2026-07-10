@@ -94,6 +94,9 @@ The `sarif` output format writes SARIF 2.1.0, which GitHub Code Scanning
 ingests directly. Upload it from a workflow so findings appear inline on the
 pull request and in the repository's Security tab:
 
+Run the scan from the repository root and use `.` (or the repository root's
+absolute path) as `<ROOT_DIR>` so SARIF artifact URIs stay repository-relative.
+
 ```yaml
 - name: Run Sighthound
   run: sighthound --output-format sarif . > results.sarif
