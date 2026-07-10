@@ -17,7 +17,7 @@ Tree-sitter based static vulnerability scanner with pattern matching and taint-f
 - Scans source code for security issues using AST-aware rules.
 - Supports pattern mode and taint mode (source to sink tracking).
 - Handles multi-file projects and parallel execution.
-- Outputs findings as text, JSON, or CSV.
+- Outputs findings as text, JSON, CSV, or SARIF.
 - Loads embedded rule packs by file extension, with optional file-based custom rules.
 
 ## Language Support
@@ -75,6 +75,9 @@ cargo run --bin sighthound -- /path/to/project python rules/python
 
 # Taint-only scan and JSON output
 cargo run --bin sighthound -- --taint-analysis --output-format json /path/to/project > findings.json
+
+# SARIF output for GitHub Code Scanning
+cargo run --bin sighthound -- --output-format sarif /path/to/project > results.sarif
 ```
 
 CLI shape:
@@ -84,6 +87,21 @@ sighthound [OPTIONS] <ROOT_DIR> [LANGUAGE] [RULES_PATH]
 ```
 
 Run `sighthound --help` for the full option list.
+
+## GitHub Code Scanning
+
+The `sarif` output format writes SARIF 2.1.0, which GitHub Code Scanning
+ingests directly. Upload it from a workflow so findings appear inline on the
+pull request and in the repository's Security tab:
+
+```yaml
+- name: Run Sighthound
+  run: sighthound --output-format sarif . > results.sarif
+- name: Upload SARIF
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
+```
 
 ## Rules
 
