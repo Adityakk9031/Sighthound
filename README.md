@@ -12,6 +12,10 @@ Tree-sitter based static vulnerability scanner with pattern matching and taint-f
 
 </div>
 
+> **Want Sighthound without the setup?** [Sign up for Corgea](https://corgea.app),
+> where Sighthound is built in alongside AI SAST, secrets, container, dependency,
+> and IaC scanning—with false-positive reduction and automated fixes.
+
 ## What It Does
 
 - Scans source code for security issues using AST-aware rules.
