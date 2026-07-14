@@ -10,8 +10,12 @@
             mode: "search",
             patterns: Some([
                 "execute_raw_query(",
-                "*cursor.execute(*%*",
-                "*cursor.execute(*.format(*",
+                // % as format operator after closing quote — not %s inside the string (DB-API placeholder)
+                "*cursor.execute(*\" % *",
+                "*cursor.execute(*' % *",
+                // .format() on a string literal — psycopg.sql.SQL(...).format() ends with ) not " or '
+                "*cursor.execute(*\".format(*",
+                "*cursor.execute(*'.format(*",
                 "*cursor.execute(f\"*",
                 "*cursor.execute(f'*",
                 "*cursor.execute(*+*",
