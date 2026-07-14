@@ -20,6 +20,17 @@
                     argument_position: Some(0),
                     node_type: Some("binary_operator"),
                 ),
+                (
+                    field: "argument",
+                    operator: "not_contains",
+                    value: "",
+                    condition_type: Some("argument_not_sanitized"),
+                    patterns: Some([
+                        "*sql.SQL*",
+                        "*psql.SQL*",
+                        "*SQL*",
+                    ]),
+                ),
             ]),
             finding_type: Some("SQL Injection"),
             severity: Some("Critical"),
@@ -45,6 +56,19 @@
                 "*cursor.execute(f\"*",
                 "*cursor.execute(f'*",
                 "*.executescript(*",
+            ]),
+            conditions: Some([
+                (
+                    field: "argument",
+                    operator: "not_contains",
+                    value: "",
+                    condition_type: Some("argument_not_sanitized"),
+                    patterns: Some([
+                        "*sql.SQL*",
+                        "*psql.SQL*",
+                        "*SQL*",
+                    ]),
+                ),
             ]),
             finding_type: Some("SQL Injection"),
             severity: Some("Critical"),

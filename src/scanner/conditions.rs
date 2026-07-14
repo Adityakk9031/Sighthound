@@ -66,10 +66,15 @@ pub fn check_has_argument_condition(
 
 /// Check if an argument node matches the given condition
 pub fn check_argument_matches(
-    arg: tree_sitter::Node,
+    mut arg: tree_sitter::Node,
     source: &[u8],
     condition: &Condition,
 ) -> bool {
+    if arg.kind() == "keyword_argument" {
+        if let Some(val_node) = arg.child_by_field_name("value") {
+            arg = val_node;
+        }
+    }
     let arg_text = get_node_text(&arg, source);
 
     // Check node type if specified
@@ -125,13 +130,23 @@ pub fn check_not_literal_condition(
 ) -> bool {
     if let Some(args_node) = language_support.get_arguments_node(node) {
         if let Some(position) = condition.argument_position {
-            if let Some(arg) = args_node.named_child(position as u32) {
+            if let Some(mut arg) = args_node.named_child(position as u32) {
+                if arg.kind() == "keyword_argument" {
+                    if let Some(val_node) = arg.child_by_field_name("value") {
+                        arg = val_node;
+                    }
+                }
                 return !is_literal_node(&arg);
             }
         } else {
             // Check if any argument is not literal
             for i in 0..args_node.named_child_count() {
-                if let Some(arg) = args_node.named_child(i as u32) {
+                if let Some(mut arg) = args_node.named_child(i as u32) {
+                    if arg.kind() == "keyword_argument" {
+                        if let Some(val_node) = arg.child_by_field_name("value") {
+                            arg = val_node;
+                        }
+                    }
                     if !is_literal_node(&arg) {
                         return true;
                     }
@@ -175,7 +190,12 @@ pub fn check_argument_not_sanitized_condition(
     if let Some(sanitizer_patterns) = &condition.patterns {
         if let Some(args_node) = language_support.get_arguments_node(node) {
             for i in 0..args_node.named_child_count() {
-                if let Some(arg) = args_node.named_child(i as u32) {
+                if let Some(mut arg) = args_node.named_child(i as u32) {
+                    if arg.kind() == "keyword_argument" {
+                        if let Some(val_node) = arg.child_by_field_name("value") {
+                            arg = val_node;
+                        }
+                    }
                     let arg_text = get_node_text(&arg, source);
 
                     // Check if argument contains any sanitization patterns
