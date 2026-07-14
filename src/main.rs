@@ -184,22 +184,25 @@ fn main() -> Result<()> {
     output_findings(&cli, &findings, duration)?;
 
     // Check if we need to fail (exit 1) based on severity or findings count
-    let should_fail = if cli.error_on_findings && !findings.is_empty() {
-        true
+    let failure_reason = if cli.error_on_findings && !findings.is_empty() {
+        Some("findings found (--error-on-findings is set)".to_string())
     } else if let Some(ref fail_severity) = cli.fail_on_severity {
         let target_num = severity_to_num(fail_severity);
-        findings.iter().any(|f| severity_to_num(&f.severity) >= target_num)
+        let has_offending_finding = findings.iter().any(|f| severity_to_num(&f.severity) >= target_num);
+        if has_offending_finding {
+            Some(format!("findings at or above severity threshold ({})", fail_severity))
+        } else {
+            None
+        }
     } else {
-        false
+        None
     };
 
-    if should_fail {
-        let threshold = cli
-            .fail_on_severity
-            .as_deref()
-            .map(|s| format!(" (threshold: {})", s))
-            .unwrap_or_default();
-        sighthound::ui::error_line(&format!("exiting non-zero: findings above threshold{}", threshold));
+    if let Some(reason) = failure_reason {
+        sighthound::ui::error_line(&format!("exiting non-zero: {}", reason));
+        use std::io::{self, Write};
+        let _ = io::stdout().flush();
+        let _ = io::stderr().flush();
         std::process::exit(1);
     }
 

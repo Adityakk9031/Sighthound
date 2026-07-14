@@ -450,47 +450,71 @@ def malicious_functions():
             return;
         }
 
-        // os.system(cmd) is a known critical finding in the embedded python rules
-        let python_content = r#"
+        // os.system(cmd) is a known High finding in the embedded python rules.
+        // We will test that High triggers "--fail-on-severity high" but NOT "--fail-on-severity critical".
+        let python_content_high = r#"
 import os
-
 def run(cmd):
     os.system(cmd)
 "#;
-        let temp_file = create_test_python_file(python_content);
-        let file_path = temp_file.path().to_str().unwrap();
+        let temp_file_high = create_test_python_file(python_content_high);
+        let file_path_high = temp_file_high.path().to_str().unwrap();
+
+        // pickle.loads(data) is a known Critical finding in the embedded python rules.
+        // We will test that Critical triggers "--fail-on-severity critical".
+        let python_content_critical = r#"
+import pickle
+def run(data):
+    pickle.loads(data)
+"#;
+        let temp_file_critical = create_test_python_file(python_content_critical);
+        let file_path_critical = temp_file_critical.path().to_str().unwrap();
 
         // no gate flag — should always succeed
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path, "python", "--simple-analysis"])
+            .args(&[file_path_high, "python", "--simple-analysis"])
             .status()
             .expect("failed to run sighthound");
         assert!(status.success());
 
         // --error-on-findings should flip exit code when there are findings
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path, "python", "--simple-analysis", "--error-on-findings"])
+            .args(&[file_path_high, "python", "--simple-analysis", "--error-on-findings"])
             .status()
             .expect("failed to run sighthound");
         assert_eq!(status.code(), Some(1));
 
-        // critical threshold — os.system is Critical, so this should trigger
+        // critical threshold — os.system is High, so critical threshold should NOT trigger on it
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path, "python", "--simple-analysis", "--fail-on-severity", "critical"])
+            .args(&[file_path_high, "python", "--simple-analysis", "--fail-on-severity", "critical"])
+            .status()
+            .expect("failed to run sighthound");
+        assert!(status.success());
+
+        // critical threshold — pickle.loads is Critical, so critical threshold should trigger on it
+        let status = std::process::Command::new(&bin_path)
+            .args(&[file_path_critical, "python", "--simple-analysis", "--fail-on-severity", "critical"])
             .status()
             .expect("failed to run sighthound");
         assert_eq!(status.code(), Some(1));
 
-        // low threshold — still triggered since critical >= low
+        // high threshold — os.system is High, so high threshold should trigger on it
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path, "python", "--simple-analysis", "--fail-on-severity", "low"])
+            .args(&[file_path_high, "python", "--simple-analysis", "--fail-on-severity", "high"])
+            .status()
+            .expect("failed to run sighthound");
+        assert_eq!(status.code(), Some(1));
+
+        // low threshold — still triggered since high >= low
+        let status = std::process::Command::new(&bin_path)
+            .args(&[file_path_high, "python", "--simple-analysis", "--fail-on-severity", "low"])
             .status()
             .expect("failed to run sighthound");
         assert_eq!(status.code(), Some(1));
 
         // bad severity value — validation should reject it
         let output = std::process::Command::new(&bin_path)
-            .args(&[file_path, "python", "--simple-analysis", "--fail-on-severity", "invalid_level"])
+            .args(&[file_path_high, "python", "--simple-analysis", "--fail-on-severity", "invalid_level"])
             .output()
             .expect("failed to run sighthound");
         assert!(!output.status.success());
