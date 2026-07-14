@@ -1,8 +1,39 @@
 (
     rules: [
-        // Raw-SQL execution helpers and inline string-built queries.
-        // The "%"/"+"/"=" bearing patterns force full-call-text matching, so the
-        // whole list is evaluated against the call text (not just the function name).
+        // Covers `"..." % x` and `"..." + x` passed to cursor.execute.
+        // Parameterized execute("...%s", params) has a string as arg0, not
+        // a binary_operator, so it is not matched.
+        (
+            id: Some("python-sql-raw-binop"),
+            name: Some("Raw SQL Execution (binary-built query)"),
+            category: Some("database"),
+            mode: "search",
+            patterns: Some([
+                "cursor.execute",
+            ]),
+            conditions: Some([
+                (
+                    field: "argument",
+                    operator: "matches",
+                    value: "",
+                    condition_type: Some("has_argument"),
+                    argument_position: Some(0),
+                    node_type: Some("binary_operator"),
+                ),
+            ]),
+            finding_type: Some("SQL Injection"),
+            severity: Some("Critical"),
+            confidence: Some("Medium"),
+            cwe_id: Some("cwe-89"),
+            description: Some("Raw SQL query executed from a dynamically-built string (string formatting/concatenation)"),
+            file_types: Some((
+                extensions: Some([".py"])
+            )),
+            tags: Some(["sql", "injection", "database"])
+        ),
+
+        // Remaining inline string-building shapes the binary-operator rule
+        // does not cover (f-strings, str.format, raw-query helpers).
         (
             id: Some("python-sql-raw-001"),
             name: Some("Raw SQL Execution"),
@@ -10,15 +41,9 @@
             mode: "search",
             patterns: Some([
                 "execute_raw_query(",
-                // % as format operator after closing quote — not %s inside the string (DB-API placeholder)
-                "*cursor.execute(*\" % *",
-                "*cursor.execute(*' % *",
-                // .format() on a string literal — psycopg.sql.SQL(...).format() ends with ) not " or '
-                "*cursor.execute(*\".format(*",
-                "*cursor.execute(*'.format(*",
+                "*cursor.execute(*.format(*",
                 "*cursor.execute(f\"*",
                 "*cursor.execute(f'*",
-                "*cursor.execute(*+*",
                 "*.executescript(*",
             ]),
             finding_type: Some("SQL Injection"),
