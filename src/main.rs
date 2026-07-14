@@ -188,7 +188,8 @@ fn main() -> Result<()> {
         Some("findings found (--error-on-findings is set)".to_string())
     } else if let Some(ref fail_severity) = cli.fail_on_severity {
         let target_num = severity_to_num(fail_severity);
-        let has_offending_finding = findings.iter().any(|f| severity_to_num(&f.severity) >= target_num);
+        let has_offending_finding =
+            findings.iter().any(|f| severity_to_num(&f.severity) >= target_num);
         if has_offending_finding {
             Some(format!("findings at or above severity threshold ({})", fail_severity))
         } else {

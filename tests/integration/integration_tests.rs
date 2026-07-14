@@ -486,14 +486,26 @@ def run(data):
 
         // critical threshold — os.system is High, so critical threshold should NOT trigger on it
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path_high, "python", "--simple-analysis", "--fail-on-severity", "critical"])
+            .args(&[
+                file_path_high,
+                "python",
+                "--simple-analysis",
+                "--fail-on-severity",
+                "critical",
+            ])
             .status()
             .expect("failed to run sighthound");
         assert!(status.success());
 
         // critical threshold — pickle.loads is Critical, so critical threshold should trigger on it
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path_critical, "python", "--simple-analysis", "--fail-on-severity", "critical"])
+            .args(&[
+                file_path_critical,
+                "python",
+                "--simple-analysis",
+                "--fail-on-severity",
+                "critical",
+            ])
             .status()
             .expect("failed to run sighthound");
         assert_eq!(status.code(), Some(1));
@@ -514,7 +526,13 @@ def run(data):
 
         // bad severity value — validation should reject it
         let output = std::process::Command::new(&bin_path)
-            .args(&[file_path_high, "python", "--simple-analysis", "--fail-on-severity", "invalid_level"])
+            .args(&[
+                file_path_high,
+                "python",
+                "--simple-analysis",
+                "--fail-on-severity",
+                "invalid_level",
+            ])
             .output()
             .expect("failed to run sighthound");
         assert!(!output.status.success());
