@@ -1119,7 +1119,7 @@ fi
 /// Write `path` with `content` only if it does not already exist. Returns true
 /// when it created the file. Never clobbers an existing file — preserves any
 /// local customization; `check_stop_hook_present` then reports the result.
-fn write_if_missing(path: &Path, content: &str, executable: bool) -> bool {
+fn write_if_missing(path: &Path, content: &str, _executable: bool) -> bool {
     if path.exists() {
         return false;
     }
@@ -1130,7 +1130,7 @@ fn write_if_missing(path: &Path, content: &str, executable: bool) -> bool {
         return false;
     }
     #[cfg(unix)]
-    if executable {
+    if _executable {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
     }
