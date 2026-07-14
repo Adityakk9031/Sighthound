@@ -50,5 +50,23 @@ try:
         cursor.execute(query, [value])
         return cursor.fetchall()
 
+    def build_query_inline(cursor, table, column, value):
+        cursor.execute(
+            psql.SQL("SELECT * FROM {} WHERE {} = %s").format(
+                psql.Identifier(table),
+                psql.Identifier(column),
+            ),
+            [value],
+        )
+        return cursor.fetchall()
+
 except ImportError:
     pass
+
+
+def get_user_keyword(cursor, username, password):
+    cursor.execute(
+        query="SELECT * FROM users WHERE username = %s AND password = %s",
+        vars=(username, password),
+    )
+    return cursor.fetchone()

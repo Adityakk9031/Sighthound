@@ -53,8 +53,8 @@
             patterns: Some([
                 "execute_raw_query(",
                 "*cursor.execute(*.format(*",
-                "*cursor.execute(f\"*",
-                "*cursor.execute(f'*",
+                "*cursor.execute(*f\"*",
+                "*cursor.execute(*f'*",
                 "*.executescript(*",
             ]),
             conditions: Some([

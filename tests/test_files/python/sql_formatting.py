@@ -20,3 +20,11 @@ def string_concatenation(cursor, user_id):
 
 def format_interpolation(cursor, user_id):
     cursor.execute("SELECT * FROM users WHERE id = {}".format(user_id))
+
+
+def keyword_percent_spaced(cursor, user_id):
+    cursor.execute(query="SELECT * FROM users WHERE id = %s" % user_id)
+
+
+def keyword_fstring_interpolation(cursor, user_id):
+    cursor.execute(query=f"SELECT * FROM users WHERE id = {user_id}")
