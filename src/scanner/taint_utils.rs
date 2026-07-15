@@ -10,6 +10,8 @@ pub(crate) struct TaintRuleDeduplicator {
     source_patterns: std::collections::BTreeSet<String>,
     /// Consolidated sink patterns across all rules
     pub(crate) sink_patterns: std::collections::BTreeSet<String>,
+    /// Consolidated sanitizer patterns across all rules (raw strings from rule definitions)
+    sanitizer_patterns: Vec<String>,
 }
 
 impl TaintRuleDeduplicator {
@@ -19,6 +21,7 @@ impl TaintRuleDeduplicator {
             rule_mapping: std::collections::BTreeMap::new(),
             source_patterns: std::collections::BTreeSet::new(),
             sink_patterns: std::collections::BTreeSet::new(),
+            sanitizer_patterns: Vec::new(),
         };
 
         // Process each rule and create specific source-sink mappings
@@ -40,9 +43,53 @@ impl TaintRuleDeduplicator {
                     }
                 }
             }
+            // Collect sanitizer patterns from every taint rule.
+            if let Some(sanitizers) = &rule.sanitizers {
+                for s in sanitizers {
+                    deduplicator.sanitizer_patterns.push(s.clone());
+                }
+            }
         }
 
         deduplicator
+    }
+
+    /// Returns `true` when the outermost function call in `expr` is a known sanitizer.
+    ///
+    /// **Pool-wide scope:** This checks against **all** applicable rules' sanitizers, not
+    /// just the current sink rule's. This is intentional — most sanitizer functions
+    /// (e.g. `escapeshellarg`, `htmlspecialchars`, `intval`) produce values that are
+    /// safe regardless of the attack type. A per-rule sanitizer check is applied as a
+    /// second line of defense at the finding-creation level via
+    /// [`TaintExpressionUtils::expression_has_sanitizer`] (called in
+    /// `scan_file_with_taint_rules`).
+    ///
+    /// Matches either:
+    /// * a sanitizer pattern that is itself a call prefix (e.g. `"escapeshellarg("`), or
+    /// * any sanitizer name that ends with `(` and whose base name matches the leading
+    ///   identifier in `expr`.
+    ///
+    /// Example: `is_sanitizer_wrapper("escapeshellarg($_GET[\"cmd\"])")` → `true`
+    pub(crate) fn is_sanitizer_wrapper(&self, expr: &str) -> bool {
+        let expr = expr.trim();
+        // Extract the outermost call's name: text before the first `(`.
+        let outer_callee = expr.split('(').next().unwrap_or("").trim();
+        if outer_callee.is_empty() {
+            return false;
+        }
+        for pattern in &self.sanitizer_patterns {
+            // Pattern is a call prefix like `"escapeshellarg("` — match by stripping `(`.
+            let pat_name = pattern.trim_end_matches('(');
+            if pat_name == outer_callee {
+                return true;
+            }
+            // Pattern could also be a plain substring/glob — match if the expression
+            // starts with it (so `"htmlspecialchars"` matches `"htmlspecialchars($v)"`).
+            if !pat_name.is_empty() && expr.starts_with(pattern.as_str()) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Get the specific rule for a source-sink combination

@@ -78,10 +78,21 @@ impl MultiFileTaintAnalyzer {
         match analysis_result {
             AnalysisResult::DefinitelyTainted { flow } => {
                 log::debug!(
-                    "[CROSS_FILE_NEW] VERIFIED taint flow: {} -> {}",
+                    "[CROSS_FILE_NEW] VERIFIED taint flow: {} -> {} (chain len: {})",
                     flow.source_pattern,
-                    flow.sink_pattern
+                    flow.sink_pattern,
+                    flow.call_chain_len
                 );
+
+                // Ignore completely local flows (found within a single function without cross-call tracing).
+                // These are already caught by `analyze_single_file_taint`.
+                if flow.call_chain_len == 0 && flow.source_file == flow.sink_file {
+                    log::debug!(
+                        "[CROSS_FILE_NEW] Skipping purely local flow (caught by single-file analysis): {}:{} -> {}:{}",
+                        flow.source_file, flow.source_line, flow.sink_file, flow.sink_line
+                    );
+                    return;
+                }
 
                 // Get the appropriate rule for this flow
                 let Some(rule) = rule_deduplicator
@@ -198,6 +209,60 @@ impl MultiFileTaintAnalyzer {
                     sink_info.line,
                     &rule_deduplicator,
                 );
+
+                // When the direct analysis is Unknown (function parameter needs caller analysis),
+                // scan the same file for call sites of the wrapper function and trace each
+                // passed argument in its caller context.  This handles the common
+                // cross-statement pattern:  sql = f"..{user}"; run_query(sql)  where
+                // cursor.execute(param) is inside run_query.
+                if let AnalysisResult::Unknown { ref reason } = analysis_result {
+                    if reason.contains("requires caller analysis") {
+                        log::debug!(
+                            "[CROSS_FILE_NEW] Caller analysis for '{}' in {}::{}",
+                            sink_info.used_variable,
+                            sink_file,
+                            sink_info.function
+                        );
+                        let call_sites = Self::find_call_sites_in_file(
+                            sink_file,
+                            &sink_info.function,
+                            &sink_info.used_variable,
+                        );
+                        for (caller_fn, call_line, caller_arg) in call_sites {
+                            log::debug!(
+                                "[CROSS_FILE_NEW] Tracing caller arg '{}' in {}::{}@{}",
+                                caller_arg,
+                                sink_file,
+                                caller_fn,
+                                call_line
+                            );
+                            let mut caller_result = data_flow_tracer.analyze_sink_variable(
+                                sink_file,
+                                &caller_fn,
+                                &caller_arg,
+                                &sink_info.pattern,
+                                call_line,
+                                &rule_deduplicator,
+                            );
+
+                            // We successfully jumped a function boundary back to the caller context.
+                            // Increment the call chain length so this isn't falsely flagged as a purely local flow.
+                            if let AnalysisResult::DefinitelyTainted { ref mut flow } =
+                                caller_result
+                            {
+                                flow.call_chain_len += 1;
+                            }
+                            self.process_sink_analysis_result(
+                                caller_result,
+                                sink_info,
+                                &rule_deduplicator,
+                                &mut seen_flows,
+                                &mut findings,
+                            );
+                        }
+                        continue;
+                    }
+                }
 
                 self.process_sink_analysis_result(
                     analysis_result,
@@ -422,6 +487,76 @@ impl MultiFileTaintAnalyzer {
         }
 
         self.file_imports.insert(filepath.to_string(), imports);
+    }
+
+    /// Find call sites of `callee_fn` within `file_path` and return the argument that
+    /// corresponds to the parameter named `param_name`.  Returns a list of
+    /// `(caller_function, call_line, argument_expression)` triples so the
+    /// caller-analysis loop can re-trace each argument in its own function scope.
+    fn find_call_sites_in_file(
+        file_path: &str,
+        callee_fn: &str,
+        param_name: &str,
+    ) -> Vec<(String, usize, String)> {
+        let Ok(source) = std::fs::read_to_string(file_path) else {
+            return Vec::new();
+        };
+
+        // First, find which parameter index `param_name` occupies in callee_fn's definition.
+        let param_idx = source
+            .lines()
+            .find(|l| l.trim().starts_with(&format!("def {}(", callee_fn)))
+            .and_then(|def_line| {
+                let params_str = def_line.split('(').nth(1)?;
+                let params_only = params_str.split(')').next()?;
+                params_only.split(',').map(|p| p.trim()).position(|p| p == param_name)
+            })
+            .unwrap_or(0);
+
+        log::debug!(
+            "[CALLER_ANALYSIS] '{}' is parameter #{} of '{}'",
+            param_name,
+            param_idx,
+            callee_fn
+        );
+
+        let call_prefix = format!("{}(", callee_fn);
+        let mut results = Vec::new();
+        let mut current_fn = String::new();
+
+        for (idx, line) in source.lines().enumerate() {
+            let line_no = idx + 1;
+            let trimmed = line.trim();
+
+            // Track current function context (very lightweight)
+            if trimmed.starts_with("def ") && trimmed.contains('(') {
+                if let Some(name) = trimmed.strip_prefix("def ").and_then(|s| s.split('(').next()) {
+                    current_fn = name.trim().to_string();
+                }
+            }
+
+            // Look for a call to callee_fn on this line
+            if let Some(after_call) =
+                trimmed.find(&call_prefix).map(|pos| &trimmed[pos + call_prefix.len()..])
+            {
+                // Extract everything up to the matching close-paren (simple, single-line)
+                let args_str = after_call.split(')').next().unwrap_or("");
+                let args: Vec<&str> = args_str.split(',').map(|a| a.trim()).collect();
+                if let Some(&arg) = args.get(param_idx) {
+                    if !arg.is_empty() && !current_fn.is_empty() && current_fn != callee_fn {
+                        log::debug!(
+                            "[CALLER_ANALYSIS] Call site line {}: {}(..) arg={} caller={}",
+                            line_no,
+                            callee_fn,
+                            arg,
+                            current_fn
+                        );
+                        results.push((current_fn.clone(), line_no, arg.to_string()));
+                    }
+                }
+            }
+        }
+        results
     }
 
     /// Extract taint sink pattern by analyzing the node more intelligently - FIXED for context awareness

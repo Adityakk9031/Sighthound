@@ -260,6 +260,16 @@ impl DataFlowTracer {
         file_line: usize,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> VariableSource {
+        // If the entire RHS is wrapped in a known sanitizer call (e.g.
+        // `escapeshellarg($_GET["cmd"])`), it is safe regardless of what it contains.
+        if rule_deduplicator.is_sanitizer_wrapper(rhs) {
+            log::debug!("[COMPUTE_VARIABLE_SOURCE] Sanitizer-wrapped assignment: '{}'", rhs);
+            return VariableSource::KnownSafe {
+                reason: "sanitizer wrapper".to_string(),
+                line: file_line,
+            };
+        }
+
         match self.classify_value_source(rhs, rule_deduplicator) {
             ValueSourceClassification::Safe(reason) => {
                 log::debug!("[COMPUTE_VARIABLE_SOURCE] Proven-safe assignment: {}", reason);
@@ -311,7 +321,23 @@ impl DataFlowTracer {
             let line = line.trim();
             // Note: augmented assignments (`x += ...`, `x -= ...`) are intentionally
             // not matched by this `{} =` guard and are not handled by this path.
-            if !line.starts_with(&format!("{} =", variable_name)) {
+            //
+            // Also match PHP-style `$varname = ...` assignments: `extract_php_variables`
+            // strips the leading `$` sigil, so the extracted name is `"cmd"` while the
+            // actual source line reads `$cmd = $_GET["cmd"]`.
+            //
+            // Also match JS/TS `var x = ...`, `let x = ...`, `const x = ...` declarations.
+            let plain_prefix = format!("{} =", variable_name);
+            let php_prefix = format!("${} =", variable_name);
+            let js_var_prefix = format!("var {} =", variable_name);
+            let js_let_prefix = format!("let {} =", variable_name);
+            let js_const_prefix = format!("const {} =", variable_name);
+            if !line.starts_with(&plain_prefix)
+                && !line.starts_with(&php_prefix)
+                && !line.starts_with(&js_var_prefix)
+                && !line.starts_with(&js_let_prefix)
+                && !line.starts_with(&js_const_prefix)
+            {
                 continue;
             }
             // Split on the FIRST '=' only so the full RHS is preserved even when
@@ -347,7 +373,7 @@ impl DataFlowTracer {
     }
 
     fn compute_variable_source(
-        &self,
+        &mut self,
         file_path: &str,
         function_name: &str,
         variable_name: &str,
@@ -374,6 +400,17 @@ impl DataFlowTracer {
             return source;
         }
 
+        // Gap 3 fix: if the variable is a for-loop iteration variable (`for VAR in ITERABLE`),
+        // trace it back to the iterable. A variable looping over a safe collection literal
+        // (e.g. `for k in ALLOWED_FIELDS`) is safe even if ALLOWED_FIELDS is looked up later.
+        if let Some(source) = Self::find_for_loop_source(&scoped_lines, variable_name) {
+            log::debug!(
+                "[COMPUTE_VARIABLE_SOURCE] Variable '{}' is for-loop variable, tracing iterable",
+                variable_name
+            );
+            return source;
+        }
+
         // Check if it might be a function parameter by looking for function definition
         if let Some(parameter_index) =
             Self::find_function_parameter_index(&source_text, function_name, variable_name)
@@ -392,6 +429,33 @@ impl DataFlowTracer {
             variable_name
         );
         VariableSource::FunctionParameter { parameter_index: 0 }
+    }
+
+    /// If `variable_name` is the iteration variable in a `for VAR in ITERABLE` loop,
+    /// returns a `LocalAssignment` sourced from the iterable expression. This lets the
+    /// taint engine trace `for k in ALLOWED_LIST` → k's source is ALLOWED_LIST (a safe
+    /// collection literal) rather than defaulting to `FunctionParameter`.
+    fn find_for_loop_source(
+        scoped_lines: &[(usize, String)],
+        variable_name: &str,
+    ) -> Option<VariableSource> {
+        let needle = format!("for {} in ", variable_name);
+        for (file_line, line) in scoped_lines {
+            let trimmed = line.trim();
+            if let Some(pos) = trimmed.find(&needle) {
+                let after = trimmed[pos + needle.len()..].trim();
+                // Strip trailing colon (end of for-statement) and any inline comment.
+                let iterable =
+                    after.split('#').next().unwrap_or(after).trim_end_matches(':').trim();
+                if !iterable.is_empty() {
+                    return Some(VariableSource::LocalAssignment {
+                        source_expression: iterable.to_string(),
+                        line: *file_line,
+                    });
+                }
+            }
+        }
+        None
     }
 
     /// Classify an expression that reads an environment variable: user-controlled keys are
@@ -454,7 +518,7 @@ impl DataFlowTracer {
             return ValueSourceClassification::Safe("comment or docstring".to_string());
         }
 
-        if self.is_safe_literal_expression(expr) {
+        if self.is_safe_literal_expression(expr, rule_deduplicator) {
             return ValueSourceClassification::Safe("literal expression".to_string());
         }
 
@@ -470,6 +534,33 @@ impl DataFlowTracer {
 
         if Self::is_safe_static_file_read(expr) {
             return ValueSourceClassification::Safe("static config/template file read".to_string());
+        }
+
+        // Gap 1 fix: `SAFE_DICT.get(tainted_key, safe_default)` or `SAFE_DICT[tainted_key]`
+        // where SAFE_DICT is identified only by the fact that its inline literal doesn't
+        // contain any source indicator. We can't resolve the variable here, but we can
+        // recognise the *shape*: if the expression is `IDENTIFIER.get(...)` or
+        // `IDENTIFIER[...]`, defer to Unknown rather than immediately marking it tainted —
+        // the variable-source tracer will walk back to IDENTIFIER's assignment and classify
+        // it properly (if IDENTIFIER = ["a","b","c"] it becomes KnownSafe via the collection
+        // literal check, so the overall result will be Safe).
+        //
+        // IMPORTANT: known source indicators MUST be checked before the dict-access
+        // short-circuit. An expression like `request.args.get("k")` is a dict-access
+        // shape but the receiver IS a taint source — if we only check
+        // `matches_source_pattern` (rule patterns), indicators like `request.` in
+        // `classify_known_source_indicators` would be skipped and a genuinely tainted
+        // expression would resolve to Unknown.
+        if Self::is_dict_access_expression(expr) {
+            if let Some(classification) =
+                Self::classify_known_source_indicators(expr, rule_deduplicator)
+            {
+                return classification;
+            }
+            let has_source = rule_deduplicator.matches_source_pattern(expr).is_some();
+            if !has_source {
+                return ValueSourceClassification::Unknown;
+            }
         }
 
         if let Some(classification) = Self::classify_env_key_expression(expr, rule_deduplicator) {
@@ -489,13 +580,46 @@ impl DataFlowTracer {
         ValueSourceClassification::Unknown
     }
 
-    fn is_safe_literal_expression(&self, expression: &str) -> bool {
+    /// Returns true when `expr` looks like a dict/collection access: `VAR.get(...)`,
+    /// `VAR[...]`, or `VAR.get(...)` with a default. These shapes are safe when VAR is
+    /// a locally defined constant collection.
+    fn is_dict_access_expression(expression: &str) -> bool {
+        let expr = expression.trim();
+        // VAR.get(...) — dict lookup with optional default
+        if let Some(dot_pos) = expr.find(".get(") {
+            let receiver = expr[..dot_pos].trim();
+            if !receiver.is_empty() && receiver.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return true;
+            }
+        }
+        // VAR[...] — subscript access
+        if let Some(bracket_pos) = expr.find('[') {
+            let receiver = expr[..bracket_pos].trim();
+            if !receiver.is_empty()
+                && receiver.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+                && expr.ends_with(']')
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn is_safe_literal_expression(
+        &self,
+        expression: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> bool {
         let expr = expression.trim();
 
         if Self::is_string_literal(expr)
             || matches!(expr, "True" | "False" | "None" | "true" | "false" | "null")
             || expr.parse::<f64>().is_ok()
         {
+            return true;
+        }
+
+        if Self::is_safe_collection_literal(expr, rule_deduplicator) {
             return true;
         }
 
@@ -506,6 +630,31 @@ impl DataFlowTracer {
             .all(Self::is_string_literal);
 
         literal_concat && expr.contains('+')
+    }
+
+    /// Returns true for bracketed collection literals (`[...]`, `{...}`) that contain no
+    /// known taint-source substrings and no comprehension syntax. These are constant
+    /// allowlists / op-maps whose values cannot be attacker-controlled.
+    fn is_safe_collection_literal(
+        expression: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> bool {
+        let expr = expression.trim();
+        if expr.len() < 2 {
+            return false;
+        }
+        let bytes = expr.as_bytes();
+        let (first, last) = (bytes[0], bytes[expr.len() - 1]);
+        if !((first == b'[' && last == b']') || (first == b'{' && last == b'}')) {
+            return false;
+        }
+        // Comprehensions (`x for x in ...`) are not simple literals.
+        if expr.contains(" for ") {
+            return false;
+        }
+        // If any configured source pattern matches this collection,
+        // the values may be tainted — don't classify as safe.
+        rule_deduplicator.matches_source_pattern(expr).is_none()
     }
 
     fn is_string_literal(expression: &str) -> bool {
@@ -663,6 +812,10 @@ impl DataFlowTracer {
             return Some((callee_name.to_string(), source_file));
         }
 
+        if self.file_contains_function(caller_file, callee_name) {
+            return Some((callee_name.to_string(), caller_file.to_string()));
+        }
+
         let method_name = callee_name.rsplit('.').next()?;
         if method_name == callee_name {
             return None;
@@ -752,33 +905,16 @@ impl DataFlowTracer {
         source_expression: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Option<AnalysisResult> {
-        // Check if the source expression references other variables that might be tainted
-        // For now, we'll check simple cases like string literals (which are safe)
-        if source_expression.starts_with('"') && source_expression.ends_with('"') {
-            log::debug!("[TRACE_LOCAL] String literal assignment - safe");
-            return Some(AnalysisResult::DefinitelySafe);
-        }
-
-        if CommonUtils::is_valid_variable_name(source_expression)
-            && source_expression != site.sink_variable
-            && !CommonUtils::is_keyword_or_builtin(source_expression)
-        {
-            log::debug!(
-                "[TRACE_LOCAL] Source is variable alias '{}', tracing dependency",
-                source_expression
-            );
-            return Some(self.analyze_sink_variable(
-                site.file_path,
-                site.function_name,
-                source_expression,
-                site.sink_pattern,
-                site.sink_line,
-                rule_deduplicator,
-            ));
-        }
-
-        // If it's an f-string or complex expression, we need more analysis
-        if source_expression.starts_with("f\"") || source_expression.contains('{') {
+        // 1. Complex expressions: f-strings, brace-interpolation, or string concatenation (+)
+        // We check these first because an expression like `"..." + var + "..."` starts and ends
+        // with quotes but is NOT a safe, pure string literal.
+        let is_fstring_or_interp =
+            source_expression.starts_with("f\"") || source_expression.contains('{');
+        let is_str_concat = source_expression.contains(" + ")
+            || source_expression.contains("\" +")
+            || source_expression.contains("+ \"")
+            || source_expression.contains(" +\"");
+        if is_fstring_or_interp || is_str_concat {
             log::debug!("[TRACE_LOCAL] Complex expression - requires variable dependency analysis");
             for variable in CommonUtils::extract_all_variables(source_expression) {
                 if variable == site.sink_variable
@@ -816,6 +952,33 @@ impl DataFlowTracer {
             }
         }
 
+        // 2. Pure string literals (safe)
+        if (source_expression.starts_with('"') && source_expression.ends_with('"'))
+            || (source_expression.starts_with('\'') && source_expression.ends_with('\''))
+        {
+            log::debug!("[TRACE_LOCAL] String literal assignment - safe");
+            return Some(AnalysisResult::DefinitelySafe);
+        }
+
+        // 3. Variable aliases
+        if CommonUtils::is_valid_variable_name(source_expression)
+            && source_expression != site.sink_variable
+            && !CommonUtils::is_keyword_or_builtin(source_expression)
+        {
+            log::debug!(
+                "[TRACE_LOCAL] Source is variable alias '{}', tracing dependency",
+                source_expression
+            );
+            return Some(self.analyze_sink_variable(
+                site.file_path,
+                site.function_name,
+                source_expression,
+                site.sink_pattern,
+                site.sink_line,
+                rule_deduplicator,
+            ));
+        }
+
         None
     }
 
@@ -833,6 +996,17 @@ impl DataFlowTracer {
             site.file_path,
             site.function_name
         );
+
+        // If the entire RHS is wrapped in a known sanitizer call (e.g.
+        // `escapeshellarg($_GET["cmd"])`, `intval($_POST["id"])`), the result is safe
+        // regardless of what the argument contains.
+        if rule_deduplicator.is_sanitizer_wrapper(source_expression) {
+            log::debug!(
+                "[TRACE_LOCAL] Sanitizer-wrapped expression '{}' — safe",
+                source_expression
+            );
+            return AnalysisResult::DefinitelySafe;
+        }
 
         match self.classify_value_source(source_expression, rule_deduplicator) {
             ValueSourceClassification::Safe(reason) => {

@@ -1,8 +1,9 @@
 #![allow(clippy::too_many_arguments, clippy::large_enum_variant, clippy::needless_range_loop)]
 
 use crate::common::CommonUtils;
-use crate::scanner::flow_tracker::{TaintVariableInfo, VariableFlowTracker};
-use crate::scanner::scan_context::{EnhancedSearchContext, SinkSite, TaintScanContext};
+use crate::scanner::dataflow::DataFlowTracer;
+use crate::scanner::flow_tracker::{AnalysisResult, TaintVariableInfo, VariableFlowTracker};
+use crate::scanner::scan_context::EnhancedSearchContext;
 use crate::scanner::taint_utils::{TaintExpressionUtils, TaintRuleDeduplicator};
 
 pub struct ScanningLogic;
@@ -777,390 +778,6 @@ impl ScanningLogic {
         start_line
     }
 
-    /// If `node` is a function definition, mark any parameters matching a taint source pattern
-    /// as tainted.
-    fn track_function_parameter_sources(
-        node: &tree_sitter::Node,
-        ctx: &TaintScanContext,
-        line: usize,
-        func_name: &str,
-        flow_tracker: &mut VariableFlowTracker,
-    ) {
-        log::debug!(
-            "[FUNCTION_CHECK] Checking node kind '{}' for function definitions",
-            node.kind()
-        );
-        if !matches!(
-            node.kind(),
-            "function_definition"
-                | "function_declaration"
-                | "method_definition"
-                | "arrow_function"
-                | "function_expression"
-                | "generator_function"
-                | "async_function"
-                | "constructor_definition"
-        ) {
-            return;
-        }
-
-        log::debug!("[FUNCTION_PARAM_ANALYSIS] Found function definition: {}", node.kind());
-        let Some(params) = Self::extract_function_parameters(node, ctx.source) else {
-            log::debug!("[FUNCTION_PARAM_ANALYSIS] No parameters extracted from function");
-            return;
-        };
-        log::debug!("[FUNCTION_PARAM_ANALYSIS] Extracted parameters: {:?}", params);
-        for param in params {
-            // Check if parameter name matches any taint source pattern
-            log::debug!(
-                "[FUNCTION_PARAM_ANALYSIS] Checking parameter '{}' against source patterns",
-                param
-            );
-            if let Some(source_pattern) = ctx.rule_deduplicator.matches_source_pattern(&param) {
-                log::debug!(
-                    "[FUNCTION_PARAM_ANALYSIS] Function parameter '{}' matches source pattern '{}'",
-                    param,
-                    source_pattern
-                );
-                flow_tracker.record_tainted_variable(
-                    param.clone(),
-                    TaintVariableInfo {
-                        source_line: line,
-                        source_pattern,
-                        source_function: func_name.to_string(),
-                        assignment_code: format!("function parameter: {}", param),
-                    },
-                );
-            } else {
-                log::debug!("[FUNCTION_PARAM_ANALYSIS] Function parameter '{}' does not match any source pattern", param);
-            }
-        }
-    }
-
-    /// If `node_text` is an assignment whose value matches a taint source pattern (and isn't
-    /// sanitized), mark the assigned variable as tainted.
-    fn track_assignment_source(
-        node_text: &str,
-        line: usize,
-        func_name: &str,
-        ctx: &TaintScanContext,
-        flow_tracker: &mut VariableFlowTracker,
-    ) {
-        if !CommonUtils::is_valid_assignment_text(node_text) {
-            return;
-        }
-        let Some(var_name) = Self::extract_taint_assignment_target(node_text)
-            .or_else(|| CommonUtils::extract_variable_from_assignment(node_text, false))
-        else {
-            return;
-        };
-        // Extract the right side of assignment for source matching
-        let Some(eq_pos) = node_text.find('=') else {
-            return;
-        };
-        let assignment_value = node_text[eq_pos + 1..].trim();
-        log::debug!(
-            "[ASSIGNMENT_ANALYSIS] Processing assignment '{}' -> checking value '{}'",
-            node_text,
-            assignment_value
-        );
-
-        // Check if the assignment value matches any taint source
-        let Some(source_pattern) = ctx.rule_deduplicator.matches_source_pattern(assignment_value)
-        else {
-            log::debug!(
-                "[ASSIGNMENT_ANALYSIS] Assignment value '{}' does not match any source patterns",
-                assignment_value
-            );
-            return;
-        };
-
-        if TaintExpressionUtils::expression_has_any_sanitizer(
-            ctx.applicable_rules,
-            assignment_value,
-        ) {
-            log::debug!(
-                "[ASSIGNMENT_ANALYSIS] Assignment value '{}' contains sanitizer; not recording taint",
-                assignment_value
-            );
-            return;
-        }
-
-        log::debug!(
-            "[ASSIGNMENT_ANALYSIS] Assignment value '{}' matches source pattern '{}'",
-            assignment_value,
-            source_pattern
-        );
-        flow_tracker.record_tainted_variable(
-            var_name,
-            TaintVariableInfo {
-                source_line: line,
-                source_pattern,
-                source_function: func_name.to_string(),
-                assignment_code: node_text.to_string(),
-            },
-        );
-    }
-
-    /// If `node_text` contains a detectable taint-propagation operation (and isn't sanitized),
-    /// record it and, when a dependent variable is already tainted, propagate that taint to the
-    /// target variable.
-    fn propagate_taint_for_node(
-        node_text: &str,
-        func_name: &str,
-        ctx: &TaintScanContext,
-        flow_tracker: &mut VariableFlowTracker,
-    ) {
-        if TaintExpressionUtils::expression_has_any_sanitizer(ctx.applicable_rules, node_text) {
-            return;
-        }
-        let Some((target_var, dependent_vars)) = Self::detect_taint_propagation(node_text) else {
-            return;
-        };
-        log::debug!(
-            "[TAINT_PROPAGATION] Detected propagation: '{}' depends on {:?} in '{}'",
-            target_var,
-            dependent_vars,
-            node_text
-        );
-        flow_tracker.record_taint_propagation(&target_var, &dependent_vars);
-
-        // Check if any dependent variables are tainted and propagate to target
-        for dep_var in &dependent_vars {
-            if let Some(taint_info) = flow_tracker.is_variable_tainted(dep_var, func_name).cloned()
-            {
-                log::debug!(
-                    "[TAINT_PROPAGATION] Propagating taint from '{}' to '{}' ({})",
-                    dep_var,
-                    target_var,
-                    taint_info.source_pattern
-                );
-
-                // Mark target variable as tainted (inheriting from the dependent variable)
-                flow_tracker.record_tainted_variable(
-                    target_var.clone(),
-                    TaintVariableInfo {
-                        source_line: taint_info.source_line,
-                        source_pattern: taint_info.source_pattern.clone(),
-                        source_function: taint_info.source_function.clone(),
-                        assignment_code: format!("Propagated from {} via: {}", dep_var, node_text),
-                    },
-                );
-                break; // Only need one tainted dependency to taint the target
-            }
-        }
-    }
-
-    /// Phase 1 per-node step: track function-parameter and assignment taint sources, and
-    /// propagate taint through detected dependency operations, for a single AST node.
-    fn track_taint_sources_for_node(
-        node: &tree_sitter::Node,
-        ctx: &TaintScanContext,
-        flow_tracker: &mut VariableFlowTracker,
-    ) {
-        let node_text = crate::parser::get_node_text(node, ctx.source);
-        let line = node.start_position().row + 1;
-        let func_name = crate::scanner::utils::AstUtils::get_function_context(node, ctx.source);
-
-        Self::track_function_parameter_sources(node, ctx, line, &func_name, flow_tracker);
-        Self::track_assignment_source(&node_text, line, &func_name, ctx, flow_tracker);
-        Self::propagate_taint_for_node(&node_text, &func_name, ctx, flow_tracker);
-    }
-
-    /// Extract the variables referenced in a sink expression: PHP-specific `$var` extraction
-    /// for PHP, the generic extractor otherwise. Deduplicated and sorted.
-    fn extract_sink_variables(node_text: &str, ctx: &TaintScanContext) -> Vec<String> {
-        let mut used_variables = if ctx.language_support.name() == "php" {
-            TaintExpressionUtils::extract_php_variables(node_text)
-        } else {
-            CommonUtils::extract_all_variables(node_text)
-        };
-        used_variables.sort();
-        used_variables.dedup();
-        used_variables
-    }
-
-    /// If the sink node's own expression text also matches a taint source pattern (a "bare
-    /// call" source used directly as a sink argument, e.g. `execute(input())`), record a
-    /// same-expression taint finding.
-    fn check_bare_call_source_sink(
-        node: &tree_sitter::Node,
-        site: &SinkSite,
-        ctx: &TaintScanContext,
-        flow_tracker: &mut VariableFlowTracker,
-        used_variables: &[String],
-        findings: &mut Vec<crate::models::Finding>,
-    ) {
-        if used_variables.is_empty() || !Self::is_actionable_sink_node(node.kind()) {
-            return;
-        }
-        let Some(source_pattern) = ctx.rule_deduplicator.matches_source_pattern(site.node_text)
-        else {
-            return;
-        };
-        let Some(rule) =
-            ctx.rule_deduplicator.get_rule_for_combination(&source_pattern, site.sink_pattern)
-        else {
-            return;
-        };
-        if TaintExpressionUtils::expression_has_sanitizer(rule, site.node_text) {
-            return;
-        }
-        if flow_tracker.is_flow_processed(site.line, &source_pattern, site.sink_pattern) {
-            return;
-        }
-        flow_tracker.mark_flow_processed(site.line, &source_pattern, site.sink_pattern);
-
-        let taint_source = crate::models::TaintSource {
-            file: site.filepath.to_string(),
-            line: site.line,
-            function: site.func_name.to_string(),
-            variable: source_pattern.clone(),
-            operation: source_pattern.clone(),
-            code: site.node_text.to_string(),
-            branch_id: None,
-        };
-        let taint_sink = crate::models::TaintSink {
-            file: site.filepath.to_string(),
-            line: site.line,
-            function: site.func_name.to_string(),
-            variable: source_pattern.clone(),
-            operation: site.sink_pattern.to_string(),
-            code: site.node_text.to_string(),
-            branch_id: None,
-        };
-        findings.push(Self::create_taint_finding(
-            &taint_source,
-            &taint_sink,
-            rule,
-            ctx.tree,
-            ctx.source,
-        ));
-    }
-
-    /// For each already-tainted variable used in the sink, record a finding when there's a
-    /// legitimate source-sink rule for it and it isn't sanitized or already processed.
-    fn collect_tainted_variable_sink_findings(
-        site: &SinkSite,
-        ctx: &TaintScanContext,
-        used_variables: &[String],
-        flow_tracker: &mut VariableFlowTracker,
-        findings: &mut Vec<crate::models::Finding>,
-    ) {
-        for used_variable in used_variables {
-            let Some(taint_info) =
-                flow_tracker.is_variable_tainted(used_variable, site.func_name).cloned()
-            else {
-                continue;
-            };
-            let Some(rule) = ctx
-                .rule_deduplicator
-                .get_rule_for_combination(&taint_info.source_pattern, site.sink_pattern)
-            else {
-                continue;
-            };
-            if TaintExpressionUtils::expression_has_sanitizer(rule, site.node_text) {
-                log::debug!(
-                    "[SANITIZER_CHECK] Skipping finding due to sanitization: '{}'",
-                    site.node_text
-                );
-                continue; // Skip this finding as it's sanitized
-            }
-            if flow_tracker.is_flow_processed(
-                site.line,
-                &taint_info.source_pattern,
-                site.sink_pattern,
-            ) {
-                continue;
-            }
-            flow_tracker.mark_flow_processed(
-                site.line,
-                &taint_info.source_pattern,
-                site.sink_pattern,
-            );
-
-            let taint_source = crate::models::TaintSource {
-                file: site.filepath.to_string(),
-                line: taint_info.source_line,
-                function: taint_info.source_function.clone(),
-                variable: used_variable.clone(),
-                operation: taint_info.source_pattern.clone(),
-                code: taint_info.assignment_code.clone(),
-                branch_id: None,
-            };
-            let taint_sink = crate::models::TaintSink {
-                file: site.filepath.to_string(),
-                line: site.line,
-                function: site.func_name.to_string(),
-                variable: used_variable.clone(),
-                operation: site.sink_pattern.to_string(),
-                code: site.node_text.to_string(),
-                branch_id: None,
-            };
-            findings.push(Self::create_taint_finding(
-                &taint_source,
-                &taint_sink,
-                rule,
-                ctx.tree,
-                ctx.source,
-            ));
-        }
-    }
-
-    /// Phase 2 per-node step: if this node is a sink, check both a direct "bare call" source
-    /// used inline and any already-tainted variables it references, recording findings for
-    /// legitimate, unsanitized, not-yet-processed source-sink flows.
-    fn collect_taint_sink_findings_for_node(
-        node: &tree_sitter::Node,
-        ctx: &TaintScanContext,
-        flow_tracker: &mut VariableFlowTracker,
-        findings: &mut Vec<crate::models::Finding>,
-    ) {
-        let node_text = crate::parser::get_node_text(node, ctx.source);
-        let line = node.start_position().row + 1;
-        let func_name = crate::scanner::utils::AstUtils::get_function_context(node, ctx.source);
-
-        // Check if this node matches any sink pattern
-        let Some(sink_pattern) = ctx.rule_deduplicator.matches_sink_pattern(&node_text) else {
-            return;
-        };
-        log::debug!(
-            "[SINK_ANALYSIS] Found sink '{}' with pattern '{}' at line {}",
-            node_text,
-            sink_pattern,
-            line
-        );
-        // Extract ALL variables used in this sink (enhanced extraction)
-        let used_variables = Self::extract_sink_variables(&node_text, ctx);
-        log::debug!("[SINK_ANALYSIS] Extracted variables from sink: {:?}", used_variables);
-
-        let site = SinkSite {
-            node_text: &node_text,
-            filepath: ctx.filepath,
-            line,
-            func_name: &func_name,
-            sink_pattern: &sink_pattern,
-        };
-
-        Self::check_bare_call_source_sink(
-            node,
-            &site,
-            ctx,
-            flow_tracker,
-            &used_variables,
-            findings,
-        );
-
-        // Check if ANY of these variables are tainted
-        Self::collect_tainted_variable_sink_findings(
-            &site,
-            ctx,
-            &used_variables,
-            flow_tracker,
-            findings,
-        );
-    }
-
     /// Scan file with taint analysis rules (fixed implementation with proper flow tracking)
     pub fn scan_file_with_taint_rules(
         filepath: &str,
@@ -1171,7 +788,7 @@ impl ScanningLogic {
     ) -> Vec<crate::models::Finding> {
         let mut findings = Vec::new();
 
-        // Filter out rules that don't apply to this file (same as search rules)
+        // Filter out rules that don't apply to this file
         let applicable_rules: Vec<&crate::rules::UnifiedRule> = taint_rules
             .iter()
             .filter(|rule| {
@@ -1185,39 +802,173 @@ impl ScanningLogic {
             return findings;
         }
 
-        // Create rule deduplicator to prevent cartesian product problems
+        // Create rule deduplicator
         let rule_deduplicator = TaintRuleDeduplicator::new(&applicable_rules);
+        let mut data_flow_tracer = DataFlowTracer::new();
 
-        // Create variable flow tracker for legitimate flows only
-        let mut flow_tracker = VariableFlowTracker::new();
-
-        // Use broader traversal to include assignment statements
+        // Collect all nodes to search for sinks
         let mut all_nodes = Vec::new();
         Self::collect_all_relevant_nodes(tree.root_node(), &mut all_nodes, None);
 
-        let ctx = TaintScanContext {
-            source,
-            filepath,
-            tree,
-            language_support,
-            applicable_rules: &applicable_rules,
-            rule_deduplicator: &rule_deduplicator,
-        };
+        let mut seen_flows = std::collections::BTreeSet::new();
 
-        // Phase 1: Track variable assignments from taint sources
-        for node in all_nodes.iter() {
-            Self::track_taint_sources_for_node(node, &ctx, &mut flow_tracker);
+        for node in &all_nodes {
+            let node_kind = node.kind();
+            let node_text = crate::parser::get_node_text(node, source);
+            let line = node.start_position().row + 1;
+            let func_name = crate::scanner::utils::AstUtils::get_function_context(node, source);
+
+            // Check if this node matches any sink pattern
+            if let Some(sink_pattern) = rule_deduplicator.matches_sink_pattern(&node_text) {
+                // Skip structural container nodes (function definitions, etc.) for ALL
+                // taint processing (both inline and variable-tracing paths). Their text spans
+                // the entire function body, so matching source + sink within them would
+                // attribute the finding to the function's START line instead of the actual
+                // expression line.
+                if matches!(
+                    node_kind,
+                    "function_definition"
+                        | "function_declaration"
+                        | "method_definition"
+                        | "arrow_function"
+                        | "function_expression"
+                        | "generator_function"
+                        | "async_function"
+                        | "constructor_definition"
+                ) {
+                    continue;
+                }
+
+                // Inline source-in-sink check: the node text itself directly references a
+                // taint source (e.g. PHP `system($cmd)` where $cmd was assigned from
+                // `$_GET["cmd"]`, or `execute(input())` in Python). We emit the finding
+                // directly without needing variable tracing.
+                if let Some(source_pattern) = rule_deduplicator.matches_source_pattern(&node_text) {
+                    if let Some(rule) =
+                        rule_deduplicator.get_rule_for_combination(&source_pattern, &sink_pattern)
+                    {
+                        if !TaintExpressionUtils::expression_has_sanitizer(rule, &node_text) {
+                            let flow_key = (
+                                filepath.to_string(),
+                                line,
+                                String::new(),
+                                sink_pattern.clone(),
+                                filepath.to_string(),
+                                line,
+                                source_pattern.clone(),
+                            );
+                            if seen_flows.insert(flow_key) {
+                                let taint_source = crate::models::TaintSource {
+                                    file: filepath.to_string(),
+                                    line,
+                                    function: func_name.clone(),
+                                    variable: String::new(),
+                                    operation: source_pattern.clone(),
+                                    code: node_text.clone(),
+                                    branch_id: None,
+                                };
+                                let taint_sink = crate::models::TaintSink {
+                                    file: filepath.to_string(),
+                                    line,
+                                    function: func_name.clone(),
+                                    variable: String::new(),
+                                    operation: sink_pattern.clone(),
+                                    code: node_text.clone(),
+                                    branch_id: None,
+                                };
+                                findings.push(Self::create_taint_finding(
+                                    &taint_source,
+                                    &taint_sink,
+                                    rule,
+                                    tree,
+                                    source,
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // Extract used variables for indirect taint tracing
+                let used_variables = if language_support.name() == "php" {
+                    TaintExpressionUtils::extract_php_variables(&node_text)
+                } else {
+                    CommonUtils::extract_all_variables(&node_text)
+                };
+
+                for used_variable in used_variables {
+                    let analysis_result = data_flow_tracer.analyze_sink_variable(
+                        filepath,
+                        &func_name,
+                        &used_variable,
+                        &sink_pattern,
+                        line,
+                        &rule_deduplicator,
+                    );
+
+                    if let AnalysisResult::DefinitelyTainted { flow } = analysis_result {
+                        let flow_key = (
+                            flow.sink_file.clone(),
+                            flow.sink_line,
+                            flow.sink_variable.clone(),
+                            flow.sink_pattern.clone(),
+                            flow.source_file.clone(),
+                            flow.source_line,
+                            flow.source_pattern.clone(),
+                        );
+                        if !seen_flows.insert(flow_key) {
+                            continue;
+                        }
+
+                        if let Some(rule) = rule_deduplicator
+                            .get_rule_for_combination(&flow.source_pattern, &flow.sink_pattern)
+                        {
+                            // Skip if sanitized
+                            if TaintExpressionUtils::expression_has_sanitizer(rule, &node_text) {
+                                log::debug!(
+                                    "[SANITIZER_CHECK] Skipping finding due to sanitization: '{}'",
+                                    node_text
+                                );
+                                continue;
+                            }
+
+                            // Get source code line for the taint source
+                            let source_code = std::str::from_utf8(source)
+                                .ok()
+                                .and_then(|s| s.lines().nth(flow.source_line - 1))
+                                .unwrap_or(&flow.source_pattern)
+                                .to_string();
+
+                            let taint_source = crate::models::TaintSource {
+                                file: flow.source_file.clone(),
+                                line: flow.source_line,
+                                function: flow.source_function.clone(),
+                                variable: flow.sink_variable.clone(),
+                                operation: flow.source_pattern.clone(),
+                                code: source_code,
+                                branch_id: None,
+                            };
+                            let taint_sink = crate::models::TaintSink {
+                                file: flow.sink_file.clone(),
+                                line: flow.sink_line,
+                                function: flow.sink_function.clone(),
+                                variable: flow.sink_variable.clone(),
+                                operation: flow.sink_pattern.clone(),
+                                code: node_text.clone(),
+                                branch_id: None,
+                            };
+                            findings.push(Self::create_taint_finding(
+                                &taint_source,
+                                &taint_sink,
+                                rule,
+                                tree,
+                                source,
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
-        // Phase 2: Find sinks that use tainted variables
-        for node in all_nodes.iter() {
-            Self::collect_taint_sink_findings_for_node(
-                node,
-                &ctx,
-                &mut flow_tracker,
-                &mut findings,
-            );
-        }
         findings
     }
 
@@ -1370,20 +1121,6 @@ impl ScanningLogic {
         result
     }
 
-    fn extract_taint_assignment_target(node_text: &str) -> Option<String> {
-        let eq_pos = node_text.find('=')?;
-        let left_side = node_text[..eq_pos].trim();
-        let variable = TaintExpressionUtils::normalize_variable(left_side);
-        (!variable.is_empty()).then_some(variable)
-    }
-
-    fn is_actionable_sink_node(node_kind: &str) -> bool {
-        node_kind == "call"
-            || node_kind == "expression_statement"
-            || node_kind.contains("call_expression")
-            || node_kind.contains("invocation")
-    }
-
     /// Extract direct variable from simple expressions
     fn extract_direct_variable(expr: &str) -> Option<String> {
         let trimmed = expr.trim();
@@ -1394,113 +1131,6 @@ impl ScanningLogic {
         }
         log::debug!("[EXTRACT_DIRECT] Invalid variable: '{}'", trimmed);
         None
-    }
-
-    /// Extract function parameters from function definition node
-    fn extract_function_parameters(
-        func_node: &tree_sitter::Node,
-        source: &[u8],
-    ) -> Option<Vec<String>> {
-        let mut parameters = Vec::new();
-        let mut cursor = func_node.walk();
-
-        // Look for parameter list in function definition
-        if cursor.goto_first_child() {
-            loop {
-                let node = cursor.node();
-
-                // Check for formal_parameters, parameter_list, or arguments
-                if node.kind() == "formal_parameters"
-                    || node.kind() == "parameter_list"
-                    || node.kind() == "arguments"
-                {
-                    let mut param_cursor = node.walk();
-                    if param_cursor.goto_first_child() {
-                        loop {
-                            let param_node = param_cursor.node();
-
-                            // Skip punctuation like parentheses and commas
-                            if param_node.kind() != "("
-                                && param_node.kind() != ")"
-                                && param_node.kind() != ","
-                            {
-                                // Handle different parameter node types
-                                let param_text = match param_node.kind() {
-                                    "identifier" => {
-                                        // Simple parameter: function(param)
-                                        crate::parser::get_node_text(&param_node, source)
-                                    }
-                                    "parameter" => {
-                                        // TypeScript parameter: function(param: type)
-                                        Self::extract_parameter_name(&param_node, source)
-                                    }
-                                    "required_parameter" | "optional_parameter" => {
-                                        // TypeScript parameter variants
-                                        Self::extract_parameter_name(&param_node, source)
-                                    }
-                                    _ => {
-                                        // Try to extract identifier from complex parameter
-                                        Self::extract_parameter_name(&param_node, source)
-                                    }
-                                };
-
-                                if !param_text.is_empty()
-                                    && CommonUtils::is_valid_variable_name(&param_text)
-                                {
-                                    parameters.push(param_text);
-                                }
-                            }
-
-                            if !param_cursor.goto_next_sibling() {
-                                break;
-                            }
-                        }
-                    }
-                    break;
-                }
-
-                if !cursor.goto_next_sibling() {
-                    break;
-                }
-            }
-        }
-
-        if parameters.is_empty() {
-            None
-        } else {
-            Some(parameters)
-        }
-    }
-
-    /// Extract parameter name from complex parameter node
-    fn extract_parameter_name(param_node: &tree_sitter::Node, source: &[u8]) -> String {
-        let mut cursor = param_node.walk();
-
-        // Look for identifier child node
-        if cursor.goto_first_child() {
-            loop {
-                let node = cursor.node();
-                if node.kind() == "identifier" {
-                    return crate::parser::get_node_text(&node, source);
-                }
-
-                if !cursor.goto_next_sibling() {
-                    break;
-                }
-            }
-        }
-
-        // Fallback: use the whole node text and try to extract identifier
-        let full_text = crate::parser::get_node_text(param_node, source);
-        if let Some(colon_pos) = full_text.find(':') {
-            // TypeScript parameter with type annotation: "param: string"
-            full_text[..colon_pos].trim().to_string()
-        } else if let Some(equals_pos) = full_text.find('=') {
-            // Parameter with default value: "param = default"
-            full_text[..equals_pos].trim().to_string()
-        } else {
-            full_text.trim().to_string()
-        }
     }
 
     /// Collect all relevant nodes for taint analysis (assignments and calls)
@@ -1699,7 +1329,6 @@ impl ScanningLogic {
         else {
             return;
         };
-        flow_tracker.record_taint_propagation(&target_var, &dependent_vars);
 
         // Check if any dependent variables are tainted and propagate to target
         for dep_var in &dependent_vars {

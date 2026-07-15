@@ -4,12 +4,6 @@
 pub(crate) struct VariableFlowTracker {
     /// Maps variable names to their taint source information
     tainted_variables: std::collections::BTreeMap<String, TaintVariableInfo>,
-    /// Function scopes to handle variable visibility
-    function_scopes: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
-    /// Taint propagation through operations
-    taint_propagations: std::collections::BTreeMap<String, Vec<String>>, // var -> [dependent_vars]
-    /// Deduplication set for flows to prevent duplicates
-    processed_flows: std::collections::BTreeSet<(usize, String, String)>, // (line, source_pattern, sink_pattern)
 }
 
 #[derive(Debug, Clone)]
@@ -22,12 +16,7 @@ pub(crate) struct TaintVariableInfo {
 
 impl VariableFlowTracker {
     pub(crate) fn new() -> Self {
-        Self {
-            tainted_variables: std::collections::BTreeMap::new(),
-            function_scopes: std::collections::BTreeMap::new(),
-            taint_propagations: std::collections::BTreeMap::new(),
-            processed_flows: std::collections::BTreeSet::new(),
-        }
+        Self { tainted_variables: std::collections::BTreeMap::new() }
     }
 
     /// Record a variable as tainted from a source
@@ -40,12 +29,6 @@ impl VariableFlowTracker {
             var_name, source_info.source_pattern, source_info.source_line, source_info.source_function);
 
         self.tainted_variables.insert(var_name.clone(), source_info.clone());
-
-        // Add to function scope
-        self.function_scopes
-            .entry(source_info.source_function.clone())
-            .or_default()
-            .insert(var_name);
     }
 
     /// Check if a variable is tainted
@@ -83,36 +66,6 @@ impl VariableFlowTracker {
             log::debug!("[CHECK_TAINT] Variable '{}' not found in tainted variables", var_name);
         }
         None
-    }
-
-    /// Check if we've already processed this flow to prevent duplicates
-    pub(crate) fn is_flow_processed(
-        &self,
-        line: usize,
-        source_pattern: &str,
-        sink_pattern: &str,
-    ) -> bool {
-        self.processed_flows.contains(&(line, source_pattern.to_string(), sink_pattern.to_string()))
-    }
-
-    /// Mark a flow as processed
-    pub(crate) fn mark_flow_processed(
-        &mut self,
-        line: usize,
-        source_pattern: &str,
-        sink_pattern: &str,
-    ) {
-        self.processed_flows.insert((line, source_pattern.to_string(), sink_pattern.to_string()));
-    }
-
-    /// Record taint propagation through operations
-    pub(crate) fn record_taint_propagation(&mut self, source_var: &str, dependent_vars: &[String]) {
-        for dep_var in dependent_vars {
-            self.taint_propagations
-                .entry(source_var.to_string())
-                .or_default()
-                .push(dep_var.clone());
-        }
     }
 
     /// Check if variable is likely global/passed between functions (reusing existing logic)
