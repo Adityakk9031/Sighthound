@@ -472,34 +472,28 @@ def run(data):
 
         // no gate flag — should always succeed
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path_high, "python", "--simple-analysis"])
+            .args([file_path_high, "python", "--simple-analysis"])
             .status()
             .expect("failed to run sighthound");
         assert!(status.success());
 
         // --error-on-findings should flip exit code when there are findings
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path_high, "python", "--simple-analysis", "--error-on-findings"])
+            .args([file_path_high, "python", "--simple-analysis", "--error-on-findings"])
             .status()
             .expect("failed to run sighthound");
         assert_eq!(status.code(), Some(1));
 
         // critical threshold — os.system is High, so critical threshold should NOT trigger on it
         let status = std::process::Command::new(&bin_path)
-            .args(&[
-                file_path_high,
-                "python",
-                "--simple-analysis",
-                "--fail-on-severity",
-                "critical",
-            ])
+            .args([file_path_high, "python", "--simple-analysis", "--fail-on-severity", "critical"])
             .status()
             .expect("failed to run sighthound");
         assert!(status.success());
 
         // critical threshold — pickle.loads is Critical, so critical threshold should trigger on it
         let status = std::process::Command::new(&bin_path)
-            .args(&[
+            .args([
                 file_path_critical,
                 "python",
                 "--simple-analysis",
@@ -512,21 +506,21 @@ def run(data):
 
         // high threshold — os.system is High, so high threshold should trigger on it
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path_high, "python", "--simple-analysis", "--fail-on-severity", "high"])
+            .args([file_path_high, "python", "--simple-analysis", "--fail-on-severity", "high"])
             .status()
             .expect("failed to run sighthound");
         assert_eq!(status.code(), Some(1));
 
         // low threshold — still triggered since high >= low
         let status = std::process::Command::new(&bin_path)
-            .args(&[file_path_high, "python", "--simple-analysis", "--fail-on-severity", "low"])
+            .args([file_path_high, "python", "--simple-analysis", "--fail-on-severity", "low"])
             .status()
             .expect("failed to run sighthound");
         assert_eq!(status.code(), Some(1));
 
         // bad severity value — validation should reject it
         let output = std::process::Command::new(&bin_path)
-            .args(&[
+            .args([
                 file_path_high,
                 "python",
                 "--simple-analysis",
