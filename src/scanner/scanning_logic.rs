@@ -107,11 +107,12 @@ impl ScanningLogic {
 
         let check_pattern = |pattern: &str| {
             CONTEXT_INDICATORS.iter().any(|indicator| pattern.contains(indicator))
-                || pattern.contains('.')
-                || pattern.contains('*')
-                || pattern.contains('(')
-                || pattern.contains("f\"")
-                || pattern.contains("f'")
+                || (rule.get_category() == "database"
+                    && (pattern.contains('.')
+                        || pattern.contains('*')
+                        || pattern.contains('(')
+                        || pattern.contains("f\"")
+                        || pattern.contains("f'")))
         };
 
         if let Some(patterns) = &rule.patterns {
