@@ -75,7 +75,7 @@ pub fn check_has_argument_condition(
     if let Some(args_node) = language_support.get_arguments_node(node) {
         // If specific position is specified, check only that argument
         if let Some(position) = condition.argument_position {
-            if let Some(arg) = get_target_argument(args_node, position as usize, source) {
+            if let Some(arg) = get_target_argument(args_node, position, source) {
                 return check_argument_matches(arg, source, condition);
             }
             return false;
@@ -156,7 +156,7 @@ pub fn check_not_literal_condition(
 ) -> bool {
     if let Some(args_node) = language_support.get_arguments_node(node) {
         if let Some(position) = condition.argument_position {
-            if let Some(arg) = get_target_argument(args_node, position as usize, source) {
+            if let Some(arg) = get_target_argument(args_node, position, source) {
                 let unwrapped = unwrap_keyword_argument(arg);
                 return !is_literal_node(&unwrapped);
             }
