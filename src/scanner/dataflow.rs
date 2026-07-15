@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments, clippy::large_enum_variant, clippy::needless_range_loop)]
 
 use crate::common::CommonUtils;
+use crate::scanner::ast_provenance::{AssignmentFact, AstResolution, PythonAstProvenance};
 use crate::scanner::flow_tracker::{
     AnalysisResult, FunctionAnalysisSite, FunctionTaintScanState, TraceSinkSite,
     ValueSourceClassification, VariableSource, VerifiedFlowEndpoints, VerifiedTaintFlow,
@@ -18,6 +19,8 @@ pub(crate) struct DataFlowTracer {
     /// already-parsed import data instead of relying on fixture-name heuristics. BTreeMap keeps
     /// iteration deterministic per repo convention.
     import_map: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    /// AST-grounded variable provenance for Python files (text scan is the fallback).
+    ast_provenance: PythonAstProvenance,
 }
 
 impl DataFlowTracer {
@@ -26,6 +29,7 @@ impl DataFlowTracer {
             variable_source_cache: std::collections::HashMap::new(),
             verified_flows: Vec::new(),
             import_map: std::collections::BTreeMap::new(),
+            ast_provenance: PythonAstProvenance::default(),
         }
     }
 
@@ -347,7 +351,7 @@ impl DataFlowTracer {
     }
 
     fn compute_variable_source(
-        &self,
+        &mut self,
         file_path: &str,
         function_name: &str,
         variable_name: &str,
@@ -359,6 +363,15 @@ impl DataFlowTracer {
             file_path,
             function_name
         );
+
+        // AST-grounded provenance first (Python). Any shape the resolver does not
+        // model yields `None`, so the text path below keeps handling it exactly as
+        // before — other languages always take the text path.
+        if let Some(source) =
+            self.ast_variable_source(file_path, function_name, variable_name, rule_deduplicator)
+        {
+            return source;
+        }
 
         // Read the source code as text and do simple string analysis
         let Ok(source_text) = std::fs::read_to_string(file_path) else {
@@ -392,6 +405,67 @@ impl DataFlowTracer {
             variable_name
         );
         VariableSource::FunctionParameter { parameter_index: 0 }
+    }
+
+    /// Resolve a variable's provenance from the Python AST. `None` means the
+    /// resolver does not cover this file/function/variable and the caller must
+    /// fall back to the text path.
+    fn ast_variable_source(
+        &mut self,
+        file_path: &str,
+        function_name: &str,
+        variable_name: &str,
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<VariableSource> {
+        match self.ast_provenance.resolve_variable(file_path, function_name, variable_name)? {
+            AstResolution::Parameter { index } => {
+                log::debug!(
+                    "[COMPUTE_VARIABLE_SOURCE] AST: '{}' is parameter {} of {}",
+                    variable_name,
+                    index,
+                    function_name
+                );
+                Some(VariableSource::FunctionParameter { parameter_index: index })
+            }
+            AstResolution::Assignments(assignments) => {
+                self.classify_ast_assignments(&assignments, rule_deduplicator)
+            }
+        }
+    }
+
+    /// Classify AST assignment facts for one variable. Any assignment whose RHS
+    /// classifies as tainted wins: the variable received attacker-controlled
+    /// data at that line regardless of other writes (this is what lets
+    /// `x += input()` after a safe initializer surface). Otherwise the first
+    /// plain assignment provides provenance, mirroring the text path's
+    /// first-assignment semantics; augmented writes alone are inconclusive.
+    fn classify_ast_assignments(
+        &self,
+        assignments: &[AssignmentFact],
+        rule_deduplicator: &TaintRuleDeduplicator,
+    ) -> Option<VariableSource> {
+        for fact in assignments {
+            if let ValueSourceClassification::Tainted(pattern) =
+                self.classify_value_source(&fact.rhs, rule_deduplicator)
+            {
+                log::debug!(
+                    "[COMPUTE_VARIABLE_SOURCE] AST: tainted assignment '{}' at line {}",
+                    fact.rhs,
+                    fact.line
+                );
+                return Some(VariableSource::DirectTaintSource { pattern, line: fact.line });
+            }
+        }
+
+        let first = assignments.iter().find(|fact| !fact.augmented)?;
+        if first.literal_collection {
+            log::debug!("[COMPUTE_VARIABLE_SOURCE] AST: literal collection at line {}", first.line);
+            return Some(VariableSource::KnownSafe {
+                reason: "value drawn from a literal collection".to_string(),
+                line: first.line,
+            });
+        }
+        Some(self.classify_assignment_rhs(&first.rhs, first.line, rule_deduplicator))
     }
 
     /// Classify an expression that reads an environment variable: user-controlled keys are
