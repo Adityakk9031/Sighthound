@@ -50,6 +50,11 @@ struct FunctionFacts {
 struct FileFacts {
     /// First definition in document order wins, matching the text path.
     functions: std::collections::BTreeMap<String, FunctionFacts>,
+    /// Bare names defined more than once in the file (e.g. `run` on two
+    /// classes). The caller resolves a variable by the sink's *bare* function
+    /// name, so for such names we cannot know which definition is meant and
+    /// refuse to guess — see [`PythonAstProvenance::resolve_variable`].
+    ambiguous: std::collections::BTreeSet<String>,
 }
 
 /// Per-file cache of extracted Python function facts. `None` entries record
@@ -73,7 +78,15 @@ impl PythonAstProvenance {
         if !has_python_extension(file_path) {
             return None;
         }
-        let function = self.file_facts(file_path)?.functions.get(function_name)?;
+        let facts = self.file_facts(file_path)?;
+        // The sink gives us only a bare function name. If that name is defined
+        // more than once (e.g. `run` on two different classes), resolving it
+        // could attribute one definition's assignments to another, so we bail
+        // out and let the caller fall back rather than risk a wrong answer.
+        if facts.ambiguous.contains(function_name) {
+            return None;
+        }
+        let function = facts.functions.get(function_name)?;
 
         let assignments: Vec<AssignmentFact> = function
             .assignments
@@ -143,23 +156,26 @@ fn parse_file_facts(file_path: &str) -> Option<FileFacts> {
     let tree = parser.parse(&source).ok()?;
 
     let mut functions = std::collections::BTreeMap::new();
-    collect_functions(tree.root_node(), &source, &mut functions);
-    Some(FileFacts { functions })
+    let mut ambiguous = std::collections::BTreeSet::new();
+    collect_functions(tree.root_node(), &source, &mut functions, &mut ambiguous);
+    Some(FileFacts { functions, ambiguous })
 }
 
 /// Preorder walk recording every `def` (sync or async, top-level, nested, or
-/// method) by name; the first definition in document order wins.
+/// method) by name; the first definition in document order wins, and any name
+/// seen more than once is recorded as ambiguous.
 fn collect_functions(
     node: Node,
     source: &[u8],
     functions: &mut std::collections::BTreeMap<String, FunctionFacts>,
+    ambiguous: &mut std::collections::BTreeSet<String>,
 ) {
     if node.kind() == "function_definition" {
-        record_function(node, source, functions);
+        record_function(node, source, functions, ambiguous);
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_functions(child, source, functions);
+        collect_functions(child, source, functions, ambiguous);
     }
 }
 
@@ -167,10 +183,12 @@ fn record_function(
     node: Node,
     source: &[u8],
     functions: &mut std::collections::BTreeMap<String, FunctionFacts>,
+    ambiguous: &mut std::collections::BTreeSet<String>,
 ) {
     let Some(name_node) = node.child_by_field_name("name") else { return };
     let name = get_node_text_slice(&name_node, source).to_string();
     if functions.contains_key(&name) {
+        ambiguous.insert(name);
         return;
     }
 
@@ -258,7 +276,19 @@ fn record_for_targets(node: Node, source: &[u8], out: &mut Vec<AssignmentFact>) 
     let Some(iterable) = node.child_by_field_name("right") else { return };
     // The loop variable's provenance is the iterable: tainted iterables yield
     // tainted elements, literal collections yield developer-controlled ones.
-    push_target_facts(node, &[left], iterable, false, source, out);
+    // Positional pairing must NOT apply here — `for a, b in x, y:` iterates the
+    // tuple `(x, y)` and unpacks EACH element into `(a, b)`, so every target
+    // can receive values from every element; each keeps the whole iterable.
+    let line = node.start_position().row + 1;
+    for name in target_identifiers(left, source) {
+        out.push(AssignmentFact {
+            target: name,
+            rhs: normalized_text(iterable, source),
+            line,
+            augmented: false,
+            literal_collection: is_literal_collection(iterable),
+        });
+    }
 }
 
 fn push_target_facts(
@@ -270,18 +300,77 @@ fn push_target_facts(
     out: &mut Vec<AssignmentFact>,
 ) {
     let line = statement.start_position().row + 1;
-    let rhs = normalized_text(value, source);
-    let literal_collection = is_literal_collection(value);
     for target in targets {
-        for name in target_identifiers(*target, source) {
+        // Each (name, value_node) pair carries the *specific* value that reaches
+        // that name: for tuple unpacking this is the positionally-matched element,
+        // not the whole right-hand side, so a safe sibling can't inherit a
+        // tainted element's value.
+        for (name, value_node) in target_value_pairs(*target, value, source) {
             out.push(AssignmentFact {
                 target: name,
-                rhs: rhs.clone(),
+                rhs: normalized_text(value_node, source),
                 line,
                 augmented,
-                literal_collection,
+                literal_collection: is_literal_collection(value_node),
             });
         }
+    }
+}
+
+/// Map an assignment target to the value node(s) that actually reach it.
+///
+/// For `a, b = x, y` this pairs positionally (`a`←`x`, `b`←`y`). Positional
+/// pairing applies only when both sides are sequences of equal length and every
+/// target element is a plain identifier; any other shape (starred target,
+/// nesting, subscript element, a non-sequence RHS such as `a, b = f()`, or an
+/// arity mismatch) conservatively falls back to attributing the whole value to
+/// each identifier target — never dropping taint, only avoiding cross-element
+/// bleed.
+fn target_value_pairs<'a>(
+    target: Node<'a>,
+    value: Node<'a>,
+    source: &[u8],
+) -> Vec<(String, Node<'a>)> {
+    if matches!(target.kind(), "pattern_list" | "tuple_pattern") {
+        if let Some(pairs) = positional_pairs(target, value, source) {
+            return pairs;
+        }
+    }
+    target_identifiers(target, source).into_iter().map(|name| (name, value)).collect()
+}
+
+fn positional_pairs<'a>(
+    target: Node<'a>,
+    value: Node<'a>,
+    source: &[u8],
+) -> Option<Vec<(String, Node<'a>)>> {
+    let targets = sequence_elements(target)?;
+    let values = sequence_elements(value)?;
+    if targets.len() != values.len() {
+        return None;
+    }
+    let mut pairs = Vec::with_capacity(targets.len());
+    for (t, v) in targets.iter().zip(values.iter()) {
+        // Only plain identifiers pair cleanly; a starred/nested/subscript element
+        // means we cannot line values up one-to-one, so give up on pairing and
+        // let the caller fall back to whole-value attribution.
+        if t.kind() != "identifier" {
+            return None;
+        }
+        pairs.push((get_node_text_slice(t, source).to_string(), *v));
+    }
+    Some(pairs)
+}
+
+/// Named elements of a sequence node on either side of an assignment: a target
+/// list/tuple pattern, or a value tuple / bare `a, b` expression list.
+fn sequence_elements(node: Node) -> Option<Vec<Node>> {
+    match node.kind() {
+        "pattern_list" | "tuple_pattern" | "tuple" | "expression_list" => {
+            let mut cursor = node.walk();
+            Some(node.named_children(&mut cursor).filter(|c| c.kind() != "comment").collect())
+        }
+        _ => None,
     }
 }
 
@@ -447,8 +536,68 @@ mod tests {
         let chained = assignments(provenance.resolve_variable(&path, "run", "b").unwrap());
         assert_eq!(chained[0].rhs, "input()");
 
+        // Tuple unpacking pairs positionally: `x` gets `input()`, not the whole RHS.
         let tuple = assignments(provenance.resolve_variable(&path, "run", "x").unwrap());
-        assert_eq!(tuple[0].rhs, "input(), \"log\"");
+        assert_eq!(tuple[0].rhs, "input()");
+    }
+
+    #[test]
+    fn tuple_unpacking_pairs_each_target_with_its_own_value() {
+        let (_dir, path) = staged("def run():\n    cmd, log_name = input(), \"app.log\"\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        // The tainted element reaches `cmd`; the safe sibling `log_name` gets
+        // only its own constant and must not inherit `input()`.
+        let cmd = assignments(provenance.resolve_variable(&path, "run", "cmd").unwrap());
+        assert_eq!(cmd[0].rhs, "input()");
+        let log_name = assignments(provenance.resolve_variable(&path, "run", "log_name").unwrap());
+        assert_eq!(log_name[0].rhs, "\"app.log\"");
+    }
+
+    #[test]
+    fn tuple_unpacking_falls_back_conservatively_on_mismatch() {
+        // RHS is a single call (not a sequence) and arity differs: both targets
+        // conservatively receive the whole value so no taint is dropped.
+        let (_dir, path) = staged("def run():\n    a, b = fetch_pair()\n    c, d, e = x, y\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        let a = assignments(provenance.resolve_variable(&path, "run", "a").unwrap());
+        assert_eq!(a[0].rhs, "fetch_pair()");
+        let b = assignments(provenance.resolve_variable(&path, "run", "b").unwrap());
+        assert_eq!(b[0].rhs, "fetch_pair()");
+        let c = assignments(provenance.resolve_variable(&path, "run", "c").unwrap());
+        assert_eq!(c[0].rhs, "x, y");
+    }
+
+    #[test]
+    fn for_loop_targets_keep_the_whole_iterable() {
+        // `for a, b in x, y:` iterates the tuple (x, y), unpacking EACH element
+        // into (a, b) — `a` can receive values from both `x` and `y`, so
+        // positional pairing must not apply; each target keeps the whole
+        // iterable and taint from either element is preserved.
+        let (_dir, path) = staged("def run():\n    for a, b in x, input():\n        pass\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        let a = assignments(provenance.resolve_variable(&path, "run", "a").unwrap());
+        assert_eq!(a[0].rhs, "x, input()");
+        let b = assignments(provenance.resolve_variable(&path, "run", "b").unwrap());
+        assert_eq!(b[0].rhs, "x, input()");
+    }
+
+    #[test]
+    fn duplicate_function_names_are_ambiguous_and_yield_none() {
+        let (_dir, path) = staged(
+            "class Unsafe:\n    def run(self):\n        cmd = input()\nclass Safe:\n    def run(self):\n        cmd = \"uptime\"\n",
+        );
+        let mut provenance = PythonAstProvenance::default();
+
+        // `run` is defined twice; the resolver refuses to guess which one a bare
+        // `run` refers to, returning None so the caller falls back.
+        assert!(provenance.resolve_variable(&path, "run", "cmd").is_none());
+
+        // A uniquely-named function still resolves normally.
+        let (_dir2, path2) = staged("def only(self):\n    cmd = input()\n");
+        assert!(provenance.resolve_variable(&path2, "only", "cmd").is_some());
     }
 
     #[test]

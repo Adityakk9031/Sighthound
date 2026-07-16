@@ -145,6 +145,34 @@ def run_tuple():
 
 #[test]
 #[cfg(feature = "python")]
+fn tuple_safe_sibling_is_not_flagged() {
+    // The tainted element (`cmd`) and a safe sibling (`log_name`) are unpacked
+    // from the same statement. Using the SAFE sibling at the sink must not be
+    // flagged — positional pairing keeps `input()` from bleeding onto `log_name`.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "tuple_sibling.py",
+        r#"import os
+
+
+def run_tuple():
+    cmd, log_name = input(), "app.log"
+    os.system(log_name)
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_no_findings_in_range(
+        &findings,
+        1,
+        20,
+        "safe tuple sibling (log_name = literal) must not inherit the tainted element's value",
+    );
+}
+
+#[test]
+#[cfg(feature = "python")]
 fn docstring_text_does_not_taint_real_assignment() {
     let staging = stage_dir();
     write_staged_file(
