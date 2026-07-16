@@ -28,3 +28,9 @@ def keyword_percent_spaced(cursor, user_id):
 
 def keyword_fstring_interpolation(cursor, user_id):
     cursor.execute(query=f"SELECT * FROM users WHERE id = {user_id}")
+
+
+def percent_spaced_sql_identifier(cursor, user_id):
+    SQL_QUERY = "SELECT * FROM users WHERE id = %s"
+    cursor.execute(SQL_QUERY % user_id)
+

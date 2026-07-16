@@ -70,3 +70,8 @@ def get_user_keyword(cursor, username, password):
         vars=(username, password),
     )
     return cursor.fetchone()
+
+
+def safe_parameterized_with_fstring(cursor, uid):
+    cursor.execute("SELECT * FROM users WHERE id = %s", [f"user_{uid}"])
+

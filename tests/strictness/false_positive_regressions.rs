@@ -66,12 +66,12 @@ fn raw_sql_injection_formatting_variants_are_flagged() {
     let flagged_lines: std::collections::BTreeSet<_> =
         sql_findings.iter().map(|f| f.line).collect();
     let expected_lines: std::collections::BTreeSet<usize> =
-        vec![2, 6, 10, 14, 18, 22, 26, 30].into_iter().collect();
+        vec![2, 6, 10, 14, 18, 22, 26, 30, 35].into_iter().collect();
 
     assert_eq!(
         flagged_lines,
         expected_lines,
-        "Expected SQL injection findings on lines 2, 6, 10, 14, 18, 22, 26, and 30. Got: {:?}",
+        "Expected SQL injection findings on lines 2, 6, 10, 14, 18, 22, 26, 30, and 35. Got: {:?}",
         sql_findings.iter().map(|f| (f.line, f.snippet.as_str())).collect::<Vec<_>>()
     );
 }
