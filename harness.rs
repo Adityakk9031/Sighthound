@@ -1119,7 +1119,8 @@ fi
 /// Write `path` with `content` only if it does not already exist. Returns true
 /// when it created the file. Never clobbers an existing file — preserves any
 /// local customization; `check_stop_hook_present` then reports the result.
-fn write_if_missing(path: &Path, content: &str, _executable: bool) -> bool {
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn write_if_missing(path: &Path, content: &str, executable: bool) -> bool {
     if path.exists() {
         return false;
     }
