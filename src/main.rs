@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
-use sighthound::scanner::core::{print_findings_csv, print_findings_json, print_findings_text};
+use sighthound::scanner::core::{
+    print_findings_csv, print_findings_json, print_findings_sarif, print_findings_text,
+};
 use sighthound::{
     run_auto_detection_scan, run_explicit_scan, run_taint_analysis,
     run_taint_analysis_with_verbosity, Cli, CommonUtils,
@@ -47,6 +49,17 @@ fn configure_thread_pool(cli: &Cli) -> Result<()> {
 fn validate_scan_flags(cli: &Cli) -> Result<()> {
     if cli.taint_analysis && cli.simple_analysis {
         return Err(anyhow::anyhow!("Cannot specify both --taint-analysis and --simple-analysis. Use one or neither (default: both modes)."));
+    }
+    if let Some(ref severity) = cli.fail_on_severity {
+        match severity.to_lowercase().as_str() {
+            "critical" | "high" | "medium" | "low" => {}
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Invalid severity level: '{}'. Choose from: critical, high, medium, low",
+                    severity
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -125,6 +138,7 @@ fn output_findings(
     match cli.output_format.as_str() {
         "json" => print_findings_json(findings)?,
         "csv" => print_findings_csv(findings)?,
+        "sarif" => print_findings_sarif(findings)?,
         _ => print_findings_text(findings, cli.verbose, cli.summary_only, duration),
     }
     Ok(())
@@ -151,7 +165,7 @@ fn main() -> Result<()> {
     let start_time = std::time::Instant::now();
 
     // Determine if we should show progress (suppress for structured output formats)
-    let show_progress = !matches!(cli.output_format.as_str(), "json" | "csv");
+    let show_progress = !matches!(cli.output_format.as_str(), "json" | "csv" | "sarif");
 
     // Validate CLI parameters
     validate_scan_flags(&cli)?;
@@ -172,7 +186,41 @@ fn main() -> Result<()> {
     let duration = start_time.elapsed();
     output_findings(&cli, &findings, duration)?;
 
+    // Check if we need to fail (exit 1) based on severity or findings count
+    let failure_reason = if cli.error_on_findings && !findings.is_empty() {
+        Some("findings found (--error-on-findings is set)".to_string())
+    } else if let Some(ref fail_severity) = cli.fail_on_severity {
+        let target_num = severity_to_num(fail_severity);
+        let has_offending_finding =
+            findings.iter().any(|f| severity_to_num(&f.severity) >= target_num);
+        if has_offending_finding {
+            Some(format!("findings at or above severity threshold ({})", fail_severity))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(reason) = failure_reason {
+        sighthound::ui::error_line(&format!("exiting non-zero: {}", reason));
+        use std::io::{self, Write};
+        let _ = io::stdout().flush();
+        let _ = io::stderr().flush();
+        std::process::exit(1);
+    }
+
     Ok(())
+}
+
+fn severity_to_num(severity: &str) -> u8 {
+    match severity.to_lowercase().as_str() {
+        "critical" => 4,
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
 }
 
 fn deduplicate_findings(findings: &mut Vec<sighthound::Finding>) {
