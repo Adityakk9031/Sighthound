@@ -176,12 +176,33 @@ const SUPPRESSION_PREFIXES: &[(&str, &str)] =
 
 type SuppressionCounts = BTreeMap<String, Vec<Vec<String>>>;
 
+fn is_inside_quoted_string(line: &str, target: usize) -> bool {
+    let mut quoted = false;
+    let mut escaped = false;
+    for byte in line[..target].bytes() {
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' && quoted {
+            escaped = true;
+        } else if byte == b'"' {
+            quoted = !quoted;
+        }
+    }
+    quoted
+}
+
 fn parse_line_for_suppressions(line: &str) -> Vec<(String, Vec<String>)> {
     let mut out = Vec::new();
     for (kind, prefix) in SUPPRESSION_PREFIXES {
-        let mut rest = line;
-        while let Some(idx) = rest.find(prefix) {
-            let after = &rest[idx + prefix.len()..];
+        let mut cursor = 0;
+        while let Some(relative_idx) = line[cursor..].find(prefix) {
+            let idx = cursor + relative_idx;
+            let after_start = idx + prefix.len();
+            if is_inside_quoted_string(line, idx) {
+                cursor = after_start;
+                continue;
+            }
+            let after = &line[after_start..];
             let Some(end) = after.find(')') else { break };
             let rules: Vec<String> = after[..end]
                 .split(',')
@@ -189,7 +210,7 @@ fn parse_line_for_suppressions(line: &str) -> Vec<(String, Vec<String>)> {
                 .filter(|s| !s.is_empty())
                 .collect();
             out.push(((*kind).to_string(), rules));
-            rest = &after[end + 1..];
+            cursor = after_start + end + 1;
         }
     }
     out
@@ -1254,6 +1275,12 @@ mod tests {
     #[test]
     fn plain_code_no_match() {
         assert!(parse_line_for_suppressions("let x = 1;").is_empty());
+    }
+
+    #[test]
+    fn allow_in_string_literal_no_match() {
+        let quoted = concat!("const EXAMPLE: &str = \"", "#[allow(dead_code)]", "\";");
+        assert!(parse_line_for_suppressions(quoted).is_empty());
     }
 
     #[test]
