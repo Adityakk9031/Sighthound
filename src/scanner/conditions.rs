@@ -24,7 +24,13 @@ pub fn check_single_condition(
 ) -> bool {
     match condition.condition_type.as_deref().unwrap_or("") {
         "has_argument" => check_has_argument_condition(node, source, condition, language_support),
-        "in_context" => check_in_context_condition(node, condition),
+        "in_context" => {
+            if condition.not_in.is_some() {
+                check_in_context_condition(node, condition)
+            } else {
+                evaluate_field_condition(node, source, condition)
+            }
+        }
         "has_parent" => check_has_parent_condition(node, condition),
         "not_literal" => check_not_literal_condition(node, condition, language_support),
         "has_ancestor" => check_has_ancestor_condition(node, condition),
@@ -32,7 +38,10 @@ pub fn check_single_condition(
             check_argument_not_sanitized_condition(node, source, condition, language_support)
         }
         "has_sibling_pattern" => check_has_sibling_pattern_condition(node, source, condition),
-        _ => false,
+        "ruby_unsafe_command_injection" => {
+            check_ruby_unsafe_command_injection(node, language_support)
+        }
+        _ => evaluate_field_condition(node, source, condition),
     }
 }
 
@@ -218,4 +227,89 @@ pub fn check_has_sibling_pattern_condition(
         }
     }
     false
+}
+
+/// Check if a Ruby call's arguments structure represents an unsafe command execution.
+/// A Ruby call (system, exec, etc.) is safe if it has more than one argument
+/// or if it has a single argument which is an array literal or a splatted array literal.
+/// Returns true if the call is UNSAFE (i.e. we should match/flag it).
+pub fn check_ruby_unsafe_command_injection(
+    node: &tree_sitter::Node,
+    language_support: &dyn LanguageSupport,
+) -> bool {
+    if language_support.name() != "ruby" {
+        return true;
+    }
+    if let Some(args_node) = language_support.get_arguments_node(node) {
+        let count = args_node.named_child_count();
+        if count > 1 {
+            return false; // Safe: multi-argument form bypassed the shell
+        }
+        if count == 1 {
+            if let Some(arg) = args_node.named_child(0) {
+                if arg.kind() == "array" {
+                    return false; // Safe: single array literal argument bypassed the shell
+                }
+                if arg.kind() == "splat_argument" {
+                    // Check if splatted argument is an array literal
+                    let mut has_array_child = false;
+                    for i in 0..arg.named_child_count() {
+                        if let Some(child) = arg.named_child(i as u32) {
+                            if child.kind() == "array" {
+                                has_array_child = true;
+                                break;
+                            }
+                        }
+                    }
+                    if has_array_child {
+                        return false; // Safe: splatted array literal bypassed the shell
+                    }
+                }
+            }
+        }
+    }
+    true // Unsafe: likely single-string command that will invoke the shell
+}
+
+/// Helper function to evaluate generic conditions based on field, operator, and value.
+pub fn evaluate_field_condition(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    condition: &Condition,
+) -> bool {
+    let node_text = get_node_text(node, source);
+    match condition.field.as_str() {
+        "pattern" => match condition.operator.as_str() {
+            "not_contains" => !node_text.contains(&condition.value),
+            "contains" => node_text.contains(&condition.value),
+            _ => false,
+        },
+        "context" => {
+            let context_text = get_context_text(node, source);
+            match condition.operator.as_str() {
+                "not_contains" => !context_text.contains(&condition.value),
+                "contains" => context_text.contains(&condition.value),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Helper function to extract context text (surrounding function or method node) for a given AST node.
+pub fn get_context_text(node: &tree_sitter::Node, source: &[u8]) -> String {
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        let kind = parent.kind();
+        if kind.contains("function") || kind.contains("method") || kind.contains("arrow") {
+            return get_node_text(&parent, source);
+        }
+        current = parent;
+    }
+    // Fallback to the parent node or the node itself
+    if let Some(parent) = node.parent() {
+        get_node_text(&parent, source)
+    } else {
+        get_node_text(node, source)
+    }
 }

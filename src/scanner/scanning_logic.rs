@@ -1006,6 +1006,16 @@ impl ScanningLogic {
         if TaintExpressionUtils::expression_has_sanitizer(rule, site.node_text) {
             return;
         }
+        if let Some(conditions) = &rule.conditions {
+            if !crate::scanner::conditions::check_ast_conditions(
+                conditions,
+                node,
+                ctx.source,
+                ctx.language_support,
+            ) {
+                return;
+            }
+        }
         if flow_tracker.is_flow_processed(site.line, &source_pattern, site.sink_pattern) {
             return;
         }
@@ -1041,6 +1051,7 @@ impl ScanningLogic {
     /// For each already-tainted variable used in the sink, record a finding when there's a
     /// legitimate source-sink rule for it and it isn't sanitized or already processed.
     fn collect_tainted_variable_sink_findings(
+        node: &tree_sitter::Node,
         site: &SinkSite,
         ctx: &TaintScanContext,
         used_variables: &[String],
@@ -1065,6 +1076,16 @@ impl ScanningLogic {
                     site.node_text
                 );
                 continue; // Skip this finding as it's sanitized
+            }
+            if let Some(conditions) = &rule.conditions {
+                if !crate::scanner::conditions::check_ast_conditions(
+                    conditions,
+                    node,
+                    ctx.source,
+                    ctx.language_support,
+                ) {
+                    continue;
+                }
             }
             if flow_tracker.is_flow_processed(
                 site.line,
@@ -1153,6 +1174,7 @@ impl ScanningLogic {
 
         // Check if ANY of these variables are tainted
         Self::collect_tainted_variable_sink_findings(
+            node,
             &site,
             ctx,
             &used_variables,
