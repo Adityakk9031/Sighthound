@@ -10,7 +10,10 @@
 //! The resolver reports structural facts only — classification of an RHS as
 //! safe or tainted stays in [`crate::scanner::dataflow`]. Any construct it
 //! does not model yields `None`, and callers fall back to the existing text
-//! path, so unsupported shapes keep today's behavior.
+//! path, so unsupported shapes keep today's behavior. The one exception is
+//! [`AstResolution::Ambiguous`]: when the resolver positively knows a bare
+//! function name is defined more than once, falling back would guess, so
+//! callers must treat the variable as unknown instead.
 
 use crate::parser::{get_node_text_slice, LanguageParser};
 use tree_sitter::Node;
@@ -29,6 +32,24 @@ pub(crate) struct AssignmentFact {
     /// The RHS is a collection literal containing only literals, so every
     /// value the target can take is developer-controlled.
     pub(crate) literal_collection: bool,
+    /// The RHS is a literal expression or a literal collection: the assigned
+    /// value itself is developer-controlled (though the variable may still
+    /// receive other values through other assignments).
+    pub(crate) literal_value: bool,
+    /// Inclusive 1-based line span of the outermost `for`/`while` loop
+    /// enclosing the assignment, if any. A loop carries the assigned value
+    /// back to lines above the assignment on the next iteration.
+    pub(crate) enclosing_loop: Option<(usize, usize)>,
+}
+
+impl AssignmentFact {
+    /// Whether this assignment can flow into a use at `line`: it appears at or
+    /// before that line, or an enclosing loop's next iteration carries the
+    /// value back to an earlier line within the loop.
+    pub(crate) fn reaches(&self, line: usize) -> bool {
+        self.line <= line
+            || self.enclosing_loop.is_some_and(|(start, end)| line >= start && line <= end)
+    }
 }
 
 /// Outcome of resolving one variable within one function.
@@ -38,6 +59,11 @@ pub(crate) enum AstResolution {
     Assignments(Vec<AssignmentFact>),
     /// The variable is the function's parameter at `index`.
     Parameter { index: usize },
+    /// The bare function name is defined more than once in the file, so any
+    /// resolution would be a guess. Callers must treat the variable as
+    /// unknown — falling back to a text scan would just guess the first
+    /// definition and reintroduce cross-definition mixing.
+    Ambiguous,
 }
 
 #[derive(Debug, Clone)]
@@ -65,15 +91,32 @@ pub(crate) struct PythonAstProvenance {
 }
 
 impl PythonAstProvenance {
-    /// Resolve `variable_name` within `function_name` of a Python file.
-    /// Returns `None` for non-Python files, unparseable files, unknown
-    /// functions, or variables the model does not cover — callers should then
-    /// fall back to their existing resolution.
+    /// Resolve `variable_name` within `function_name` of a Python file with no
+    /// usage-line filtering — every recorded assignment is reported. Returns
+    /// `None` for non-Python files, unparseable files, unknown functions, or
+    /// variables the model does not cover.
+    #[cfg(test)]
     pub(crate) fn resolve_variable(
         &mut self,
         file_path: &str,
         function_name: &str,
         variable_name: &str,
+    ) -> Option<AstResolution> {
+        self.resolve_variable_reaching(file_path, function_name, variable_name, None)
+    }
+
+    /// Like [`Self::resolve_variable`], but when `usage_line` is given, only
+    /// assignments that can reach that line are reported (see
+    /// [`AssignmentFact::reaches`]): an assignment below the usage cannot be
+    /// the value the usage observes unless a loop carries it back around. When
+    /// no assignment reaches the usage, a matching parameter wins — the
+    /// parameter is exactly what the variable still holds at that point.
+    pub(crate) fn resolve_variable_reaching(
+        &mut self,
+        file_path: &str,
+        function_name: &str,
+        variable_name: &str,
+        usage_line: Option<usize>,
     ) -> Option<AstResolution> {
         if !has_python_extension(file_path) {
             return None;
@@ -81,10 +124,11 @@ impl PythonAstProvenance {
         let facts = self.file_facts(file_path)?;
         // The sink gives us only a bare function name. If that name is defined
         // more than once (e.g. `run` on two different classes), resolving it
-        // could attribute one definition's assignments to another, so we bail
-        // out and let the caller fall back rather than risk a wrong answer.
+        // could attribute one definition's assignments to another. Report that
+        // explicitly instead of deferring: a text fallback keyed on the first
+        // matching definition would guess exactly as wrongly.
         if facts.ambiguous.contains(function_name) {
-            return None;
+            return Some(AstResolution::Ambiguous);
         }
         let function = facts.functions.get(function_name)?;
 
@@ -92,6 +136,7 @@ impl PythonAstProvenance {
             .assignments
             .iter()
             .filter(|fact| fact.target == variable_name)
+            .filter(|fact| usage_line.is_none_or(|line| fact.reaches(line)))
             .cloned()
             .collect();
         if !assignments.is_empty() {
@@ -280,6 +325,7 @@ fn record_for_targets(node: Node, source: &[u8], out: &mut Vec<AssignmentFact>) 
     // tuple `(x, y)` and unpacks EACH element into `(a, b)`, so every target
     // can receive values from every element; each keeps the whole iterable.
     let line = node.start_position().row + 1;
+    let enclosing_loop = outermost_loop_span(node);
     for name in target_identifiers(left, source) {
         out.push(AssignmentFact {
             target: name,
@@ -287,8 +333,30 @@ fn record_for_targets(node: Node, source: &[u8], out: &mut Vec<AssignmentFact>) 
             line,
             augmented: false,
             literal_collection: is_literal_collection(iterable),
+            literal_value: is_literal_expr(iterable) || is_literal_collection(iterable),
+            enclosing_loop,
         });
     }
+}
+
+/// Inclusive 1-based line span of the outermost `for`/`while` loop enclosing
+/// `node` within its function (the node itself counts — a `for` statement is
+/// its own loop). `None` for straight-line code: there, an assignment can only
+/// flow to lines at or below it.
+fn outermost_loop_span(node: Node) -> Option<(usize, usize)> {
+    let mut span = None;
+    let mut current = Some(node);
+    while let Some(n) = current {
+        match n.kind() {
+            "function_definition" | "lambda" | "module" => break,
+            "for_statement" | "while_statement" => {
+                span = Some((n.start_position().row + 1, n.end_position().row + 1));
+            }
+            _ => {}
+        }
+        current = n.parent();
+    }
+    span
 }
 
 fn push_target_facts(
@@ -300,6 +368,7 @@ fn push_target_facts(
     out: &mut Vec<AssignmentFact>,
 ) {
     let line = statement.start_position().row + 1;
+    let enclosing_loop = outermost_loop_span(statement);
     for target in targets {
         // Each (name, value_node) pair carries the *specific* value that reaches
         // that name: for tuple unpacking this is the positionally-matched element,
@@ -312,6 +381,9 @@ fn push_target_facts(
                 line,
                 augmented,
                 literal_collection: is_literal_collection(value_node),
+                literal_value: is_literal_expr(value_node)
+                    || is_literal_collection(value_node),
+                enclosing_loop,
             });
         }
     }
@@ -319,13 +391,15 @@ fn push_target_facts(
 
 /// Map an assignment target to the value node(s) that actually reach it.
 ///
-/// For `a, b = x, y` this pairs positionally (`a`←`x`, `b`←`y`). Positional
-/// pairing applies only when both sides are sequences of equal length and every
-/// target element is a plain identifier; any other shape (starred target,
-/// nesting, subscript element, a non-sequence RHS such as `a, b = f()`, or an
-/// arity mismatch) conservatively falls back to attributing the whole value to
-/// each identifier target — never dropping taint, only avoiding cross-element
-/// bleed.
+/// For `a, b = x, y` this pairs positionally (`a`←`x`, `b`←`y`), and a single
+/// starred target pairs around the star (`head, *tail = x, y, z` gives
+/// `head`←`x` and `tail`←each of `y`, `z`). Pairing applies only when both
+/// sides are sequences, non-starred targets are plain identifiers, and the
+/// value side has no splat of unknown arity; any other shape (nesting,
+/// subscript element, a non-sequence RHS such as `a, b = f()`, or an arity
+/// mismatch) conservatively falls back to attributing the whole value to
+/// every name in the target — including names inside starred or nested
+/// patterns — never dropping taint, only avoiding cross-element bleed.
 fn target_value_pairs<'a>(
     target: Node<'a>,
     value: Node<'a>,
@@ -346,18 +420,74 @@ fn positional_pairs<'a>(
 ) -> Option<Vec<(String, Node<'a>)>> {
     let targets = sequence_elements(target)?;
     let values = sequence_elements(value)?;
-    if targets.len() != values.len() {
+    // A splat on the VALUE side (`a, b = *x, y`) expands to an unknown number
+    // of elements, so no positional pairing is possible.
+    if values.iter().any(|v| matches!(v.kind(), "list_splat" | "list_splat_pattern")) {
         return None;
     }
-    let mut pairs = Vec::with_capacity(targets.len());
-    for (t, v) in targets.iter().zip(values.iter()) {
-        // Only plain identifiers pair cleanly; a starred/nested/subscript element
-        // means we cannot line values up one-to-one, so give up on pairing and
-        // let the caller fall back to whole-value attribution.
+
+    let star = targets.iter().position(|t| t.kind() == "list_splat_pattern");
+    match star {
+        None => {
+            if targets.len() != values.len() {
+                return None;
+            }
+            let mut pairs = Vec::with_capacity(targets.len());
+            for (t, v) in targets.iter().zip(values.iter()) {
+                // Only plain identifiers pair cleanly; a nested/subscript element
+                // means we cannot line values up one-to-one, so give up on pairing
+                // and let the caller fall back to whole-value attribution.
+                if t.kind() != "identifier" {
+                    return None;
+                }
+                pairs.push((get_node_text_slice(t, source).to_string(), *v));
+            }
+            Some(pairs)
+        }
+        Some(star) => starred_pairs(&targets, &values, star, source),
+    }
+}
+
+/// Positional pairing for a target list with one starred element, mirroring
+/// Python's unpacking: targets before the star take values from the left,
+/// targets after it take values from the right, and the starred name absorbs
+/// every value in between (one fact per absorbed value, so taint in any of
+/// them is preserved).
+fn starred_pairs<'a>(
+    targets: &[Node<'a>],
+    values: &[Node<'a>],
+    star: usize,
+    source: &[u8],
+) -> Option<Vec<(String, Node<'a>)>> {
+    // A second star is a syntax error in Python; bail out to the fallback.
+    if targets.iter().skip(star + 1).any(|t| t.kind() == "list_splat_pattern") {
+        return None;
+    }
+    // Every fixed target must have a value (the star itself may take zero).
+    if values.len() < targets.len() - 1 {
+        return None;
+    }
+    let star_name = {
+        let mut cursor = targets[star].walk();
+        let id = targets[star].named_children(&mut cursor).find(|c| c.kind() == "identifier")?;
+        get_node_text_slice(&id, source).to_string()
+    };
+    let after = targets.len() - star - 1;
+    let mut pairs = Vec::with_capacity(values.len());
+    for (t, v) in targets[..star].iter().zip(values.iter()) {
         if t.kind() != "identifier" {
             return None;
         }
         pairs.push((get_node_text_slice(t, source).to_string(), *v));
+    }
+    for (t, v) in targets[star + 1..].iter().zip(values[values.len() - after..].iter()) {
+        if t.kind() != "identifier" {
+            return None;
+        }
+        pairs.push((get_node_text_slice(t, source).to_string(), *v));
+    }
+    for v in &values[star..values.len() - after] {
+        pairs.push((star_name.clone(), *v));
     }
     Some(pairs)
 }
@@ -378,16 +508,16 @@ fn sequence_elements(node: Node) -> Option<Vec<Node>> {
 /// (`d[key] = v`) attributes the value to the container `d` — the container
 /// received tainted data, matching the coverage the text scan provided
 /// (per-key precision is future work :p ). Attribute targets (`obj.field`) are not
-/// yet modeled. Tuple targets conservatively attribute the whole RHS to each
-/// plain-identifier element.
+/// yet modeled. Tuple targets conservatively attribute the whole RHS to every
+/// name they bind, descending into starred (`*rest`) and nested patterns so a
+/// name is never silently dropped.
 fn target_identifiers(node: Node, source: &[u8]) -> Vec<String> {
     match node.kind() {
         "identifier" => vec![get_node_text_slice(&node, source).to_string()],
-        "pattern_list" | "tuple_pattern" => {
+        "pattern_list" | "tuple_pattern" | "list_pattern" | "list_splat_pattern" => {
             let mut cursor = node.walk();
             node.named_children(&mut cursor)
-                .filter(|child| child.kind() == "identifier")
-                .map(|child| get_node_text_slice(&child, source).to_string())
+                .flat_map(|child| target_identifiers(child, source))
                 .collect()
         }
         "subscript" => node
@@ -570,6 +700,124 @@ mod tests {
     }
 
     #[test]
+    fn starred_targets_pair_around_the_star() {
+        let (_dir, path) = staged(
+            "def run():\n    head, *tail = \"safe\", input()\n    first, *mid, last = a, b, c, d\n",
+        );
+        let mut provenance = PythonAstProvenance::default();
+
+        // `head` takes only its own element; the starred `tail` absorbs the
+        // rest, one fact per absorbed value, so `input()` reaches `tail` and
+        // never bleeds onto `head`.
+        let head = assignments(provenance.resolve_variable(&path, "run", "head").unwrap());
+        assert_eq!(head[0].rhs, "\"safe\"");
+        let tail = assignments(provenance.resolve_variable(&path, "run", "tail").unwrap());
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].rhs, "input()");
+
+        // Fixed targets after the star pair from the right; the star takes the
+        // middle values.
+        let first = assignments(provenance.resolve_variable(&path, "run", "first").unwrap());
+        assert_eq!(first[0].rhs, "a");
+        let last = assignments(provenance.resolve_variable(&path, "run", "last").unwrap());
+        assert_eq!(last[0].rhs, "d");
+        let mid = assignments(provenance.resolve_variable(&path, "run", "mid").unwrap());
+        assert_eq!(mid.iter().map(|f| f.rhs.as_str()).collect::<Vec<_>>(), ["b", "c"]);
+    }
+
+    #[test]
+    fn starred_fallback_never_drops_names() {
+        // A non-sequence RHS defeats pairing; the whole value must then be
+        // attributed to EVERY name in the target — including the starred one,
+        // which a plain-identifier filter would silently drop.
+        let (_dir, path) = staged("def run():\n    head, *tail = fetch_pair()\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        let head = assignments(provenance.resolve_variable(&path, "run", "head").unwrap());
+        assert_eq!(head[0].rhs, "fetch_pair()");
+        let tail = assignments(provenance.resolve_variable(&path, "run", "tail").unwrap());
+        assert_eq!(tail[0].rhs, "fetch_pair()");
+    }
+
+    #[test]
+    fn value_side_splat_defeats_pairing() {
+        // `*x` on the value side expands to an unknown number of elements, so
+        // positions cannot be lined up; both targets keep the whole RHS.
+        let (_dir, path) = staged("def run():\n    a, b = *x, y\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        let a = assignments(provenance.resolve_variable(&path, "run", "a").unwrap());
+        assert_eq!(a[0].rhs, "*x, y");
+        let b = assignments(provenance.resolve_variable(&path, "run", "b").unwrap());
+        assert_eq!(b[0].rhs, "*x, y");
+    }
+
+    #[test]
+    fn assignments_below_the_usage_line_do_not_reach() {
+        let (_dir, path) =
+            staged("def run():\n    cmd = \"safe\"\n    os.system(cmd)\n    cmd = input()\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        // At the sink on line 3 only the line-2 initializer has happened; the
+        // later `cmd = input()` cannot be the value the sink observes.
+        let at_sink = assignments(
+            provenance.resolve_variable_reaching(&path, "run", "cmd", Some(3)).unwrap(),
+        );
+        assert_eq!(at_sink.len(), 1);
+        assert_eq!(at_sink[0].rhs, "\"safe\"");
+
+        // A use below the tainted assignment sees both facts.
+        let below = assignments(
+            provenance.resolve_variable_reaching(&path, "run", "cmd", Some(4)).unwrap(),
+        );
+        assert_eq!(below.len(), 2);
+    }
+
+    #[test]
+    fn loop_carried_assignment_reaches_earlier_lines() {
+        // The next iteration of the `while` carries line 4's value back to the
+        // line-3 sink, so straight-line ordering must not filter it out.
+        let (_dir, path) = staged(
+            "def run():\n    while True:\n        os.system(cmd)\n        cmd = input()\n",
+        );
+        let mut provenance = PythonAstProvenance::default();
+
+        let at_sink = assignments(
+            provenance.resolve_variable_reaching(&path, "run", "cmd", Some(3)).unwrap(),
+        );
+        assert_eq!(at_sink.len(), 1);
+        assert_eq!(at_sink[0].rhs, "input()");
+    }
+
+    #[test]
+    fn parameter_wins_when_no_assignment_reaches_the_usage() {
+        // At line 2 `cmd` still holds the parameter; the line-3 assignment has
+        // not happened yet and no loop carries it back.
+        let (_dir, path) =
+            staged("def run(cmd):\n    os.system(cmd)\n    cmd = input()\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        assert!(matches!(
+            provenance.resolve_variable_reaching(&path, "run", "cmd", Some(2)),
+            Some(AstResolution::Parameter { index: 0 })
+        ));
+    }
+
+    #[test]
+    fn literal_value_distinguishes_literal_and_variable_writes() {
+        let (_dir, path) = staged(
+            "def run():\n    cfg = [\"ls\", \"pwd\"]\n    cfg[0] = \"uptime\"\n    cfg[1] = user_supplied\n",
+        );
+        let mut provenance = PythonAstProvenance::default();
+
+        let cfg = assignments(provenance.resolve_variable(&path, "run", "cfg").unwrap());
+        assert_eq!(cfg.len(), 3);
+        assert!(cfg[0].literal_collection && cfg[0].literal_value);
+        assert!(cfg[1].literal_value, "a literal subscript write stays developer-controlled");
+        assert!(!cfg[2].literal_value, "a variable subscript write is not developer-controlled");
+    }
+
+    #[test]
     fn for_loop_targets_keep_the_whole_iterable() {
         // `for a, b in x, y:` iterates the tuple (x, y), unpacking EACH element
         // into (a, b) — `a` can receive values from both `x` and `y`, so
@@ -585,19 +833,26 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_function_names_are_ambiguous_and_yield_none() {
+    fn duplicate_function_names_resolve_as_ambiguous() {
         let (_dir, path) = staged(
             "class Unsafe:\n    def run(self):\n        cmd = input()\nclass Safe:\n    def run(self):\n        cmd = \"uptime\"\n",
         );
         let mut provenance = PythonAstProvenance::default();
 
-        // `run` is defined twice; the resolver refuses to guess which one a bare
-        // `run` refers to, returning None so the caller falls back.
-        assert!(provenance.resolve_variable(&path, "run", "cmd").is_none());
+        // `run` is defined twice; the resolver reports Ambiguous explicitly so
+        // callers treat the variable as unknown instead of falling back to a
+        // text scan that would guess the first definition.
+        assert!(matches!(
+            provenance.resolve_variable(&path, "run", "cmd"),
+            Some(AstResolution::Ambiguous)
+        ));
 
         // A uniquely-named function still resolves normally.
         let (_dir2, path2) = staged("def only(self):\n    cmd = input()\n");
-        assert!(provenance.resolve_variable(&path2, "only", "cmd").is_some());
+        assert!(matches!(
+            provenance.resolve_variable(&path2, "only", "cmd"),
+            Some(AstResolution::Assignments(_))
+        ));
     }
 
     #[test]

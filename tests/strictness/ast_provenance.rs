@@ -255,10 +255,155 @@ def touch_flags():
     );
 }
 
+#[test]
+#[cfg(feature = "python")]
+fn starred_taint_element_reaches_star_target() {
+    // `head, *tail = "safe", input()` binds the tainted element to `tail`;
+    // using `tail` at the sink must be reported even though the star defeats
+    // one-to-one pairing.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "starred.py",
+        r#"import os
+
+
+def run_starred():
+    head, *tail = "safe", input("c: ")
+    os.system(" ".join(tail))
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_findings_in_range(
+        &findings,
+        4,
+        7,
+        1,
+        "starred assignment: the tainted element bound to *tail must reach os.system",
+    );
+}
+
+#[test]
+#[cfg(feature = "python")]
+fn starred_safe_prefix_is_not_flagged() {
+    // The fixed target before the star receives only its own constant; the
+    // tainted element belongs to `*tail` and must not bleed onto `head`.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "starred_safe.py",
+        r#"import os
+
+
+def run_starred():
+    head, *tail = "safe", input("c: ")
+    os.system(head)
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_no_findings_in_range(
+        &findings,
+        1,
+        20,
+        "safe fixed target before the star must not inherit the starred element's taint",
+    );
+}
+
+#[test]
+#[cfg(feature = "python")]
+fn loop_carried_taint_is_still_detected() {
+    // The tainted assignment sits below the sink, but the enclosing loop
+    // carries it back on the next iteration — reachability filtering must not
+    // suppress it.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "loop_carried.py",
+        r#"import os
+
+
+def run_loop():
+    cmd = "status"
+    while True:
+        os.system(cmd)
+        cmd = input("c: ")
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_findings_in_range(
+        &findings,
+        4,
+        9,
+        1,
+        "assignment below the sink inside the same loop must still be reported",
+    );
+}
+
 // Regression guards: these real injections are caught by the text-based engine;
 // the AST provenance path must not lose them. An empty-collection initializer
 // (`cfg = {}` / `parts = []`) followed by a tainted write must still reach the
 // sink.
+
+#[test]
+#[cfg(feature = "python")]
+fn attribute_assignment_taint_is_detected() {
+    // Attribute targets carry no structural facts, so the text tracker must
+    // keep covering them: dropping the fallback loses this real injection.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "attribute.py",
+        r#"import os
+
+
+class Runner:
+    def run(self):
+        self.cmd = input("c: ")
+        os.system(self.cmd)
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_findings_in_range(
+        &findings,
+        5,
+        8,
+        1,
+        "attribute assignment: self.cmd = input() -> os.system must be reported",
+    );
+}
+
+#[test]
+#[cfg(feature = "python")]
+fn subscript_overwrite_of_literal_collection_is_detected() {
+    // The literal initializer proves nothing once a later write replaces an
+    // element: `cfg` must not be classified definitely-safe.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "literal_overwrite.py",
+        r#"import os
+
+
+def run_overwrite():
+    cfg = ["ls", "pwd"]
+    cfg[0] = input("cmd: ")
+    os.system(cfg[0])
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_findings_in_range(
+        &findings,
+        4,
+        8,
+        1,
+        "tainted subscript write over a literal collection must still reach the sink",
+    );
+}
 
 #[test]
 #[cfg(feature = "python")]

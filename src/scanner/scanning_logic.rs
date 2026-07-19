@@ -985,6 +985,9 @@ impl ScanningLogic {
     /// while annotated, augmented, chained, tuple, multiline, and
     /// subscript-target assignments — which the text scan cannot parse — plus
     /// collection-mutating method calls (`x.append(source)`) are all covered.
+    /// Assignment nodes whose target shape yields no structural facts (e.g.
+    /// attribute targets like `self.cmd = ...`) fall back to the text tracker
+    /// so its coverage is never lost.
     fn track_python_assignment_source(
         node: &tree_sitter::Node,
         node_text: &str,
@@ -1024,6 +1027,17 @@ impl ScanningLogic {
             }
             _ => return,
         };
+
+        // A real assignment node whose target shape the AST extraction does not
+        // model (e.g. an attribute target: `self.cmd = input()`) must keep the
+        // text tracker's coverage — dropping it silently would lose taint the
+        // text scan used to record. Guarded to assignment nodes so plain
+        // expression statements (docstrings, string literals) still record
+        // nothing.
+        if facts.is_empty() && matches!(node.kind(), "assignment" | "augmented_assignment") {
+            Self::track_assignment_source(node_text, line, func_name, ctx, flow_tracker);
+            return;
+        }
 
         for fact in facts {
             Self::record_python_taint_if_source(

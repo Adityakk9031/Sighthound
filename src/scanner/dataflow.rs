@@ -10,8 +10,11 @@ use crate::scanner::taint_utils::{TaintExpressionUtils, TaintRuleDeduplicator};
 
 #[derive(Debug)]
 pub(crate) struct DataFlowTracer {
-    /// Cache of analyzed variable sources to avoid re-computation
-    variable_source_cache: std::collections::HashMap<(String, String, String), VariableSource>,
+    /// Cache of analyzed variable sources to avoid re-computation. Keyed by
+    /// (file, function, variable, sink line): provenance is sink-relative,
+    /// since only assignments that can reach the sink line count.
+    variable_source_cache:
+        std::collections::HashMap<(String, String, String, usize), VariableSource>,
     /// Verified taint flows that have been fully validated
     verified_flows: Vec<VerifiedTaintFlow>,
     /// Resolved imports parsed elsewhere: calling_file -> {imported_function -> source_file}.
@@ -114,11 +117,12 @@ impl DataFlowTracer {
             sink_function
         );
 
-        // Step 1: Determine how this variable gets its value
+        // Step 1: Determine how this variable gets its value at the sink line
         let variable_source = self.analyze_variable_source(
             sink_file,
             sink_function,
             sink_variable,
+            sink_line,
             rule_deduplicator,
         );
 
@@ -179,19 +183,31 @@ impl DataFlowTracer {
                     parameter_index,
                     rule_deduplicator,
                 ),
+
+            VariableSource::Unresolved { reason } => {
+                log::debug!("[DATA_FLOW_TRACER] Variable unresolvable: {}", reason);
+                AnalysisResult::Unknown { reason }
+            }
         }
     }
 
     /// Analyze how a variable gets its value (assignment, import, parameter, etc.)
+    /// as observed at `sink_line` — assignments below the sink that no loop
+    /// carries back cannot be the value the sink sees.
     fn analyze_variable_source(
         &mut self,
         file_path: &str,
         function_name: &str,
         variable_name: &str,
+        sink_line: usize,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> VariableSource {
-        let cache_key =
-            (file_path.to_string(), function_name.to_string(), variable_name.to_string());
+        let cache_key = (
+            file_path.to_string(),
+            function_name.to_string(),
+            variable_name.to_string(),
+            sink_line,
+        );
 
         // Check cache first
         if let Some(cached_source) = self.variable_source_cache.get(&cache_key) {
@@ -202,6 +218,7 @@ impl DataFlowTracer {
             file_path,
             function_name,
             variable_name,
+            sink_line,
             rule_deduplicator,
         );
         self.variable_source_cache.insert(cache_key, source.clone());
@@ -355,21 +372,29 @@ impl DataFlowTracer {
         file_path: &str,
         function_name: &str,
         variable_name: &str,
+        sink_line: usize,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> VariableSource {
         log::debug!(
-            "[COMPUTE_VARIABLE_SOURCE] Analyzing variable '{}' in {}::{}",
+            "[COMPUTE_VARIABLE_SOURCE] Analyzing variable '{}' in {}::{} at line {}",
             variable_name,
             file_path,
-            function_name
+            function_name,
+            sink_line
         );
 
         // AST-grounded provenance first (Python). Any shape the resolver does not
         // model yields `None`, so the text path below keeps handling it exactly as
-        // before — other languages always take the text path.
-        if let Some(source) =
-            self.ast_variable_source(file_path, function_name, variable_name, rule_deduplicator)
-        {
+        // before — other languages always take the text path. `Unresolved` is
+        // returned as-is: the resolver has positively determined that any further
+        // guessing (including the text path's) would be wrong.
+        if let Some(source) = self.ast_variable_source(
+            file_path,
+            function_name,
+            variable_name,
+            sink_line,
+            rule_deduplicator,
+        ) {
             return source;
         }
 
@@ -409,15 +434,23 @@ impl DataFlowTracer {
 
     /// Resolve a variable's provenance from the Python AST. `None` means the
     /// resolver does not cover this file/function/variable and the caller must
-    /// fall back to the text path.
+    /// fall back to the text path. Only assignments that can reach `sink_line`
+    /// are considered — an assignment below the sink that no loop carries back
+    /// cannot be the value the sink observes.
     fn ast_variable_source(
         &mut self,
         file_path: &str,
         function_name: &str,
         variable_name: &str,
+        sink_line: usize,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Option<VariableSource> {
-        match self.ast_provenance.resolve_variable(file_path, function_name, variable_name)? {
+        match self.ast_provenance.resolve_variable_reaching(
+            file_path,
+            function_name,
+            variable_name,
+            Some(sink_line),
+        )? {
             AstResolution::Parameter { index } => {
                 log::debug!(
                     "[COMPUTE_VARIABLE_SOURCE] AST: '{}' is parameter {} of {}",
@@ -430,15 +463,31 @@ impl DataFlowTracer {
             AstResolution::Assignments(assignments) => {
                 self.classify_ast_assignments(&assignments, rule_deduplicator)
             }
+            AstResolution::Ambiguous => {
+                log::debug!(
+                    "[COMPUTE_VARIABLE_SOURCE] AST: function '{}' is defined more than once; \
+                     refusing to resolve '{}' against a guessed definition",
+                    function_name,
+                    variable_name
+                );
+                Some(VariableSource::Unresolved {
+                    reason: format!(
+                        "function name '{}' is defined more than once in {}; \
+                         cannot attribute assignments to the sink's definition",
+                        function_name, file_path
+                    ),
+                })
+            }
         }
     }
 
-    /// Classify AST assignment facts for one variable. Any assignment whose RHS
-    /// classifies as tainted wins: the variable received attacker-controlled
-    /// data at that line regardless of other writes (this is what lets
-    /// `x += input()` after a safe initializer surface). Otherwise the first
-    /// plain assignment provides provenance, mirroring the text path's
-    /// first-assignment semantics; augmented writes alone are inconclusive.
+    /// Classify AST assignment facts for one variable (pre-filtered to those
+    /// that can reach the sink line). Any assignment whose RHS classifies as
+    /// tainted wins: the variable received attacker-controlled data at that
+    /// line regardless of other writes (this is what lets `x += input()` after
+    /// a safe initializer surface). Otherwise the first plain assignment
+    /// provides provenance, mirroring the text path's first-assignment
+    /// semantics; augmented writes alone are inconclusive.
     fn classify_ast_assignments(
         &self,
         assignments: &[AssignmentFact],
@@ -458,7 +507,11 @@ impl DataFlowTracer {
         }
 
         let first = assignments.iter().find(|fact| !fact.augmented)?;
-        if first.literal_collection {
+        // A literal collection proves safety only when EVERY reaching write is
+        // itself literal — a later `cfg["cmd"] = user_supplied` (recorded as a
+        // fact against `cfg`) can replace the literal contents, so it must
+        // defeat the definitely-safe verdict rather than be skipped.
+        if first.literal_collection && assignments.iter().all(|fact| fact.literal_value) {
             log::debug!("[COMPUTE_VARIABLE_SOURCE] AST: literal collection at line {}", first.line);
             return Some(VariableSource::KnownSafe {
                 reason: "value drawn from a literal collection".to_string(),
