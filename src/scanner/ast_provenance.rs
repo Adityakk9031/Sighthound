@@ -381,8 +381,7 @@ fn push_target_facts(
                 line,
                 augmented,
                 literal_collection: is_literal_collection(value_node),
-                literal_value: is_literal_expr(value_node)
-                    || is_literal_collection(value_node),
+                literal_value: is_literal_expr(value_node) || is_literal_collection(value_node),
                 enclosing_loop,
             });
         }
@@ -777,9 +776,8 @@ mod tests {
     fn loop_carried_assignment_reaches_earlier_lines() {
         // The next iteration of the `while` carries line 4's value back to the
         // line-3 sink, so straight-line ordering must not filter it out.
-        let (_dir, path) = staged(
-            "def run():\n    while True:\n        os.system(cmd)\n        cmd = input()\n",
-        );
+        let (_dir, path) =
+            staged("def run():\n    while True:\n        os.system(cmd)\n        cmd = input()\n");
         let mut provenance = PythonAstProvenance::default();
 
         let at_sink = assignments(
@@ -793,8 +791,7 @@ mod tests {
     fn parameter_wins_when_no_assignment_reaches_the_usage() {
         // At line 2 `cmd` still holds the parameter; the line-3 assignment has
         // not happened yet and no loop carries it back.
-        let (_dir, path) =
-            staged("def run(cmd):\n    os.system(cmd)\n    cmd = input()\n");
+        let (_dir, path) = staged("def run(cmd):\n    os.system(cmd)\n    cmd = input()\n");
         let mut provenance = PythonAstProvenance::default();
 
         assert!(matches!(
