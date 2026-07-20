@@ -39,7 +39,7 @@ pub fn check_single_condition(
         }
         "has_sibling_pattern" => check_has_sibling_pattern_condition(node, source, condition),
         "ruby_unsafe_command_injection" => {
-            check_ruby_unsafe_command_injection(node, language_support)
+            check_ruby_unsafe_command_injection(node, source, language_support)
         }
         _ => evaluate_field_condition(node, source, condition),
     }
@@ -229,41 +229,107 @@ pub fn check_has_sibling_pattern_condition(
     false
 }
 
+fn clean_ruby_string(s: String) -> String {
+    let mut val = s.trim().to_string();
+    if ((val.starts_with('"') && val.ends_with('"'))
+        || (val.starts_with('\'') && val.ends_with('\'')))
+        && val.len() >= 2
+    {
+        val = val[1..val.len() - 1].to_string();
+    }
+    if val.starts_with(':') {
+        val = val[1..].to_string();
+    }
+    val.trim().to_string()
+}
+
 /// Check if a Ruby call's arguments structure represents an unsafe command execution.
 /// A Ruby call (system, exec, etc.) is safe if it has more than one argument
 /// or if it has a single argument which is an array literal or a splatted array literal.
 /// Returns true if the call is UNSAFE (i.e. we should match/flag it).
 pub fn check_ruby_unsafe_command_injection(
     node: &tree_sitter::Node,
+    source: &[u8],
     language_support: &dyn LanguageSupport,
 ) -> bool {
     if language_support.name() != "ruby" {
         return true;
     }
     if let Some(args_node) = language_support.get_arguments_node(node) {
-        let count = args_node.named_child_count();
+        let mut cmd_args = Vec::new();
+        for i in 0..args_node.named_child_count() {
+            if let Some(child) = args_node.named_child(i as u32) {
+                cmd_args.push(child);
+            }
+        }
+
+        // 1. Filter out environment hash at the beginning (index 0) if there are other arguments
+        if !cmd_args.is_empty()
+            && (cmd_args[0].kind() == "hash" || cmd_args[0].kind() == "hash_literal")
+            && cmd_args.len() > 1
+        {
+            cmd_args.remove(0);
+        }
+
+        // 2. Filter out options/keyword arguments/hash splats at the end
+        while !cmd_args.is_empty() {
+            let last_kind = cmd_args[cmd_args.len() - 1].kind();
+            if last_kind == "hash"
+                || last_kind == "hash_literal"
+                || last_kind == "pair"
+                || last_kind == "keyword_argument"
+                || last_kind == "hash_splat_argument"
+            {
+                cmd_args.pop();
+            } else {
+                break;
+            }
+        }
+
+        let count = cmd_args.len();
         if count > 1 {
+            let first_text = clean_ruby_string(get_node_text(&cmd_args[0], source));
+            let is_shell = matches!(
+                first_text.as_str(),
+                "sh" | "bash"
+                    | "cmd"
+                    | "cmd.exe"
+                    | "powershell"
+                    | "pwsh"
+                    | "zsh"
+                    | "ksh"
+                    | "csh"
+                    | "tcsh"
+                    | "fish"
+            );
+            if is_shell {
+                for arg_node in cmd_args.iter().skip(1) {
+                    let arg_text = clean_ruby_string(get_node_text(arg_node, source));
+                    if arg_text == "-c" || arg_text == "/c" || arg_text == "/C" {
+                        return true; // Explicit shell execution: UNSAFE
+                    }
+                }
+            }
             return false; // Safe: multi-argument form bypassed the shell
         }
         if count == 1 {
-            if let Some(arg) = args_node.named_child(0) {
-                if arg.kind() == "array" {
-                    return false; // Safe: single array literal argument bypassed the shell
-                }
-                if arg.kind() == "splat_argument" {
-                    // Check if splatted argument is an array literal
-                    let mut has_array_child = false;
-                    for i in 0..arg.named_child_count() {
-                        if let Some(child) = arg.named_child(i as u32) {
-                            if child.kind() == "array" {
-                                has_array_child = true;
-                                break;
-                            }
+            let arg = &cmd_args[0];
+            if arg.kind() == "array" {
+                return false; // Safe: single array literal argument bypassed the shell
+            }
+            if arg.kind() == "splat_argument" {
+                // Check if splatted argument is an array literal
+                let mut has_array_child = false;
+                for i in 0..arg.named_child_count() {
+                    if let Some(child) = arg.named_child(i as u32) {
+                        if child.kind() == "array" {
+                            has_array_child = true;
+                            break;
                         }
                     }
-                    if has_array_child {
-                        return false; // Safe: splatted array literal bypassed the shell
-                    }
+                }
+                if has_array_child {
+                    return false; // Safe: splatted array literal bypassed the shell
                 }
             }
         }

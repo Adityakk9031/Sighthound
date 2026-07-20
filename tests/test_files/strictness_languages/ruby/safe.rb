@@ -11,6 +11,14 @@ def safe(params)
   spawn(["ls", params[:cmd]]) # Safe because array literal
   Open3.capture2("ls", params[:cmd]) # Safe because multi-argument
   IO.popen(["ls", params[:cmd]]) # Safe because array literal
+
+  # Multi-argument / Array forms with env and options hashes (still safe)
+  system({"ENV_VAR" => "val"}, "ls", params[:cmd]) # Safe because multi-argument with env hash
+  system("ls", params[:cmd], {chdir: "/tmp"}) # Safe because multi-argument with options hash
+  system({"ENV_VAR" => "val"}, "ls", params[:cmd], {chdir: "/tmp"}) # Safe because multi-argument with env and options hash
+  system({"ENV_VAR" => "val"}, ["ls", params[:cmd]]) # Safe because array literal with env hash
+  system(["ls", params[:cmd]], {chdir: "/tmp"}) # Safe because array literal with options hash
+  system({"ENV_VAR" => "val"}, ["ls", params[:cmd]], {chdir: "/tmp"}) # Safe because array literal with env and options hash
   
   User.where("id = ?", params[:id].to_i)
 end

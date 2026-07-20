@@ -371,7 +371,16 @@ impl CommonUtils {
         variables.extend(Self::extract_concatenation_variables(expr));
 
         // Function call arguments: eval(user_input)
-        variables.extend(Self::extract_function_arguments(expr).unwrap_or_default());
+        if let Some(args) = Self::extract_function_arguments(expr) {
+            for arg in args {
+                let trimmed = arg.trim();
+                if Self::is_valid_variable_name(trimmed) {
+                    variables.push(trimmed.to_string());
+                } else {
+                    variables.extend(Self::extract_simple_variables(trimmed));
+                }
+            }
+        }
 
         // Remove duplicates and invalid names
         variables.sort();
@@ -563,7 +572,15 @@ impl CommonUtils {
         Some(
             args_str
                 .split(',')
-                .map(|s| s.trim().to_string())
+                .map(|s| {
+                    let mut s_trimmed = s.trim();
+                    if s_trimmed.starts_with('*') {
+                        s_trimmed = s_trimmed.trim_start_matches('*').trim();
+                    } else if s_trimmed.starts_with('&') {
+                        s_trimmed = s_trimmed.trim_start_matches('&').trim();
+                    }
+                    s_trimmed.to_string()
+                })
                 .filter(|s| !s.is_empty() && !s.starts_with('"') && !s.starts_with('\''))
                 .collect(),
         )
