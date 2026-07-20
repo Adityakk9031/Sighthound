@@ -36,6 +36,7 @@ Tree-sitter based static vulnerability scanner with pattern matching and taint-f
 | C# | `.cs`, `.csx` | Yes | Yes |
 | Go | `.go` | Yes | Yes |
 | Ruby | `.rb` | Yes | Yes |
+| ObjectScript | `.cls`, `.mac`, `.inc`, `.int`, `.rtn` | Yes (class and routine grammars) | Yes |
 | HTML | `.html`, `.htm`, `.twig`, `.ejs`, `.hbs`, ... | Yes | Yes |
 | Django templates | `.html` (Django syntax) | Yes | Yes (HTML rules) |
 

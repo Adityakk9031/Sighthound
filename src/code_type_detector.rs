@@ -248,9 +248,8 @@ impl CodeTypeDetector {
         // Default fallback based on language
         match language.to_lowercase().as_str() {
             "javascript" | "typescript" | "tsx" | "jsx" => CodeType::Frontend,
-            "python" | "java" | "rust" | "go" | "php" | "ruby" | "c" | "cpp" | "c#" | "csharp" => {
-                CodeType::Backend
-            }
+            "python" | "java" | "rust" | "go" | "php" | "ruby" | "objectscript" | "c" | "cpp"
+            | "c#" | "csharp" => CodeType::Backend,
             _ => CodeType::Unknown,
         }
     }

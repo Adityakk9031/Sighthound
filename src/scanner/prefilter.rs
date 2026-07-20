@@ -185,7 +185,7 @@ impl PreFilter {
     /// Extract all import statements as a single text blob
     fn extract_imports(&self, file_path: &str) -> Result<String> {
         let source = fs::read(file_path)?;
-        let mut parser = LanguageParser::new(&self.language)?;
+        let mut parser = LanguageParser::new_for_path(&self.language, Path::new(file_path))?;
         let tree = parser.parse(&source)?;
 
         let mut imports_text = String::new();
