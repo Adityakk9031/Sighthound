@@ -286,6 +286,13 @@ fn collect_assignments(node: Node, source: &[u8], out: &mut Vec<AssignmentFact>)
                 record_for_targets(child, source, out);
                 collect_assignments(child, source, out);
             }
+            // A collection-mutating call (`x.append(v)`) is not an assignment
+            // node, so record it here against the mutated variable, then keep
+            // descending to catch nested statements/mutations.
+            "call" => {
+                record_collection_mutation(child, source, out);
+                collect_assignments(child, source, out);
+            }
             _ => collect_assignments(child, source, out),
         }
     }
@@ -314,6 +321,38 @@ fn record_augmented_assignment(node: Node, source: &[u8], out: &mut Vec<Assignme
     let Some(left) = node.child_by_field_name("left") else { return };
     let Some(right) = node.child_by_field_name("right") else { return };
     push_target_facts(node, &[left], right, true, source, out);
+}
+
+/// Record a collection-mutating method call (`x.append(v)`, `x.extend(v)`, …)
+/// as a fact against the mutated variable `x`. The mutation adds `v` to the
+/// collection, so — like an augmented assignment — it is inconclusive on its
+/// own but must not be dropped: a tainted argument taints `x`, and any
+/// non-literal argument denies a later "literal collection is safe" verdict
+/// that would otherwise clear the sink. Without this fact a resolver seeing
+/// only `parts = ["prefix"]` would call `parts` definitely-safe even after
+/// `parts.append(input())`. Mirrors the forward tracker's use of
+/// `collection_mutation_target`.
+fn record_collection_mutation(node: Node, source: &[u8], out: &mut Vec<AssignmentFact>) {
+    let Some((base, args)) = collection_mutation_target(node, source) else {
+        return;
+    };
+    let line = node.start_position().row + 1;
+    let enclosing_loop = outermost_loop_span(node);
+    // The mutation keeps the collection developer-controlled only when every
+    // argument is itself literal (`parts.append("x")`); anything else defeats
+    // the literal-collection safety proof.
+    let literal_value = node.child_by_field_name("arguments").is_some_and(|arguments| {
+        all_named_children(arguments, |c| is_literal_expr(c) || is_literal_collection(c))
+    });
+    out.push(AssignmentFact {
+        target: base,
+        rhs: args,
+        line,
+        augmented: true,
+        literal_collection: false,
+        literal_value,
+        enclosing_loop,
+    });
 }
 
 fn record_for_targets(node: Node, source: &[u8], out: &mut Vec<AssignmentFact>) {
@@ -492,10 +531,13 @@ fn starred_pairs<'a>(
 }
 
 /// Named elements of a sequence node on either side of an assignment: a target
-/// list/tuple pattern, or a value tuple / bare `a, b` expression list.
+/// list/tuple pattern, or a value tuple, list literal, or bare `a, b`
+/// expression list. A `list` value unpacks positionally exactly like a `tuple`,
+/// so `a, b = [x, y]` pairs each name with its own element just as
+/// `a, b = x, y` does — without it the whole list bleeds onto every target.
 fn sequence_elements(node: Node) -> Option<Vec<Node>> {
     match node.kind() {
-        "pattern_list" | "tuple_pattern" | "tuple" | "expression_list" => {
+        "pattern_list" | "tuple_pattern" | "tuple" | "list" | "expression_list" => {
             let mut cursor = node.walk();
             Some(node.named_children(&mut cursor).filter(|c| c.kind() != "comment").collect())
         }
@@ -696,6 +738,53 @@ mod tests {
         assert_eq!(b[0].rhs, "fetch_pair()");
         let c = assignments(provenance.resolve_variable(&path, "run", "c").unwrap());
         assert_eq!(c[0].rhs, "x, y");
+    }
+
+    #[test]
+    fn list_literal_rhs_pairs_positionally() {
+        // A list literal on the RHS unpacks positionally exactly like a tuple:
+        // `log_name` receives only its own constant and must not inherit
+        // `input()` from the whole right-hand side.
+        let (_dir, path) = staged("def run():\n    cmd, log_name = [input(), \"app.log\"]\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        let cmd = assignments(provenance.resolve_variable(&path, "run", "cmd").unwrap());
+        assert_eq!(cmd[0].rhs, "input()");
+        let log_name = assignments(provenance.resolve_variable(&path, "run", "log_name").unwrap());
+        assert_eq!(log_name[0].rhs, "\"app.log\"");
+    }
+
+    #[test]
+    fn collection_mutation_is_recorded_as_reaching_fact() {
+        // A non-empty literal initializer followed by a mutating call yields TWO
+        // facts for `parts`: the literal init and the (augmented, non-literal)
+        // `append`, so the resolver can no longer prove `parts` definitely-safe.
+        let (_dir, path) =
+            staged("def run():\n    parts = [\"prefix\"]\n    parts.append(input())\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        let parts = assignments(provenance.resolve_variable(&path, "run", "parts").unwrap());
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].literal_collection && parts[0].literal_value);
+        assert!(
+            parts[1].augmented,
+            "a mutation is inconclusive on its own, like an augmented write"
+        );
+        assert!(!parts[1].literal_value, "a tainted mutation is not developer-controlled");
+        assert!(parts[1].rhs.contains("input("));
+    }
+
+    #[test]
+    fn literal_collection_mutation_stays_literal() {
+        // `parts.append("suffix")` keeps every value developer-controlled, so the
+        // mutation fact stays literal and must not lose the safe verdict.
+        let (_dir, path) =
+            staged("def run():\n    parts = [\"prefix\"]\n    parts.append(\"suffix\")\n");
+        let mut provenance = PythonAstProvenance::default();
+
+        let parts = assignments(provenance.resolve_variable(&path, "run", "parts").unwrap());
+        assert_eq!(parts.len(), 2);
+        assert!(parts[1].augmented && parts[1].literal_value);
     }
 
     #[test]

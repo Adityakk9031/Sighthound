@@ -485,9 +485,12 @@ impl DataFlowTracer {
     /// that can reach the sink line). Any assignment whose RHS classifies as
     /// tainted wins: the variable received attacker-controlled data at that
     /// line regardless of other writes (this is what lets `x += input()` after
-    /// a safe initializer surface). Otherwise the first plain assignment
-    /// provides provenance, mirroring the text path's first-assignment
-    /// semantics; augmented writes alone are inconclusive.
+    /// a safe initializer surface). Otherwise provenance comes from the LATEST
+    /// reaching plain assignment — the value the sink actually observes — so a
+    /// stale-safe initializer overwritten by a later write
+    /// (`cmd = "safe"; cmd = read_command()`) cannot mask that later write.
+    /// Augmented writes (including collection mutations) are inconclusive on
+    /// their own but still defeat a literal-collection safety proof.
     fn classify_ast_assignments(
         &self,
         assignments: &[AssignmentFact],
@@ -506,19 +509,26 @@ impl DataFlowTracer {
             }
         }
 
-        let first = assignments.iter().find(|fact| !fact.augmented)?;
-        // A literal collection proves safety only when EVERY reaching write is
-        // itself literal — a later `cfg["cmd"] = user_supplied` (recorded as a
-        // fact against `cfg`) can replace the literal contents, so it must
-        // defeat the definitely-safe verdict rather than be skipped.
-        if first.literal_collection && assignments.iter().all(|fact| fact.literal_value) {
-            log::debug!("[COMPUTE_VARIABLE_SOURCE] AST: literal collection at line {}", first.line);
+        // A literal collection proves safety only when it was initialized as a
+        // literal AND every reaching write is itself literal — a later
+        // `cfg["cmd"] = user_supplied` or `parts.append(input())` (recorded as a
+        // non-literal fact against the collection) must defeat the
+        // definitely-safe verdict rather than be skipped.
+        let initializer = assignments.iter().find(|fact| !fact.augmented)?;
+        if initializer.literal_collection && assignments.iter().all(|fact| fact.literal_value) {
+            log::debug!(
+                "[COMPUTE_VARIABLE_SOURCE] AST: literal collection at line {}",
+                initializer.line
+            );
             return Some(VariableSource::KnownSafe {
                 reason: "value drawn from a literal collection".to_string(),
-                line: first.line,
+                line: initializer.line,
             });
         }
-        Some(self.classify_assignment_rhs(&first.rhs, first.line, rule_deduplicator))
+        // Provenance is the latest reaching plain write: at the sink the variable
+        // holds whatever was assigned most recently, not its first initializer.
+        let latest = assignments.iter().rev().find(|fact| !fact.augmented).unwrap_or(initializer);
+        Some(self.classify_assignment_rhs(&latest.rhs, latest.line, rule_deduplicator))
     }
 
     /// Classify an expression that reads an environment variable: user-controlled keys are
@@ -1533,5 +1543,97 @@ impl DataFlowTracer {
             log::debug!("[EXTRACT_FUNCTION_BODY] Function body:\n{}", body);
             Some((body, body_start_line))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fact(
+        target: &str,
+        rhs: &str,
+        line: usize,
+        augmented: bool,
+        literal_collection: bool,
+        literal_value: bool,
+    ) -> AssignmentFact {
+        AssignmentFact {
+            target: target.to_string(),
+            rhs: rhs.to_string(),
+            line,
+            augmented,
+            literal_collection,
+            literal_value,
+            enclosing_loop: None,
+        }
+    }
+
+    #[test]
+    fn latest_reaching_write_provides_provenance() {
+        // `cmd = "safe"; cmd = read_command()`: the sink observes the latest
+        // write, so provenance must come from `read_command()` (traceable), not
+        // the stale-safe initializer that would wrongly clear the sink.
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        let facts = vec![
+            fact("cmd", "\"safe\"", 1, false, false, true),
+            fact("cmd", "read_command()", 2, false, false, false),
+        ];
+        assert!(
+            matches!(
+                tracer.classify_ast_assignments(&facts, &dedup),
+                Some(VariableSource::LocalAssignment { .. })
+            ),
+            "latest reaching write must provide provenance, not the safe initializer"
+        );
+    }
+
+    #[test]
+    fn safe_initializer_alone_stays_known_safe() {
+        // With no later write, a plain safe initializer is still proven-safe.
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        let facts = vec![fact("cmd", "\"safe\"", 1, false, false, true)];
+        assert!(matches!(
+            tracer.classify_ast_assignments(&facts, &dedup),
+            Some(VariableSource::KnownSafe { .. })
+        ));
+    }
+
+    #[test]
+    fn literal_collection_mutated_by_nonliteral_is_not_known_safe() {
+        // `parts = ["prefix"]; parts.append(x)`, the mutation recorded as a
+        // non-literal augmented fact: the literal-collection safety proof must no
+        // longer clear the sink.
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        let facts = vec![
+            fact("parts", "[\"prefix\"]", 1, false, true, true),
+            fact("parts", "(x)", 2, true, false, false),
+        ];
+        assert!(
+            !matches!(
+                tracer.classify_ast_assignments(&facts, &dedup),
+                Some(VariableSource::KnownSafe { .. })
+            ),
+            "a non-literal collection mutation must defeat the definitely-safe verdict"
+        );
+    }
+
+    #[test]
+    fn purely_literal_collection_remains_known_safe() {
+        // `cfg = ["ls", "pwd"]` with only literal writes stays proven-safe: a
+        // literal `parts.append("x")` must not be mistaken for a tainting write.
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        let facts = vec![
+            fact("cfg", "[\"ls\", \"pwd\"]", 1, false, true, true),
+            fact("cfg", "(\"uptime\")", 2, true, false, true),
+        ];
+        assert!(matches!(
+            tracer.classify_ast_assignments(&facts, &dedup),
+            Some(VariableSource::KnownSafe { .. })
+        ));
     }
 }

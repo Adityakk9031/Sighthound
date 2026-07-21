@@ -458,3 +458,88 @@ def run_mutation():
         "appending tainted data to an empty list must still reach the sink",
     );
 }
+
+#[test]
+#[cfg(feature = "python")]
+fn list_literal_safe_sibling_is_not_flagged() {
+    // `cmd, log_name = [input(), "app.log"]` unpacks the list positionally just
+    // like a tuple, so the safe sibling `log_name` must not inherit `input()`.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "list_sibling.py",
+        r#"import os
+
+
+def run_list():
+    cmd, log_name = [input(), "app.log"]
+    os.system(log_name)
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_no_findings_in_range(
+        &findings,
+        1,
+        20,
+        "safe sibling from a list-literal unpack must not inherit the tainted element's value",
+    );
+}
+
+#[test]
+#[cfg(feature = "python")]
+fn list_literal_tainted_element_is_detected() {
+    // The positional pairing must not drop taint: the tainted element bound to
+    // `cmd` still has to reach the sink.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "list_tainted.py",
+        r#"import os
+
+
+def run_list():
+    cmd, log_name = [input(), "app.log"]
+    os.system(cmd)
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_findings_in_range(
+        &findings,
+        4,
+        7,
+        1,
+        "list-literal unpack: the tainted element bound to cmd must reach os.system",
+    );
+}
+
+#[test]
+#[cfg(feature = "python")]
+fn collection_mutation_over_literal_list_is_detected() {
+    // A NON-EMPTY literal initializer must not prove the collection safe once a
+    // tainting mutator adds attacker data — the literal `["prefix"]` no longer
+    // clears the sink after `parts.append(input())`.
+    let staging = stage_dir();
+    write_staged_file(
+        staging.path(),
+        "literal_mutation.py",
+        r#"import os
+
+
+def run_mutation():
+    parts = ["prefix"]
+    parts.append(input("part: "))
+    os.system(" ".join(parts))
+"#,
+    );
+
+    let findings = scan_python_taint(staging.path(), CMD_TAINT_RULES);
+    assert_findings_in_range(
+        &findings,
+        4,
+        8,
+        1,
+        "tainting mutator over a non-empty literal collection must still reach the sink",
+    );
+}
