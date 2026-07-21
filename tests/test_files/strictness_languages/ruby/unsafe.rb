@@ -15,8 +15,12 @@ def unsafe(params)
   # Explicit shell executions with multiple arguments
   system("sh", "-c", params[:cmd]) # Unsafe (explicit shell)
   system("bash", "-c", params[:cmd]) # Unsafe (explicit shell)
+  system("/bin/sh", "-c", params[:cmd]) # Unsafe (explicit shell path)
+  system("/usr/bin/bash", "-c", params[:cmd]) # Unsafe (explicit shell path)
   exec("sh", "-c", params[:cmd]) # Unsafe (explicit shell)
   spawn("sh", "-c", params[:cmd]) # Unsafe (explicit shell)
+  IO.popen("ls -la #{params[:cmd]}", "r") # Unsafe (IO.popen single string command with mode)
+  Open3.pipeline("ls", "grep #{params[:cmd]}") # Unsafe (Open3.pipeline with string commands)
 
   # Explicit shell executions with env hash and options hash
   system({"ENV_VAR" => "val"}, "sh", "-c", params[:cmd]) # Unsafe (explicit shell with env hash)

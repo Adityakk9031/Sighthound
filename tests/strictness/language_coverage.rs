@@ -320,9 +320,49 @@ fn ruby_rules_taint_and_search_validation() {
     );
 
     // Unsafe patterns must trigger findings
+    let unsafe_lines: BTreeSet<usize> = unsafe_findings.iter().map(|f| f.line).collect();
+
+    // Assert that taint-only sink lines (system(cmd) and system(*cmd)) trigger findings
     assert!(
-        unsafe_findings.len() >= 6,
-        "unsafe.rb should trigger at least 6 findings, got {}: {:?}",
+        unsafe_lines.contains(&12),
+        "system(cmd) on line 12 must trigger a finding: {:?}",
+        unsafe_findings
+    );
+    assert!(
+        unsafe_lines.contains(&13),
+        "system(*cmd) on line 13 must trigger a finding: {:?}",
+        unsafe_findings
+    );
+
+    // Assert that explicit shell path executions trigger findings
+    assert!(
+        unsafe_lines.contains(&18),
+        "/bin/sh -c call on line 18 must trigger a finding: {:?}",
+        unsafe_findings
+    );
+    assert!(
+        unsafe_lines.contains(&19),
+        "/usr/bin/bash -c call on line 19 must trigger a finding: {:?}",
+        unsafe_findings
+    );
+
+    // Assert that IO.popen with single-string command and mode triggers findings
+    assert!(
+        unsafe_lines.contains(&22),
+        "IO.popen with single string command on line 22 must trigger a finding: {:?}",
+        unsafe_findings
+    );
+
+    // Assert that Open3.pipeline with string commands triggers findings
+    assert!(
+        unsafe_lines.contains(&23),
+        "Open3.pipeline with string commands on line 23 must trigger a finding: {:?}",
+        unsafe_findings
+    );
+
+    assert!(
+        unsafe_findings.len() >= 10,
+        "unsafe.rb should trigger at least 10 findings, got {}: {:?}",
         unsafe_findings.len(),
         unsafe_findings
             .iter()

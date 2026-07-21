@@ -243,9 +243,53 @@ fn clean_ruby_string(s: String) -> String {
     val.trim().to_string()
 }
 
+fn is_shell_executable(text: &str) -> bool {
+    let cleaned = text.trim();
+    if cleaned.is_empty() {
+        return false;
+    }
+    let std_path = cleaned.replace('\\', "/");
+    let filename = std_path.rsplit('/').next().unwrap_or(cleaned).to_ascii_lowercase();
+    let name_without_ext = filename.strip_suffix(".exe").unwrap_or(&filename);
+
+    matches!(
+        name_without_ext,
+        "sh" | "bash"
+            | "cmd"
+            | "powershell"
+            | "pwsh"
+            | "zsh"
+            | "ksh"
+            | "csh"
+            | "tcsh"
+            | "fish"
+            | "dash"
+            | "ash"
+    )
+}
+
+fn get_ruby_callee_name(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    language_support: &dyn LanguageSupport,
+) -> String {
+    if let Some(method_name) = language_support.get_function_name(node, source) {
+        if let Some(receiver_node) = node.child_by_field_name("receiver") {
+            let receiver_text = get_node_text(&receiver_node, source);
+            return format!("{}.{}", receiver_text.trim(), method_name.trim());
+        }
+        return method_name.trim().to_string();
+    }
+    let node_text = get_node_text(node, source);
+    let callee =
+        node_text.split('(').next().unwrap_or(&node_text).split_whitespace().next().unwrap_or("");
+    callee.trim().to_string()
+}
+
 /// Check if a Ruby call's arguments structure represents an unsafe command execution.
 /// A Ruby call (system, exec, etc.) is safe if it has more than one argument
 /// or if it has a single argument which is an array literal or a splatted array literal.
+/// Callee signatures like IO.popen and Open3.pipeline are handled according to their specific Ruby semantics.
 /// Returns true if the call is UNSAFE (i.e. we should match/flag it).
 pub fn check_ruby_unsafe_command_injection(
     node: &tree_sitter::Node,
@@ -286,26 +330,67 @@ pub fn check_ruby_unsafe_command_injection(
             }
         }
 
+        let callee = get_ruby_callee_name(node, source, language_support);
+
+        // Special handling for IO.popen / popen:
+        // IO.popen([env,] cmd, mode = 'r', opt = {})
+        // The first argument after env (cmd_args[0]) is the command. Second argument is mode, NOT a command arg!
+        // IO.popen("ls -la", "r") passes a single string to shell -> UNSAFE.
+        // IO.popen(["ls", params[:cmd]], "r") passes an array -> SAFE (bypasses shell).
+        if callee == "IO.popen" || callee == "popen" {
+            if !cmd_args.is_empty() {
+                let arg = &cmd_args[0];
+                if arg.kind() == "array" {
+                    return false; // Safe: array argument
+                }
+                if arg.kind() == "splat_argument" {
+                    for i in 0..arg.named_child_count() {
+                        if let Some(child) = arg.named_child(i as u32) {
+                            if child.kind() == "array" {
+                                return false; // Safe: splatted array argument
+                            }
+                        }
+                    }
+                }
+            }
+            return true; // Single-string command passed to IO.popen is UNSAFE
+        }
+
+        // Special handling for Open3.pipeline*:
+        // Open3.pipeline(cmd1, cmd2, ..., opts)
+        // Each positional argument is a command in a pipeline.
+        // If any command argument is a string (e.g. Open3.pipeline("ls", params[:cmd])), each is executed via shell -> UNSAFE.
+        // If ALL command arguments are arrays or splatted arrays, it is SAFE.
+        if callee.starts_with("Open3.pipeline") || callee.starts_with("pipeline") {
+            if cmd_args.is_empty() {
+                return true;
+            }
+            let all_arrays = cmd_args.iter().all(|arg| {
+                if arg.kind() == "array" {
+                    return true;
+                }
+                if arg.kind() == "splat_argument" {
+                    for i in 0..arg.named_child_count() {
+                        if let Some(child) = arg.named_child(i as u32) {
+                            if child.kind() == "array" {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            });
+            return !all_arrays;
+        }
+
         let count = cmd_args.len();
         if count > 1 {
             let first_text = clean_ruby_string(get_node_text(&cmd_args[0], source));
-            let is_shell = matches!(
-                first_text.as_str(),
-                "sh" | "bash"
-                    | "cmd"
-                    | "cmd.exe"
-                    | "powershell"
-                    | "pwsh"
-                    | "zsh"
-                    | "ksh"
-                    | "csh"
-                    | "tcsh"
-                    | "fish"
-            );
-            if is_shell {
+            if is_shell_executable(&first_text) {
                 for arg_node in cmd_args.iter().skip(1) {
                     let arg_text = clean_ruby_string(get_node_text(arg_node, source));
-                    if arg_text == "-c" || arg_text == "/c" || arg_text == "/C" {
+                    if arg_text == "-c" || arg_text == "/c" || arg_text == "/C" || arg_text == "-C"
+                    {
                         return true; // Explicit shell execution: UNSAFE
                     }
                 }

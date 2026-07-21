@@ -11,6 +11,10 @@ def safe(params)
   spawn(["ls", params[:cmd]]) # Safe because array literal
   Open3.capture2("ls", params[:cmd]) # Safe because multi-argument
   IO.popen(["ls", params[:cmd]]) # Safe because array literal
+  IO.popen(["ls", params[:cmd]], "r") # Safe because array literal with mode argument
+  IO.popen(*["ls", params[:cmd]], "r") # Safe because splatted array literal with mode argument
+  Open3.pipeline(["ls", "-l"], ["grep", params[:cmd]]) # Safe because all pipeline stages are array literals
+  system("/usr/bin/env", "ls", params[:cmd]) # Safe because multi-argument with non-shell path
 
   # Multi-argument / Array forms with env and options hashes (still safe)
   system({"ENV_VAR" => "val"}, "ls", params[:cmd]) # Safe because multi-argument with env hash
