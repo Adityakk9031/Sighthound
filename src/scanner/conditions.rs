@@ -287,18 +287,17 @@ fn is_shell_command_flag(shell_name: &str, arg: &str) -> bool {
         return true;
     }
 
-    if shell_name == "powershell" || shell_name == "pwsh" {
-        if lower_arg == "-command"
+    if (shell_name == "powershell" || shell_name == "pwsh")
+        && (lower_arg == "-command"
             || lower_arg == "/command"
             || lower_arg == "-encodedcommand"
             || lower_arg == "/encodedcommand"
             || lower_arg.starts_with("-enc")
             || lower_arg.starts_with("/enc")
             || lower_arg == "-e"
-            || lower_arg == "/e"
-        {
-            return true;
-        }
+            || lower_arg == "/e")
+    {
+        return true;
     }
 
     false
@@ -470,10 +469,8 @@ pub fn check_ruby_unsafe_command_injection(
         return false;
     }
 
-    if count == 1 {
-        if is_safe_command_array(&cmd_args[0], source) {
-            return false;
-        }
+    if count == 1 && is_safe_command_array(&cmd_args[0], source) {
+        return false;
     }
 
     true
