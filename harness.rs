@@ -34,8 +34,6 @@ const RESET: &str = "\x1b[0m";
 
 struct RunResult {
     ok: bool,
-    #[allow(dead_code)]
-    output: String,
 }
 
 #[derive(Default)]
@@ -73,14 +71,14 @@ fn run(description: &str, cmd: &[&str], opts: Option<&RunOpts>) -> RunResult {
         match status {
             Ok(s) if s.success() => {
                 println!("  {GREEN}\u{2713}{RESET} {description}");
-                return RunResult { ok: true, output: String::new() };
+                return RunResult { ok: true };
             }
             Ok(s) => {
                 println!("  {RED}\u{2717}{RESET} {description}");
                 if opts.is_none_or(|o| !o.no_exit) {
                     std::process::exit(s.code().unwrap_or(1));
                 }
-                return RunResult { ok: false, output: String::new() };
+                return RunResult { ok: false };
             }
             Err(e) => {
                 println!("  {RED}\u{2717}{RESET} {description}");
@@ -88,7 +86,7 @@ fn run(description: &str, cmd: &[&str], opts: Option<&RunOpts>) -> RunResult {
                 if opts.is_none_or(|o| !o.no_exit) {
                     std::process::exit(1);
                 }
-                return RunResult { ok: false, output: String::new() };
+                return RunResult { ok: false };
             }
         }
     }
@@ -108,7 +106,7 @@ fn run(description: &str, cmd: &[&str], opts: Option<&RunOpts>) -> RunResult {
                 let detail = opts.and_then(|o| o.extract).and_then(|f| f(&combined));
                 let suffix = detail.map_or_else(String::new, |d| format!(" {DIM}({d}){RESET}"));
                 println!("  {GREEN}\u{2713}{RESET} {description}{suffix}");
-                RunResult { ok: true, output: combined }
+                RunResult { ok: true }
             } else {
                 println!("  {RED}\u{2717}{RESET} {description}");
                 if !combined.is_empty() {
@@ -117,7 +115,7 @@ fn run(description: &str, cmd: &[&str], opts: Option<&RunOpts>) -> RunResult {
                 if opts.is_none_or(|o| !o.no_exit) {
                     std::process::exit(output.status.code().unwrap_or(1));
                 }
-                RunResult { ok: false, output: combined }
+                RunResult { ok: false }
             }
         }
         Err(e) => {
@@ -126,7 +124,7 @@ fn run(description: &str, cmd: &[&str], opts: Option<&RunOpts>) -> RunResult {
             if opts.is_none_or(|o| !o.no_exit) {
                 std::process::exit(1);
             }
-            RunResult { ok: false, output: String::new() }
+            RunResult { ok: false }
         }
     }
 }
@@ -981,7 +979,7 @@ fn check_agents_md_drift(no_exit: bool) -> RunResult {
         if !no_exit {
             std::process::exit(1);
         }
-        RunResult { ok: false, output: msg }
+        RunResult { ok: false }
     };
     let Ok(agents) = fs::read(&agents_path) else {
         return fail("AGENTS.md not found".into());
@@ -991,11 +989,11 @@ fn check_agents_md_drift(no_exit: bool) -> RunResult {
             "  {GREEN}\u{26a0}{RESET} agents-md-drift: CLAUDE.md absent \
              (git-ignored mirror \u{2014} run `cargo harness setup-hooks`)"
         );
-        return RunResult { ok: true, output: String::new() };
+        return RunResult { ok: true };
     };
     if claude == agents {
         println!("  {GREEN}\u{2713}{RESET} agents-md-drift");
-        return RunResult { ok: true, output: String::new() };
+        return RunResult { ok: true };
     }
     let line =
         first_diff_line(&String::from_utf8_lossy(&agents), &String::from_utf8_lossy(&claude));
