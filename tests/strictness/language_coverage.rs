@@ -345,18 +345,33 @@ fn ruby_rules_taint_and_search_validation() {
         "/usr/bin/bash -c call on line 19 must trigger a finding: {:?}",
         unsafe_findings
     );
+    assert!(
+        unsafe_lines.contains(&20),
+        "powershell -Command call on line 20 must trigger a finding: {:?}",
+        unsafe_findings
+    );
+    assert!(
+        unsafe_lines.contains(&21),
+        "pwsh -EncodedCommand call on line 21 must trigger a finding: {:?}",
+        unsafe_findings
+    );
+    assert!(
+        unsafe_lines.contains(&22),
+        "array literal with shell flag on line 22 must trigger a finding: {:?}",
+        unsafe_findings
+    );
 
     // Assert that IO.popen with single-string command and mode triggers findings
     assert!(
-        unsafe_lines.contains(&22),
-        "IO.popen with single string command on line 22 must trigger a finding: {:?}",
+        unsafe_lines.contains(&25),
+        "IO.popen with single string command on line 25 must trigger a finding: {:?}",
         unsafe_findings
     );
 
     // Assert that Open3.pipeline with string commands triggers findings
     assert!(
-        unsafe_lines.contains(&23),
-        "Open3.pipeline with string commands on line 23 must trigger a finding: {:?}",
+        unsafe_lines.contains(&26),
+        "Open3.pipeline with string commands on line 26 must trigger a finding: {:?}",
         unsafe_findings
     );
 
