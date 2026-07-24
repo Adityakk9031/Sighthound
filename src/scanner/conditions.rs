@@ -24,13 +24,7 @@ pub fn check_single_condition(
 ) -> bool {
     match condition.condition_type.as_deref().unwrap_or("") {
         "has_argument" => check_has_argument_condition(node, source, condition, language_support),
-        "in_context" => {
-            if condition.not_in.is_some() {
-                check_in_context_condition(node, condition)
-            } else {
-                evaluate_field_condition(node, source, condition)
-            }
-        }
+        "in_context" => check_in_context_condition(node, condition),
         "has_parent" => check_has_parent_condition(node, condition),
         "not_literal" => check_not_literal_condition(node, condition, language_support),
         "has_ancestor" => check_has_ancestor_condition(node, condition),
@@ -41,13 +35,7 @@ pub fn check_single_condition(
         "ruby_unsafe_command_injection" => {
             check_ruby_unsafe_command_injection(node, source, language_support)
         }
-        _ => {
-            if condition.field == "pattern" || condition.field == "context" {
-                evaluate_field_condition(node, source, condition)
-            } else {
-                false
-            }
-        }
+        _ => false,
     }
 }
 
@@ -386,25 +374,7 @@ fn is_safe_command_array(arg_node: &tree_sitter::Node, source: &[u8]) -> bool {
 /// Check if a Ruby call's arguments structure represents an unsafe command execution.
 /// Follows strict FAIL-CLOSED principle: unmodeled, dynamic, or shell-executing calls return `true` (UNSAFE).
 /// Only calls with verified non-shell multi-argument or array structures return `false` (SAFE).
-pub fn check_ruby_unsafe_command_injection(
-    node: &tree_sitter::Node,
-    source: &[u8],
-    language_support: &dyn LanguageSupport,
-) -> bool {
-    if language_support.name() != "ruby" {
-        return true;
-    }
-    let Some(args_node) = language_support.get_arguments_node(node) else {
-        return true;
-    };
-
-    let mut cmd_args = Vec::new();
-    for i in 0..args_node.named_child_count() {
-        if let Some(child) = args_node.named_child(i as u32) {
-            cmd_args.push(child);
-        }
-    }
-
+fn filter_ruby_env_and_options<'a>(cmd_args: &mut Vec<tree_sitter::Node<'a>>) {
     // 1. Filter out environment hash at index 0
     if !cmd_args.is_empty()
         && (cmd_args[0].kind() == "hash" || cmd_args[0].kind() == "hash_literal")
@@ -427,6 +397,66 @@ pub fn check_ruby_unsafe_command_injection(
             break;
         }
     }
+}
+
+fn check_multi_arg_safety(cmd_args: &[tree_sitter::Node], source: &[u8]) -> bool {
+    if cmd_args.len() <= 1 {
+        return false;
+    }
+
+    let mut exec_idx = 0;
+    let mut first_text = clean_ruby_string(get_node_text(&cmd_args[0], source));
+
+    // Handle wrapper executables like /usr/bin/env
+    if (first_text == "env" || first_text.ends_with("/env") || first_text == "/usr/bin/env")
+        && cmd_args.len() > 2
+    {
+        exec_idx = 1;
+        first_text = clean_ruby_string(get_node_text(&cmd_args[1], source));
+    }
+
+    let first_kind = cmd_args[exec_idx].kind();
+    let is_static_exec =
+        matches!(first_kind, "string" | "string_literal" | "simple_symbol" | "symbol");
+    if !is_static_exec {
+        return true; // Dynamic binary target -> UNSAFE
+    }
+
+    if let Some(shell_name) = extract_shell_name(&first_text) {
+        for arg_node in cmd_args.iter().skip(exec_idx + 1) {
+            let arg_text = clean_ruby_string(get_node_text(arg_node, source));
+            if is_shell_command_flag(&shell_name, &arg_text) {
+                return true; // Explicit shell execution flag -> UNSAFE
+            }
+        }
+    }
+
+    false // Safe multi-argument execution
+}
+
+/// Check if a Ruby call's arguments structure represents an unsafe command execution.
+/// Follows strict FAIL-CLOSED principle: unmodeled, dynamic, or shell-executing calls return `true` (UNSAFE).
+/// Only calls with verified non-shell multi-argument or array structures return `false` (SAFE).
+pub fn check_ruby_unsafe_command_injection(
+    node: &tree_sitter::Node,
+    source: &[u8],
+    language_support: &dyn LanguageSupport,
+) -> bool {
+    if language_support.name() != "ruby" {
+        return true;
+    }
+    let Some(args_node) = language_support.get_arguments_node(node) else {
+        return true;
+    };
+
+    let mut cmd_args = Vec::new();
+    for i in 0..args_node.named_child_count() {
+        if let Some(child) = args_node.named_child(i as u32) {
+            cmd_args.push(child);
+        }
+    }
+
+    filter_ruby_env_and_options(&mut cmd_args);
 
     if cmd_args.is_empty() {
         return true;
@@ -435,10 +465,7 @@ pub fn check_ruby_unsafe_command_injection(
     let callee = get_ruby_callee_name(node, source, language_support);
 
     if callee == "IO.popen" || callee == "popen" {
-        if is_safe_command_array(&cmd_args[0], source) {
-            return false;
-        }
-        return true;
+        return !is_safe_command_array(&cmd_args[0], source);
     }
 
     if callee.starts_with("Open3.pipeline") || callee.starts_with("pipeline") {
@@ -446,30 +473,11 @@ pub fn check_ruby_unsafe_command_injection(
         return !all_safe_arrays;
     }
 
-    let count = cmd_args.len();
-
-    if count > 1 {
-        let first_text = clean_ruby_string(get_node_text(&cmd_args[0], source));
-        let first_kind = cmd_args[0].kind();
-
-        let is_static_exec =
-            matches!(first_kind, "string" | "string_literal" | "simple_symbol" | "symbol");
-        if !is_static_exec {
-            return true;
-        }
-
-        if let Some(shell_name) = extract_shell_name(&first_text) {
-            for arg_node in cmd_args.iter().skip(1) {
-                let arg_text = clean_ruby_string(get_node_text(arg_node, source));
-                if is_shell_command_flag(&shell_name, &arg_text) {
-                    return true;
-                }
-            }
-        }
-        return false;
+    if cmd_args.len() > 1 {
+        return check_multi_arg_safety(&cmd_args, source);
     }
 
-    if count == 1 && is_safe_command_array(&cmd_args[0], source) {
+    if cmd_args.len() == 1 && is_safe_command_array(&cmd_args[0], source) {
         return false;
     }
 
@@ -516,5 +524,38 @@ pub fn get_context_text(node: &tree_sitter::Node, source: &[u8]) -> String {
         get_node_text(&parent, source)
     } else {
         get_node_text(node, source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_shell_name() {
+        assert_eq!(extract_shell_name("sh"), Some("sh".to_string()));
+        assert_eq!(extract_shell_name("/bin/bash"), Some("bash".to_string()));
+        assert_eq!(extract_shell_name("C:\\Windows\\cmd.exe"), Some("cmd".to_string()));
+        assert_eq!(extract_shell_name("powershell"), Some("powershell".to_string()));
+        assert_eq!(extract_shell_name("pwsh.exe"), Some("pwsh".to_string()));
+        assert_eq!(extract_shell_name("/usr/bin/ls"), None);
+    }
+
+    #[test]
+    fn test_is_shell_command_flag() {
+        assert!(is_shell_command_flag("sh", "-c"));
+        assert!(is_shell_command_flag("cmd", "/c"));
+        assert!(is_shell_command_flag("powershell", "-Command"));
+        assert!(is_shell_command_flag("powershell", "-encodedcommand"));
+        assert!(is_shell_command_flag("pwsh", "-enc"));
+        assert!(is_shell_command_flag("pwsh", "-e"));
+        assert!(!is_shell_command_flag("sh", "-la"));
+    }
+
+    #[test]
+    fn test_clean_ruby_string() {
+        assert_eq!(clean_ruby_string("\"hello\"".to_string()), "hello");
+        assert_eq!(clean_ruby_string("'world'".to_string()), "world");
+        assert_eq!(clean_ruby_string(":symbol".to_string()), "symbol");
     }
 }

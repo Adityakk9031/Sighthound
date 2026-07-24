@@ -1007,12 +1007,19 @@ impl ScanningLogic {
             return;
         }
         if let Some(conditions) = &rule.conditions {
-            if !crate::scanner::conditions::check_ast_conditions(
-                conditions,
-                node,
-                ctx.source,
-                ctx.language_support,
-            ) {
+            let ruby_conditions: Vec<_> = conditions
+                .iter()
+                .filter(|c| c.condition_type.as_deref() == Some("ruby_unsafe_command_injection"))
+                .cloned()
+                .collect();
+            if !ruby_conditions.is_empty()
+                && !crate::scanner::conditions::check_ast_conditions(
+                    &ruby_conditions,
+                    node,
+                    ctx.source,
+                    ctx.language_support,
+                )
+            {
                 return;
             }
         }
@@ -1078,12 +1085,21 @@ impl ScanningLogic {
                 continue; // Skip this finding as it's sanitized
             }
             if let Some(conditions) = &rule.conditions {
-                if !crate::scanner::conditions::check_ast_conditions(
-                    conditions,
-                    node,
-                    ctx.source,
-                    ctx.language_support,
-                ) {
+                let ruby_conditions: Vec<_> = conditions
+                    .iter()
+                    .filter(|c| {
+                        c.condition_type.as_deref() == Some("ruby_unsafe_command_injection")
+                    })
+                    .cloned()
+                    .collect();
+                if !ruby_conditions.is_empty()
+                    && !crate::scanner::conditions::check_ast_conditions(
+                        &ruby_conditions,
+                        node,
+                        ctx.source,
+                        ctx.language_support,
+                    )
+                {
                     continue;
                 }
             }
@@ -1145,6 +1161,12 @@ impl ScanningLogic {
         let Some(sink_pattern) = ctx.rule_deduplicator.matches_sink_pattern(&node_text) else {
             return;
         };
+        log::debug!(
+            "[SINK_ANALYSIS] Found sink '{}' with pattern '{}' at line {}",
+            node_text,
+            sink_pattern,
+            line
+        );
         // Extract ALL variables used in this sink (enhanced extraction)
         let used_variables = Self::extract_sink_variables(&node_text, ctx);
         log::debug!("[SINK_ANALYSIS] Extracted variables from sink: {:?}", used_variables);
