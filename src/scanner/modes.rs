@@ -184,15 +184,7 @@ fn load_explicit_scan_rules(cli: &Cli, language: &str) -> Result<Rules> {
         }
     }
 
-    if all_rules.is_empty() {
-        return Err(anyhow::anyhow!("No rules loaded for language {}", language));
-    }
-
-    if all_rules.len() == 1 {
-        all_rules.pop().ok_or_else(|| anyhow::anyhow!("No rules loaded for language {}", language))
-    } else {
-        Rules::merge_rules(all_rules)
-    }
+    Rules::merge_rules(all_rules)
 }
 
 /// Print the banner shown at the start of an explicit scan.
@@ -320,13 +312,7 @@ fn load_rules_for_detected_language(cli: &Cli, language: &str) -> Result<Option<
         return Ok(None); // Skip if no rules found
     }
 
-    let rules = if all_rules.len() == 1 {
-        all_rules
-            .pop()
-            .ok_or_else(|| anyhow::anyhow!("No rules loaded for language {}", language))?
-    } else {
-        Rules::merge_rules(all_rules)?
-    };
+    let rules = Rules::merge_rules(all_rules)?;
     Ok(Some(rules))
 }
 
@@ -736,6 +722,13 @@ mod tests {
         let context = base_context(&["python"]);
 
         assert!(load_rules(&cli, &context).is_err());
+    }
+
+    #[test]
+    fn load_explicit_scan_rules_loads_and_merges_rules() {
+        let cli = base_cli();
+        let rules = load_explicit_scan_rules(&cli, "python").expect("explicit rules should load");
+        assert!(!rules.rules.is_empty());
     }
 
     #[test]
