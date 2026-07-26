@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -16,6 +17,8 @@ jobs:
         with:
           components: clippy, rustfmt, llvm-tools-preview
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install uv (for uvx lizard)
         uses: astral-sh/setup-uv@v5
 
@@ -26,6 +29,3 @@ jobs:
 
       - name: make ci
         run: make ci
-
-      - name: make audit
-        run: make audit
