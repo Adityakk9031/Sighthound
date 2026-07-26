@@ -461,7 +461,7 @@ impl DataFlowTracer {
                 Some(VariableSource::FunctionParameter { parameter_index: index })
             }
             AstResolution::Assignments(assignments) => {
-                self.classify_ast_assignments(&assignments, rule_deduplicator)
+                self.classify_ast_assignments(&assignments, sink_line, rule_deduplicator)
             }
             AstResolution::Ambiguous => {
                 log::debug!(
@@ -482,18 +482,31 @@ impl DataFlowTracer {
     }
 
     /// Classify AST assignment facts for one variable (pre-filtered to those
-    /// that can reach the sink line). Any assignment whose RHS classifies as
-    /// tainted wins: the variable received attacker-controlled data at that
-    /// line regardless of other writes (this is what lets `x += input()` after
-    /// a safe initializer surface). Otherwise provenance comes from the LATEST
-    /// reaching plain assignment — the value the sink actually observes — so a
-    /// stale-safe initializer overwritten by a later write
-    /// (`cmd = "safe"; cmd = read_command()`) cannot mask that later write.
-    /// Augmented writes (including collection mutations) are inconclusive on
-    /// their own but still defeat a literal-collection safety proof.
+    /// that can reach `sink_line`). A definitely-safe verdict is only claimed
+    /// when EVERY reaching write is provably safe, so a safe branch sibling or
+    /// initializer can never mask an unresolved one:
+    ///
+    /// * Any reaching write whose RHS is tainted wins outright — the variable
+    ///   received attacker-controlled data on some reaching path (this is what
+    ///   lets `x += input()` after a safe initializer surface).
+    /// * A literal collection is safe only when a *dominating* literal
+    ///   initializer sets it and every reaching write is literal (a later
+    ///   `cfg[k] = user_supplied` or `parts.append(input())` defeats it).
+    /// * Otherwise provenance is the latest reaching write we cannot prove safe.
+    ///   Augmented writes count as unresolved — they combine with an unseen
+    ///   prior value — and every reaching write is scanned, not just the latest,
+    ///   so a safe sibling (`if c: cmd = fetch() else: cmd = "ls"`) or a stale
+    ///   initializer cannot supply the verdict for a value that flows from
+    ///   elsewhere.
+    /// * Only when every reaching write is safe AND a *dominating* plain write
+    ///   (at or above the sink) established the base is the variable reported
+    ///   safe. A base set only below the sink (loop-carried) or only via an
+    ///   augmented write leaves the first-pass value unknown, so it is reported
+    ///   Unknown rather than falling through to the sink-agnostic text scan.
     fn classify_ast_assignments(
         &self,
         assignments: &[AssignmentFact],
+        sink_line: usize,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> Option<VariableSource> {
         for fact in assignments {
@@ -509,26 +522,58 @@ impl DataFlowTracer {
             }
         }
 
-        // A literal collection proves safety only when it was initialized as a
-        // literal AND every reaching write is itself literal — a later
-        // `cfg["cmd"] = user_supplied` or `parts.append(input())` (recorded as a
-        // non-literal fact against the collection) must defeat the
-        // definitely-safe verdict rather than be skipped.
-        let initializer = assignments.iter().find(|fact| !fact.augmented)?;
-        if initializer.literal_collection && assignments.iter().all(|fact| fact.literal_value) {
-            log::debug!(
-                "[COMPUTE_VARIABLE_SOURCE] AST: literal collection at line {}",
-                initializer.line
-            );
-            return Some(VariableSource::KnownSafe {
-                reason: "value drawn from a literal collection".to_string(),
-                line: initializer.line,
-            });
+        // A write can establish the value on every execution only when it is a
+        // plain assignment at or above the sink; a below-sink write applies on a
+        // later loop iteration only, so it cannot prove first-pass safety.
+        let dominating_init =
+            assignments.iter().find(|fact| !fact.augmented && fact.line <= sink_line);
+
+        // A literal collection proves safety only when a dominating literal
+        // initializer sets it AND every reaching write is itself literal — a
+        // later `cfg["cmd"] = user_supplied` or `parts.append(input())`
+        // (recorded as a non-literal fact) must defeat the verdict.
+        if let Some(init) = dominating_init {
+            if init.literal_collection && assignments.iter().all(|fact| fact.literal_value) {
+                log::debug!(
+                    "[COMPUTE_VARIABLE_SOURCE] AST: literal collection at line {}",
+                    init.line
+                );
+                return Some(VariableSource::KnownSafe {
+                    reason: "value drawn from a literal collection".to_string(),
+                    line: init.line,
+                });
+            }
         }
-        // Provenance is the latest reaching plain write: at the sink the variable
-        // holds whatever was assigned most recently, not its first initializer.
-        let latest = assignments.iter().rev().find(|fact| !fact.augmented).unwrap_or(initializer);
-        Some(self.classify_assignment_rhs(&latest.rhs, latest.line, rule_deduplicator))
+
+        // Walk reaching writes newest-first. A write whose RHS is safe adds no
+        // unresolved data, so skip it and keep looking; the first write with a
+        // non-safe RHS — a plain overwrite, a branch sibling, an augmented
+        // combine, or a below-sink loop-carried write — supplies provenance so
+        // the flow stays traceable and a safe sibling cannot mask it.
+        for fact in assignments.iter().rev() {
+            if matches!(
+                self.classify_value_source(&fact.rhs, rule_deduplicator),
+                ValueSourceClassification::Safe(_)
+            ) {
+                continue;
+            }
+            return Some(self.classify_assignment_rhs(&fact.rhs, fact.line, rule_deduplicator));
+        }
+
+        // Every reaching write has a safe RHS. The variable is definitely safe
+        // only when a dominating plain write set the base (any augmented write
+        // left here only adds developer data on top of it); a base set solely
+        // below the sink or via augmentation leaves the first-pass value unseen,
+        // so it is reported Unknown rather than through the text scan.
+        match dominating_init {
+            Some(base) => {
+                Some(self.classify_assignment_rhs(&base.rhs, base.line, rule_deduplicator))
+            }
+            None => Some(VariableSource::Unresolved {
+                reason: "value base is set only below the sink or via augmented assignment"
+                    .to_string(),
+            }),
+        }
     }
 
     /// Classify an expression that reads an environment variable: user-controlled keys are
@@ -1550,6 +1595,10 @@ impl DataFlowTracer {
 mod tests {
     use super::*;
 
+    /// A sink line below every fact in these tests, so each write is treated as
+    /// reaching at or above the sink unless a test says otherwise.
+    const SINK: usize = 100;
+
     fn fact(
         target: &str,
         rhs: &str,
@@ -1582,7 +1631,7 @@ mod tests {
         ];
         assert!(
             matches!(
-                tracer.classify_ast_assignments(&facts, &dedup),
+                tracer.classify_ast_assignments(&facts, SINK, &dedup),
                 Some(VariableSource::LocalAssignment { .. })
             ),
             "latest reaching write must provide provenance, not the safe initializer"
@@ -1596,7 +1645,7 @@ mod tests {
         let dedup = TaintRuleDeduplicator::new(&[]);
         let facts = vec![fact("cmd", "\"safe\"", 1, false, false, true)];
         assert!(matches!(
-            tracer.classify_ast_assignments(&facts, &dedup),
+            tracer.classify_ast_assignments(&facts, SINK, &dedup),
             Some(VariableSource::KnownSafe { .. })
         ));
     }
@@ -1614,7 +1663,7 @@ mod tests {
         ];
         assert!(
             !matches!(
-                tracer.classify_ast_assignments(&facts, &dedup),
+                tracer.classify_ast_assignments(&facts, SINK, &dedup),
                 Some(VariableSource::KnownSafe { .. })
             ),
             "a non-literal collection mutation must defeat the definitely-safe verdict"
@@ -1632,8 +1681,97 @@ mod tests {
             fact("cfg", "(\"uptime\")", 2, true, false, true),
         ];
         assert!(matches!(
-            tracer.classify_ast_assignments(&facts, &dedup),
+            tracer.classify_ast_assignments(&facts, SINK, &dedup),
             Some(VariableSource::KnownSafe { .. })
         ));
+    }
+
+    #[test]
+    fn safe_branch_sibling_does_not_mask_an_unresolved_one() {
+        // `if c: cmd = fetch_remote() else: cmd = "ls"`: both writes reach the
+        // sink and neither dominates, so the safe sibling must not clear the
+        // sink — the unresolved sibling supplies provenance and stays traceable.
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        let facts = vec![
+            fact("cmd", "fetch_remote()", 1, false, false, false),
+            fact("cmd", "\"ls\"", 2, false, false, true),
+        ];
+        assert!(
+            matches!(
+                tracer.classify_ast_assignments(&facts, SINK, &dedup),
+                Some(VariableSource::LocalAssignment { .. })
+            ),
+            "a safe branch sibling must not mask the unresolved one"
+        );
+    }
+
+    #[test]
+    fn augmented_write_defeats_a_safe_initializer() {
+        // `cmd = "safe"; cmd += fetch()`: the augmented write combines with the
+        // safe base, so the value is not proven safe — trace the added RHS.
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        let facts = vec![
+            fact("cmd", "\"safe\"", 1, false, false, true),
+            fact("cmd", "fetch()", 2, true, false, false),
+        ];
+        assert!(
+            matches!(
+                tracer.classify_ast_assignments(&facts, SINK, &dedup),
+                Some(VariableSource::LocalAssignment { .. })
+            ),
+            "a non-safe augmented write must not be masked by the safe initializer"
+        );
+    }
+
+    #[test]
+    fn indirect_augmented_rhs_supplies_provenance() {
+        // `cmd = "safe"; cmd += user_value`: the augmented write's RHS is an
+        // unresolved identifier, so it — not the safe initializer — must supply
+        // provenance so `user_value` stays traceable (reviewer regression case).
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        let facts = vec![
+            fact("cmd", "\"safe\"", 1, false, false, true),
+            fact("cmd", "user_value", 2, true, false, false),
+        ];
+        assert!(matches!(
+            tracer.classify_ast_assignments(&facts, SINK, &dedup),
+            Some(VariableSource::LocalAssignment { source_expression, .. })
+                if source_expression == "user_value"
+        ));
+    }
+
+    #[test]
+    fn augmented_only_base_is_unresolved_not_safe() {
+        // `cmd += "x"` with no plain write reaching: the base is an unseen prior
+        // value, so we must report Unknown rather than proving it safe or
+        // falling back to the sink-agnostic text scan.
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        let facts = vec![fact("cmd", "\"x\"", 1, true, false, true)];
+        assert!(matches!(
+            tracer.classify_ast_assignments(&facts, SINK, &dedup),
+            Some(VariableSource::Unresolved { .. })
+        ));
+    }
+
+    #[test]
+    fn below_sink_safe_write_cannot_prove_safety() {
+        // A safe write that sits below the sink (reaching only via a later loop
+        // iteration) cannot establish the first-pass value, so it must not clear
+        // the sink.
+        let tracer = DataFlowTracer::new();
+        let dedup = TaintRuleDeduplicator::new(&[]);
+        // Only reaching write is on line 5, below the sink at line 3.
+        let facts = vec![fact("cmd", "\"safe\"", 5, false, false, true)];
+        assert!(
+            !matches!(
+                tracer.classify_ast_assignments(&facts, 3, &dedup),
+                Some(VariableSource::KnownSafe { .. })
+            ),
+            "a below-sink write must not supply a definitely-safe verdict"
+        );
     }
 }
