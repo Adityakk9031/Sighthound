@@ -315,8 +315,8 @@ pub fn print_findings_sarif(findings: &[Finding]) -> Result<()> {
 }
 
 #[cfg(test)]
-mod sarif_tests {
-    use super::{build_sarif_log, sarif_uri};
+mod output_tests {
+    use super::{build_sarif_log, csv_field, sarif_uri};
     use crate::models::Finding;
     use std::path::Path;
 
@@ -441,15 +441,35 @@ mod sarif_tests {
         assert_eq!(sarif_uri("/repo/src/app.py", Some(repository_root)), "src/app.py");
         assert_eq!(sarif_uri("backend/src/app.py", Some(repository_root)), "backend/src/app.py");
     }
+
+    #[test]
+    fn escapes_csv_field_delimiters_quotes_and_newlines() {
+        assert_eq!(csv_field("plain"), "plain");
+        assert_eq!(csv_field("path,with,commas.py"), "\"path,with,commas.py\"");
+        assert_eq!(csv_field("say \"hello\""), "\"say \"\"hello\"\"\"");
+        assert_eq!(csv_field("first\nsecond"), "\"first\nsecond\"");
+        assert_eq!(csv_field("first\r\nsecond"), "\"first\r\nsecond\"");
+    }
 }
 
 /// Print findings in CSV format
+fn csv_quoted_field(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn csv_field(value: &str) -> String {
+    if value.contains([',', '"', '\r', '\n']) {
+        csv_quoted_field(value)
+    } else {
+        value.to_string()
+    }
+}
+
 pub fn print_findings_csv(findings: &[Finding]) -> Result<()> {
     let stdout = std::io::stdout();
     let mut out = BufWriter::new(stdout.lock());
     writeln!(out, "file,line,function,finding_type,code,severity,confidence,cwe_id,source_type,source_context,sink_type,sink_function,traces")?;
     for finding in findings {
-        let code = finding.snippet.replace('"', "\"\"");
         let source_type =
             finding.source_info.as_ref().map(|s| s.source_type.as_str()).unwrap_or("");
         let source_context = finding.source_info.as_ref().map(|s| s.context.as_str()).unwrap_or("");
@@ -468,23 +488,22 @@ pub fn print_findings_csv(findings: &[Finding]) -> Result<()> {
             String::new()
         };
 
-        writeln!(
-            out,
-            "{},{},{},{},\"{}\",{},{},{},{},{},{},{},\"{}\"",
-            finding.file,
-            finding.line,
-            finding.function,
-            finding.finding_type,
-            code,
-            finding.severity,
-            finding.confidence,
-            cwe_id,
-            source_type,
-            source_context,
-            sink_type,
-            sink_function,
-            traces
-        )?;
+        let record = [
+            csv_field(&finding.file),
+            finding.line.to_string(),
+            csv_field(&finding.function),
+            csv_field(&finding.finding_type),
+            csv_quoted_field(&finding.snippet),
+            csv_field(&finding.severity),
+            csv_field(&finding.confidence),
+            csv_field(cwe_id),
+            csv_field(source_type),
+            csv_field(source_context),
+            csv_field(sink_type),
+            csv_field(sink_function),
+            csv_quoted_field(&traces),
+        ];
+        writeln!(out, "{}", record.join(","))?;
     }
     out.flush()?;
     Ok(())
