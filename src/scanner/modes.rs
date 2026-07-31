@@ -741,4 +741,15 @@ mod tests {
         let res = load_explicit_scan_rules(&cli, "python");
         assert!(res.is_err());
     }
+
+    #[test]
+    fn load_rules_for_detected_language_returns_none_when_no_rules_found() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let mut cli = base_cli();
+        cli.use_file_rules = true;
+        cli.rules_dir = Some(temp_dir.path().to_str().unwrap().to_string());
+
+        let res = load_rules_for_detected_language(&cli, "python").expect("should return Ok");
+        assert!(res.is_none());
+    }
 }
