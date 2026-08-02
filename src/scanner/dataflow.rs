@@ -8,10 +8,9 @@ use crate::scanner::flow_tracker::{
 use crate::scanner::taint_utils::{TaintExpressionUtils, TaintRuleDeduplicator};
 
 #[derive(Debug, Default)]
-pub struct DataFlowTracer {
-    /// Cache of analyzed variable sources to avoid re-computation (keyed by file, function, variable, and rule fingerprint)
-    variable_source_cache:
-        std::collections::HashMap<(String, String, String, String), VariableSource>,
+pub(crate) struct DataFlowTracer {
+    /// Cache of analyzed variable sources to avoid re-computation (keyed by file, function, variable, and rule fingerprint u64)
+    variable_source_cache: std::collections::HashMap<(String, String, String, u64), VariableSource>,
     /// In-flight variables currently being analyzed to prevent stack overflow on cyclic dependencies
     in_flight_variables: std::collections::BTreeSet<(String, String, String)>,
     /// Verified taint flows that have been fully validated
@@ -24,7 +23,7 @@ pub struct DataFlowTracer {
 }
 
 impl DataFlowTracer {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             variable_source_cache: std::collections::HashMap::new(),
             in_flight_variables: std::collections::BTreeSet::new(),
@@ -98,7 +97,7 @@ impl DataFlowTracer {
         AnalysisResult::DefinitelyTainted { flow }
     }
 
-    pub fn analyze_sink_variable(
+    pub(crate) fn analyze_sink_variable(
         &mut self,
         sink_file: &str,
         sink_function: &str,
@@ -206,7 +205,7 @@ impl DataFlowTracer {
         variable_name: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> VariableSource {
-        let rule_fingerprint = format!("{:?}", rule_deduplicator);
+        let rule_fingerprint = rule_deduplicator.fingerprint();
         let cache_key = (
             file_path.to_string(),
             function_name.to_string(),
@@ -1431,5 +1430,135 @@ impl DataFlowTracer {
             log::debug!("[EXTRACT_FUNCTION_BODY] Function body:\n{}", body);
             Some((body, body_start_line))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::UnifiedRule;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_cyclic_variable_dependency_does_not_stack_overflow() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let code = r#"
+def test_func():
+    a = b
+    b = a
+    sink(a)
+"#;
+        temp_file.write_all(code.as_bytes()).unwrap();
+        let path_str = temp_file.path().to_str().unwrap();
+
+        let rule = UnifiedRule {
+            id: Some("test_rule".to_string()),
+            name: Some("Test Rule".to_string()),
+            description: None,
+            category: None,
+            mode: "taint".to_string(),
+            pattern: None,
+            patterns: None,
+            sources: Some(vec!["source_func()".to_string()]),
+            sinks: Some(vec!["sink".to_string()]),
+            propagators: None,
+            sanitizers: None,
+            conditions: None,
+            message: None,
+            finding_type: None,
+            file_types: None,
+            severity: None,
+            confidence: None,
+            cwe_id: None,
+            tags: None,
+        };
+
+        let rules = vec![&rule];
+        let deduplicator = TaintRuleDeduplicator::new(&rules);
+        let mut tracer = DataFlowTracer::new();
+
+        let result =
+            tracer.analyze_sink_variable(path_str, "test_func", "a", "sink", 5, &deduplicator);
+        match result {
+            AnalysisResult::Unknown { reason } => {
+                assert_eq!(reason, "cyclic variable dependency");
+            }
+            _ => panic!(
+                "Expected AnalysisResult::Unknown with 'cyclic variable dependency', got {:?}",
+                result
+            ),
+        }
+    }
+
+    #[test]
+    fn test_rule_fingerprint_cache_isolation() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let code = r#"
+def test_func():
+    var = input()
+"#;
+        temp_file.write_all(code.as_bytes()).unwrap();
+        let path_str = temp_file.path().to_str().unwrap();
+
+        let rule1 = UnifiedRule {
+            id: Some("rule1".to_string()),
+            name: Some("Rule 1".to_string()),
+            description: None,
+            category: None,
+            mode: "taint".to_string(),
+            pattern: None,
+            patterns: None,
+            sources: Some(vec!["input(".to_string()]),
+            sinks: Some(vec!["sink1".to_string()]),
+            propagators: None,
+            sanitizers: None,
+            conditions: None,
+            message: None,
+            finding_type: None,
+            file_types: None,
+            severity: None,
+            confidence: None,
+            cwe_id: None,
+            tags: None,
+        };
+
+        let rule2 = UnifiedRule {
+            id: Some("rule2".to_string()),
+            name: Some("Rule 2".to_string()),
+            description: None,
+            category: None,
+            mode: "taint".to_string(),
+            pattern: None,
+            patterns: None,
+            sources: Some(vec!["different_source()".to_string()]),
+            sinks: Some(vec!["sink2".to_string()]),
+            propagators: None,
+            sanitizers: None,
+            conditions: None,
+            message: None,
+            finding_type: None,
+            file_types: None,
+            severity: None,
+            confidence: None,
+            cwe_id: None,
+            tags: None,
+        };
+
+        let rules1 = vec![&rule1];
+        let dedup1 = TaintRuleDeduplicator::new(&rules1);
+
+        let rules2 = vec![&rule2];
+        let dedup2 = TaintRuleDeduplicator::new(&rules2);
+
+        let mut tracer = DataFlowTracer::new();
+
+        let result1 =
+            tracer.analyze_sink_variable(path_str, "test_func", "var", "sink1", 3, &dedup1);
+        let result2 =
+            tracer.analyze_sink_variable(path_str, "test_func", "var", "sink2", 3, &dedup2);
+
+        assert!(matches!(result1, AnalysisResult::DefinitelyTainted { .. }));
+        assert!(!matches!(result2, AnalysisResult::DefinitelyTainted { .. }));
     }
 }

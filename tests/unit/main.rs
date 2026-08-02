@@ -1,7 +1,6 @@
 // Unit tests for the vulnerability scanner
 #![allow(clippy::module_inception)]
 mod ast_conditions_tests;
-mod dataflow_tests;
 mod directory_loading_tests;
 mod django_xss_prevention_tests;
 mod exclusion_patterns_tests;
