@@ -7,7 +7,7 @@ use crate::scanner::flow_tracker::{
 };
 use crate::scanner::taint_utils::{TaintExpressionUtils, TaintRuleDeduplicator};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DataFlowTracer {
     /// Cache of analyzed variable sources to avoid re-computation (keyed by file, function, variable, and rule fingerprint)
     variable_source_cache:
