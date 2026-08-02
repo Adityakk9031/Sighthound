@@ -8,9 +8,12 @@ use crate::scanner::flow_tracker::{
 use crate::scanner::taint_utils::{TaintExpressionUtils, TaintRuleDeduplicator};
 
 #[derive(Debug)]
-pub(crate) struct DataFlowTracer {
-    /// Cache of analyzed variable sources to avoid re-computation
-    variable_source_cache: std::collections::HashMap<(String, String, String), VariableSource>,
+pub struct DataFlowTracer {
+    /// Cache of analyzed variable sources to avoid re-computation (keyed by file, function, variable, and rule fingerprint)
+    variable_source_cache:
+        std::collections::HashMap<(String, String, String, String), VariableSource>,
+    /// In-flight variables currently being analyzed to prevent stack overflow on cyclic dependencies
+    in_flight_variables: std::collections::BTreeSet<(String, String, String)>,
     /// Verified taint flows that have been fully validated
     verified_flows: Vec<VerifiedTaintFlow>,
     /// Resolved imports parsed elsewhere: calling_file -> {imported_function -> source_file}.
@@ -21,9 +24,10 @@ pub(crate) struct DataFlowTracer {
 }
 
 impl DataFlowTracer {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             variable_source_cache: std::collections::HashMap::new(),
+            in_flight_variables: std::collections::BTreeSet::new(),
             verified_flows: Vec::new(),
             import_map: std::collections::BTreeMap::new(),
         }
@@ -94,7 +98,7 @@ impl DataFlowTracer {
         AnalysisResult::DefinitelyTainted { flow }
     }
 
-    pub(crate) fn analyze_sink_variable(
+    pub fn analyze_sink_variable(
         &mut self,
         sink_file: &str,
         sink_function: &str,
@@ -110,6 +114,19 @@ impl DataFlowTracer {
             sink_function
         );
 
+        let sink_var_key =
+            (sink_file.to_string(), sink_function.to_string(), sink_variable.to_string());
+
+        if !self.in_flight_variables.insert(sink_var_key.clone()) {
+            log::debug!(
+                "[DATA_FLOW_TRACER] Cyclic sink variable resolution detected for '{}' in {}::{}",
+                sink_variable,
+                sink_file,
+                sink_function
+            );
+            return AnalysisResult::Unknown { reason: "cyclic variable dependency".to_string() };
+        }
+
         // Step 1: Determine how this variable gets its value
         let variable_source = self.analyze_variable_source(
             sink_file,
@@ -118,7 +135,7 @@ impl DataFlowTracer {
             rule_deduplicator,
         );
 
-        match variable_source {
+        let result = match variable_source {
             VariableSource::KnownSafe { reason, line } => {
                 log::debug!("[DATA_FLOW_TRACER] Variable proven safe at line {}: {}", line, reason);
                 AnalysisResult::DefinitelySafe
@@ -175,7 +192,10 @@ impl DataFlowTracer {
                     parameter_index,
                     rule_deduplicator,
                 ),
-        }
+        };
+
+        self.in_flight_variables.remove(&sink_var_key);
+        result
     }
 
     /// Analyze how a variable gets its value (assignment, import, parameter, etc.)
@@ -186,8 +206,13 @@ impl DataFlowTracer {
         variable_name: &str,
         rule_deduplicator: &TaintRuleDeduplicator,
     ) -> VariableSource {
-        let cache_key =
-            (file_path.to_string(), function_name.to_string(), variable_name.to_string());
+        let rule_fingerprint = format!("{:?}", rule_deduplicator);
+        let cache_key = (
+            file_path.to_string(),
+            function_name.to_string(),
+            variable_name.to_string(),
+            rule_fingerprint,
+        );
 
         // Check cache first
         if let Some(cached_source) = self.variable_source_cache.get(&cache_key) {

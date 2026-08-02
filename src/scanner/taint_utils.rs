@@ -3,7 +3,7 @@
 use crate::common::CommonUtils;
 
 #[derive(Debug, Clone)]
-pub(crate) struct TaintRuleDeduplicator {
+pub struct TaintRuleDeduplicator {
     /// Mapping from (source_pattern, sink_pattern) to the rule that should handle it
     rule_mapping: std::collections::BTreeMap<(String, String), crate::rules::UnifiedRule>,
     /// Consolidated source patterns across all rules
@@ -14,7 +14,7 @@ pub(crate) struct TaintRuleDeduplicator {
 
 impl TaintRuleDeduplicator {
     /// Create a new deduplicator from a list of taint rules
-    pub(crate) fn new(taint_rules: &[&crate::rules::UnifiedRule]) -> Self {
+    pub fn new(taint_rules: &[&crate::rules::UnifiedRule]) -> Self {
         let mut deduplicator = Self {
             rule_mapping: std::collections::BTreeMap::new(),
             source_patterns: std::collections::BTreeSet::new(),

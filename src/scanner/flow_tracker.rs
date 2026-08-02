@@ -146,7 +146,7 @@ pub(crate) struct VerifiedFlowEndpoints<'a> {
 
 /// A verified taint flow with complete evidence chain
 #[derive(Debug, Clone)]
-pub(crate) struct VerifiedTaintFlow {
+pub struct VerifiedTaintFlow {
     pub(crate) source_file: String,
     pub(crate) source_function: String,
     pub(crate) source_pattern: String,
@@ -199,7 +199,7 @@ pub(crate) enum VariableSource {
 
 /// Analysis result enumeration for conservative approach
 #[derive(Debug, Clone)]
-pub(crate) enum AnalysisResult {
+pub enum AnalysisResult {
     DefinitelyTainted { flow: VerifiedTaintFlow },
     DefinitelySafe,
     Unknown { reason: String },
