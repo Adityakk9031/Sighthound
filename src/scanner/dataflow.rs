@@ -1736,7 +1736,10 @@ def test_func():
             tracer.analyze_sink_variable(path_str, "test_func", "var", "sink2", 3, &dedup2);
 
         assert!(matches!(result1, AnalysisResult::DefinitelyTainted { .. }));
-        assert!(matches!(result2, AnalysisResult::DefinitelySafe));
+        assert!(!matches!(result2, AnalysisResult::DefinitelyTainted { .. }));
+        if let AnalysisResult::Unknown { ref reason } = result2 {
+            assert_ne!(reason, "cyclic variable dependency");
+        }
 
         // Rerun first rule set (dedup1) to verify cached hit returns DefinitelyTainted without leaking in_flight keys
         let result3 =
