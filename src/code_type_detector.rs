@@ -257,11 +257,12 @@ impl CodeTypeDetector {
     fn extract_imports(&self, content: &str, _language: &str) -> Vec<String> {
         let mut imports = Vec::new();
 
-        // Extract require() calls
+        // Extract require() calls and ES import statements (including multiline and side-effect imports)
         let require_patterns = vec![
             regex::Regex::new(r#"require\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap(),
-            regex::Regex::new(r#"import\s+.*from\s+['"]([^'"]+)['"]"#).unwrap(),
+            regex::Regex::new(r#"(?s)import\s+.*?from\s+['"]([^'"]+)['"]"#).unwrap(),
             regex::Regex::new(r#"import\s*\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap(),
+            regex::Regex::new(r#"import\s+['"]([^'"]+)['"]"#).unwrap(),
         ];
 
         for pattern in require_patterns {
@@ -512,5 +513,30 @@ mod tests {
         let detector = CodeTypeDetector::new();
 
         assert_eq!(detector.detect_from_ast(&tree, source), CodeType::Backend);
+    }
+
+    #[test]
+    fn detect_code_type_handles_multiline_imports() {
+        let detector = CodeTypeDetector::new();
+        let code = r#"
+            import {
+                Injectable,
+                NestMiddleware,
+            } from '@nestjs/common';
+
+            @Injectable()
+            export class AuthMiddleware {}
+        "#;
+        assert_eq!(detector.detect_code_type("auth.ts", code, "typescript"), CodeType::Backend);
+    }
+
+    #[test]
+    fn detect_code_type_handles_side_effect_imports() {
+        let detector = CodeTypeDetector::new();
+        let code = r#"
+            import 'express';
+            export const app = {};
+        "#;
+        assert_eq!(detector.detect_code_type("server.ts", code, "typescript"), CodeType::Backend);
     }
 }
