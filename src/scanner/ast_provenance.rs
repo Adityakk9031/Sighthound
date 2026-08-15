@@ -249,10 +249,7 @@ fn record_function(
     if let Some(body) = node.child_by_field_name("body") {
         collect_assignments(body, source, &mut assignments);
     }
-    functions
-        .entry(name)
-        .or_default()
-        .push(FunctionFacts { parameters, assignments, span });
+    functions.entry(name).or_default().push(FunctionFacts { parameters, assignments, span });
 }
 
 fn parameter_names(parameters: Node, source: &[u8]) -> Vec<String> {
