@@ -70,17 +70,13 @@ pub(crate) enum AstResolution {
 struct FunctionFacts {
     parameters: Vec<String>,
     assignments: Vec<AssignmentFact>,
+    span: (usize, usize),
 }
 
 #[derive(Debug)]
 struct FileFacts {
-    /// First definition in document order wins, matching the text path.
-    functions: std::collections::BTreeMap<String, FunctionFacts>,
-    /// Bare names defined more than once in the file (e.g. `run` on two
-    /// classes). The caller resolves a variable by the sink's *bare* function
-    /// name, so for such names we cannot know which definition is meant and
-    /// refuse to guess — see [`PythonAstProvenance::resolve_variable`].
-    ambiguous: std::collections::BTreeSet<String>,
+    /// All definitions for a given function name, in document order.
+    functions: std::collections::BTreeMap<String, Vec<FunctionFacts>>,
 }
 
 /// Per-file cache of extracted Python function facts. `None` entries record
@@ -122,15 +118,27 @@ impl PythonAstProvenance {
             return None;
         }
         let facts = self.file_facts(file_path)?;
-        // The sink gives us only a bare function name. If that name is defined
-        // more than once (e.g. `run` on two different classes), resolving it
-        // could attribute one definition's assignments to another. Report that
-        // explicitly instead of deferring: a text fallback keyed on the first
-        // matching definition would guess exactly as wrongly.
-        if facts.ambiguous.contains(function_name) {
-            return Some(AstResolution::Ambiguous);
-        }
-        let function = facts.functions.get(function_name)?;
+        let function_list = facts.functions.get(function_name)?;
+
+        let function = match function_list.len() {
+            0 => return None,
+            1 => &function_list[0],
+            _ => {
+                if let Some(line) = usage_line {
+                    let matching: Vec<&FunctionFacts> = function_list
+                        .iter()
+                        .filter(|f| line >= f.span.0 && line <= f.span.1)
+                        .collect();
+                    if matching.len() == 1 {
+                        matching[0]
+                    } else {
+                        return Some(AstResolution::Ambiguous);
+                    }
+                } else {
+                    return Some(AstResolution::Ambiguous);
+                }
+            }
+        };
 
         let assignments: Vec<AssignmentFact> = function
             .assignments
@@ -201,41 +209,37 @@ fn parse_file_facts(file_path: &str) -> Option<FileFacts> {
     let tree = parser.parse(&source).ok()?;
 
     let mut functions = std::collections::BTreeMap::new();
-    let mut ambiguous = std::collections::BTreeSet::new();
-    collect_functions(tree.root_node(), &source, &mut functions, &mut ambiguous);
-    Some(FileFacts { functions, ambiguous })
+    collect_functions(tree.root_node(), &source, &mut functions);
+    Some(FileFacts { functions })
 }
 
 /// Preorder walk recording every `def` (sync or async, top-level, nested, or
-/// method) by name; the first definition in document order wins, and any name
-/// seen more than once is recorded as ambiguous.
+/// method) by name and line span.
 fn collect_functions(
     node: Node,
     source: &[u8],
-    functions: &mut std::collections::BTreeMap<String, FunctionFacts>,
-    ambiguous: &mut std::collections::BTreeSet<String>,
+    functions: &mut std::collections::BTreeMap<String, Vec<FunctionFacts>>,
 ) {
     if node.kind() == "function_definition" {
-        record_function(node, source, functions, ambiguous);
+        record_function(node, source, functions);
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_functions(child, source, functions, ambiguous);
+        collect_functions(child, source, functions);
     }
 }
 
 fn record_function(
     node: Node,
     source: &[u8],
-    functions: &mut std::collections::BTreeMap<String, FunctionFacts>,
-    ambiguous: &mut std::collections::BTreeSet<String>,
+    functions: &mut std::collections::BTreeMap<String, Vec<FunctionFacts>>,
 ) {
     let Some(name_node) = node.child_by_field_name("name") else { return };
     let name = get_node_text_slice(&name_node, source).to_string();
-    if functions.contains_key(&name) {
-        ambiguous.insert(name);
-        return;
-    }
+
+    let start_line = node.start_position().row + 1;
+    let end_line = node.end_position().row + 1;
+    let span = (start_line, end_line);
 
     let parameters = node
         .child_by_field_name("parameters")
@@ -245,7 +249,10 @@ fn record_function(
     if let Some(body) = node.child_by_field_name("body") {
         collect_assignments(body, source, &mut assignments);
     }
-    functions.insert(name, FunctionFacts { parameters, assignments });
+    functions
+        .entry(name)
+        .or_default()
+        .push(FunctionFacts { parameters, assignments, span });
 }
 
 fn parameter_names(parameters: Node, source: &[u8]) -> Vec<String> {
@@ -939,6 +946,28 @@ mod tests {
             provenance.resolve_variable(&path2, "only", "cmd"),
             Some(AstResolution::Assignments(_))
         ));
+    }
+
+    #[test]
+    fn duplicate_function_names_resolve_by_usage_line() {
+        let (_dir, path) = staged(
+            "class Unsafe:\n    def run(self):\n        cmd = input()\nclass Safe:\n    def run(self):\n        cmd = \"uptime\"\n",
+        );
+        let mut provenance = PythonAstProvenance::default();
+
+        // Line 3 is inside Unsafe.run: resolves to input()
+        let unsafe_run = assignments(
+            provenance.resolve_variable_reaching(&path, "run", "cmd", Some(3)).unwrap(),
+        );
+        assert_eq!(unsafe_run.len(), 1);
+        assert_eq!(unsafe_run[0].rhs, "input()");
+
+        // Line 6 is inside Safe.run: resolves to "uptime"
+        let safe_run = assignments(
+            provenance.resolve_variable_reaching(&path, "run", "cmd", Some(6)).unwrap(),
+        );
+        assert_eq!(safe_run.len(), 1);
+        assert_eq!(safe_run[0].rhs, "\"uptime\"");
     }
 
     #[test]
