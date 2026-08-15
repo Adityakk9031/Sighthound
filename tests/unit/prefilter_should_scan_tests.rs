@@ -99,4 +99,32 @@ mod prefilter_should_scan_tests {
         let filter = PreFilter::new(&empty_rules(), "python");
         assert!(filter.should_scan_file(path.to_str().unwrap()));
     }
+
+    #[test]
+    fn production_file_with_attestation_or_contest_import_is_scanned() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("auth_service.py");
+        fs::write(
+            &path,
+            "from myapp.attestation import verify_attestation\nfrom contest_service import handle_contest\nfrom services.latest_events import get_latest\nfrom fastest_cache import cache\n\ndef login(req):\n    return verify_attestation(req)\n",
+        )
+        .unwrap();
+
+        let filter = PreFilter::new(&empty_rules(), "python");
+        assert!(filter.should_scan_file(path.to_str().unwrap()));
+    }
+
+    #[test]
+    fn production_file_with_migrate_user_import_is_scanned() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("account_service.py");
+        fs::write(
+            &path,
+            "from accounts.user_migrator import migrate_user_account\n\ndef run(user):\n    migrate_user_account(user)\n",
+        )
+        .unwrap();
+
+        let filter = PreFilter::new(&empty_rules(), "python");
+        assert!(filter.should_scan_file(path.to_str().unwrap()));
+    }
 }
