@@ -332,11 +332,7 @@ impl MultiFileTaintAnalyzer {
             // Process files for all available languages
             for (language, files) in files_by_language {
                 for file_path in files {
-                    self.analyze_file_for_imports_exports(
-                        file_path,
-                        language,
-                        &rule_deduplicator,
-                    )?;
+                    self.analyze_file_for_imports_exports(file_path, language, &rule_deduplicator)?;
                 }
             }
         }

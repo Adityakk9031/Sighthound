@@ -1120,10 +1120,8 @@ impl DataFlowTracer {
             let Some(file_name) = os_file_name.to_str() else {
                 continue;
             };
-            let ext = std::path::Path::new(file_name)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let ext =
+                std::path::Path::new(file_name).extension().and_then(|e| e.to_str()).unwrap_or("");
             if ext != calling_ext || file_name == calling_basename {
                 continue;
             }
